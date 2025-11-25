@@ -9,7 +9,7 @@ interface RequestDetailsProps {
     onClose: () => void;
 }
 
-type TabType = 'request' | 'response' | 'headers' | 'cookies' | 'timing';
+type TabType = 'request' | 'response' | 'response headers' | 'request headers' | 'cookies' | 'timing';
 
 const RequestDetails: React.FC<RequestDetailsProps> = ({ entry, onClose }) => {
     const [activeTab, setActiveTab] = useState<TabType>('request');
@@ -57,13 +57,20 @@ const RequestDetails: React.FC<RequestDetailsProps> = ({ entry, onClose }) => {
         return output;
     };
 
-    const formatHeadersForCopy = (): string => {
+    const formatRequestHeadersForCopy = (): string => {
         let output = 'Request Headers:\n';
         entry.request.headers.forEach(header => {
             output += `  ${header.name}: ${header.value}\n`;
         });
 
-        output += '\nResponse Headers:\n';
+
+
+        return output;
+    };
+    const formatResponseHeadersForCopy = (): string => {
+
+
+        let output = 'Response Headers:\n';
         entry.response.headers.forEach(header => {
             output += `  ${header.name}: ${header.value}\n`;
         });
@@ -110,8 +117,10 @@ const RequestDetails: React.FC<RequestDetailsProps> = ({ entry, onClose }) => {
                 return formatRequestForCopy();
             case 'response':
                 return formatResponseForCopy();
-            case 'headers':
-                return formatHeadersForCopy();
+            case 'request headers':
+                return formatRequestHeadersForCopy();
+            case 'response headers':
+                return formatResponseHeadersForCopy();
             case 'cookies':
                 return formatCookiesForCopy();
             case 'timing':
@@ -131,7 +140,7 @@ const RequestDetails: React.FC<RequestDetailsProps> = ({ entry, onClose }) => {
                     onClick={() => copyToClipboard(getCopyContent())}
                     title="Copy to clipboard"
                 >
-                    {copied ? '✓ Copied' : '📋 Copy'}
+                    {copied ? '✓ Copied' : ' Copy'}
                 </button>
             </div>
 
@@ -199,7 +208,7 @@ const RequestDetails: React.FC<RequestDetailsProps> = ({ entry, onClose }) => {
                     onClick={() => copyToClipboard(getCopyContent())}
                     title="Copy to clipboard"
                 >
-                    {copied ? '✓ Copied' : '📋 Copy'}
+                    {copied ? '✓ Copied' : 'Copy'}
                 </button>
             </div>
 
@@ -238,7 +247,7 @@ const RequestDetails: React.FC<RequestDetailsProps> = ({ entry, onClose }) => {
     );
 
 
-    const renderHeaders = () => (
+    const renderRequestHeaders = () => (
         <div className="details-section">
             <div className="section-header">
                 <h4>Request Headers</h4>
@@ -262,7 +271,26 @@ const RequestDetails: React.FC<RequestDetailsProps> = ({ entry, onClose }) => {
                 </tbody>
             </table>
 
-            <h4 style={{ marginTop: '24px' }}>Response Headers</h4>
+
+        </div>
+    );
+
+    const renderResponseHeaders = () => (
+
+        <div className="details-section">
+            <div className="section-header">
+                <h4>Response Headers</h4>
+                <button
+                    className={`btn-copy ${copied ? 'copied' : ''}`}
+                    onClick={() => copyToClipboard(getCopyContent())}
+                    title="Copy to clipboard"
+                >
+                    {copied ? '✓ Copied' : 'Copy'}
+                </button>
+            </div>
+
+
+
             <table className="details-table">
                 <tbody>
                     {entry.response.headers.map((header, index) => (
@@ -409,8 +437,11 @@ const RequestDetails: React.FC<RequestDetailsProps> = ({ entry, onClose }) => {
                 <button className={`tab ${activeTab === 'response' ? 'active' : ''}`} onClick={() => setActiveTab('response')}>
                     Response
                 </button>
-                <button className={`tab ${activeTab === 'headers' ? 'active' : ''}`} onClick={() => setActiveTab('headers')}>
-                    Headers
+                <button className={`tab ${activeTab === 'request headers' ? 'active' : ''}`} onClick={() => setActiveTab('request headers')}>
+                    Request Headers
+                </button>
+                <button className={`tab ${activeTab === 'response headers' ? 'active' : ''}`} onClick={() => setActiveTab('response headers')}>
+                    Response Headers
                 </button>
                 <button className={`tab ${activeTab === 'cookies' ? 'active' : ''}`} onClick={() => setActiveTab('cookies')}>
                     Cookies
@@ -423,7 +454,8 @@ const RequestDetails: React.FC<RequestDetailsProps> = ({ entry, onClose }) => {
             <div className="details-content">
                 {activeTab === 'request' && renderRequest()}
                 {activeTab === 'response' && renderResponse()}
-                {activeTab === 'headers' && renderHeaders()}
+                {activeTab === 'request headers' && renderRequestHeaders()}
+                {activeTab === 'response headers' && renderResponseHeaders()}
                 {activeTab === 'cookies' && renderCookies()}
                 {activeTab === 'timing' && renderTiming()}
             </div>

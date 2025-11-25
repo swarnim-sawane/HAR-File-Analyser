@@ -950,7 +950,31 @@ body {
     border-bottom: 1px solid var(--border-color);
     background: var(--bg-primary);
     padding: 0 24px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-color) transparent;
 }
+
+/* Webkit browsers scrollbar for tabs */
+.details-tabs::-webkit-scrollbar {
+    height: 6px;
+}
+
+.details-tabs::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.details-tabs::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 3px;
+}
+
+.details-tabs::-webkit-scrollbar-thumb:hover {
+    background: var(--text-tertiary);
+}
+
 
 .tab {
     padding: 14px 20px;
