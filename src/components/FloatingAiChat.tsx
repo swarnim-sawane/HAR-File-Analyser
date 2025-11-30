@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { HarFile } from '../types/har';
 import './FloatingAiChat.css';
+import { ConsoleLogFile } from '../types/consolelog';
 
 
 interface Message {
@@ -14,10 +15,11 @@ interface Message {
 }
 
 interface FloatingAiChatProps {
-  harData: HarFile;
+  harData?: HarFile;
+  logData?: ConsoleLogFile;
 }
 
-const FloatingAiChat: React.FC<FloatingAiChatProps> = ({ harData }) => {
+const FloatingAiChat: React.FC<FloatingAiChatProps> = ({ harData, logData }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -26,6 +28,8 @@ const FloatingAiChat: React.FC<FloatingAiChatProps> = ({ harData }) => {
   const [ollamaConnected, setOllamaConnected] = useState<boolean>(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const isConsoleMode = !!logData;
 
   useEffect(() => {
     if (isOpen) {
@@ -51,6 +55,7 @@ const FloatingAiChat: React.FC<FloatingAiChatProps> = ({ harData }) => {
   };
 
   const getHarSummary = () => {
+    if (!harData) return '';
     const entries = harData.log.entries;
     const totalRequests = entries.length;
     const totalSize = entries.reduce((sum, e) => sum + e.response.bodySize, 0);
@@ -72,6 +77,23 @@ const FloatingAiChat: React.FC<FloatingAiChatProps> = ({ harData }) => {
 - Failed Requests: ${errorCount}`;
   };
 
+  const getLogSummary = () => {
+    if (!logData) return '';
+    const entries = logData.entries;
+    const totalEntries = entries.length;
+    const errorCount = entries.filter(e => e.level === 'error').length;
+    const warnCount = entries.filter(e => e.level === 'warn').length;
+    const infoCount = entries.filter(e => e.level === 'info').length;
+    const sources = [...new Set(entries.map(e => e.source).filter(Boolean))];
+
+    return `Console Log Context:
+- Total Entries: ${totalEntries}
+- Errors: ${errorCount}
+- Warnings: ${warnCount}
+- Info Messages: ${infoCount}
+- Unique Sources: ${sources.length}`;
+  };
+
   const sendMessage = async () => {
     if (!input.trim() || isLoading) return;
 
@@ -87,14 +109,19 @@ const FloatingAiChat: React.FC<FloatingAiChatProps> = ({ harData }) => {
     setIsLoading(true);
 
     try {
-      const harSummary = getHarSummary();
-      
-      const systemPrompt = `You are a helpful HAR file analyzer assistant. You're analyzing a HAR (HTTP Archive) file with the following information:
+      const contextSummary = isConsoleMode ? getLogSummary() : getHarSummary();
 
-${harSummary}
+      const systemPrompt = isConsoleMode
+        ? `You are a helpful console log analyzer assistant. You're analyzing console logs with the following information:
+
+${contextSummary}
+
+Answer the user's questions about these console logs. Be concise and specific. Identify patterns, common errors, and provide actionable insights. Format your responses using markdown for better readability.`
+        : `You are a helpful HAR file analyzer assistant. You're analyzing a HAR (HTTP Archive) file with the following information:
+
+${contextSummary}
 
 Answer the user's questions about this HAR file. Be concise and specific. If they paste a URL, analyze that specific request. Format your responses using markdown for better readability.`;
-
       const response = await fetch('http://localhost:11435/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -165,20 +192,30 @@ Answer the user's questions about this HAR file. Be concise and specific. If the
     }
   };
 
-  const quickQuestions = [
-    'Show slowest requests',
-    'Any errors?',
-    'Performance issues?',
-  ];
+  const quickQuestions = isConsoleMode
+    ? [
+      'Show me all errors',
+      'What are the most common warnings?',
+      'Identify any patterns',
+    ]
+    : [
+      'Show slowest requests',
+      'Any errors?',
+      'Performance issues?',
+    ];
+
+  const dataCount = isConsoleMode
+    ? logData?.entries.length || 0
+    : harData?.log.entries.length || 0;
 
   if (!isOpen) {
     return (
       <button className="floating-chat-button" onClick={() => setIsOpen(true)}>
         <svg className="chat-icon-svg" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M12 2C6.48 2 2 6.48 2 12C2 13.54 2.38 14.99 3.06 16.26L2 22L7.74 20.94C9.01 21.62 10.46 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2Z" fill="currentColor"/>
-          <circle cx="8" cy="12" r="1.5" fill="white"/>
-          <circle cx="12" cy="12" r="1.5" fill="white"/>
-          <circle cx="16" cy="12" r="1.5" fill="white"/>
+          <path d="M12 2C6.48 2 2 6.48 2 12C2 13.54 2.38 14.99 3.06 16.26L2 22L7.74 20.94C9.01 21.62 10.46 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2Z" fill="currentColor" />
+          <circle cx="8" cy="12" r="1.5" fill="white" />
+          <circle cx="12" cy="12" r="1.5" fill="white" />
+          <circle cx="16" cy="12" r="1.5" fill="white" />
         </svg>
         <span className="chat-label">AI Assistant</span>
       </button>
@@ -191,9 +228,9 @@ Answer the user's questions about this HAR file. Be concise and specific. If the
         <div className="chat-widget-title">
           <div className="ai-avatar">
             <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="currentColor" opacity="0.3"/>
-              <path d="M2 17L12 22L22 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="currentColor" opacity="0.3" />
+              <path d="M2 17L12 22L22 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </div>
           <div>
@@ -214,9 +251,9 @@ Answer the user's questions about this HAR file. Be concise and specific. If the
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
               {isMinimized ? (
-                <rect x="3" y="3" width="10" height="10" stroke="currentColor" strokeWidth="2"/>
+                <rect x="3" y="3" width="10" height="10" stroke="currentColor" strokeWidth="2" />
               ) : (
-                <line x1="3" y1="8" x2="13" y2="8" stroke="currentColor" strokeWidth="2"/>
+                <line x1="3" y1="8" x2="13" y2="8" stroke="currentColor" strokeWidth="2" />
               )}
             </svg>
           </button>
@@ -226,7 +263,7 @@ Answer the user's questions about this HAR file. Be concise and specific. If the
             title="Close"
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path d="M3 3L13 13M13 3L3 13" stroke="currentColor" strokeWidth="2"/>
+              <path d="M3 3L13 13M13 3L3 13" stroke="currentColor" strokeWidth="2" />
             </svg>
           </button>
         </div>
@@ -238,8 +275,8 @@ Answer the user's questions about this HAR file. Be concise and specific. If the
             <div className="chat-widget-error">
               <div className="error-icon-wrapper">
                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none">
-                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
-                  <path d="M12 8V12M12 16H12.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" />
+                  <path d="M12 8V12M12 16H12.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
                 </svg>
               </div>
               <h4>Ollama Not Connected</h4>
@@ -255,13 +292,21 @@ Answer the user's questions about this HAR file. Be concise and specific. If the
                   <div className="chat-widget-welcome">
                     <div className="welcome-icon-wrapper">
                       <svg width="64" height="64" viewBox="0 0 24 24" fill="none">
-                        <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="currentColor" opacity="0.2"/>
-                        <path d="M2 17L12 22L22 17M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2"/>
+                        <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="currentColor" opacity="0.2" />
+                        <path d="M2 17L12 22L22 17M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" />
                       </svg>
                     </div>
                     <h3>Welcome! 👋</h3>
-                    <p>I'm analyzing your HAR file with <strong>{harData.log.entries.length}</strong> requests.</p>
-                    <p className="help-text">Ask me about performance, errors, or any specific requests.</p>
+                    <p>
+                      I'm analyzing your {isConsoleMode ? 'console logs' : 'HAR file'} with{' '}
+                      {dataCount} {isConsoleMode ? 'entries' : 'requests'}.
+                    </p>
+                    <p>
+                      Ask me about {isConsoleMode
+                        ? 'errors, warnings, or patterns'
+                        : 'performance, errors, or any specific requests'}.
+                    </p>
+
                     <div className="quick-questions">
                       {quickQuestions.map((q, i) => (
                         <button
@@ -273,7 +318,7 @@ Answer the user's questions about this HAR file. Be concise and specific. If the
                           }}
                         >
                           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                            <path d="M8 3V13M13 8H3" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                            <path d="M8 3V13M13 8H3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
                           </svg>
                           {q}
                         </button>
@@ -287,13 +332,13 @@ Answer the user's questions about this HAR file. Be concise and specific. If the
                     <div className="chat-message-avatar">
                       {message.role === 'user' ? (
                         <svg viewBox="0 0 24 24" fill="none">
-                          <circle cx="12" cy="8" r="4" fill="currentColor"/>
-                          <path d="M6 21C6 17.6863 8.68629 15 12 15C15.3137 15 18 17.6863 18 21" stroke="currentColor" strokeWidth="2"/>
+                          <circle cx="12" cy="8" r="4" fill="currentColor" />
+                          <path d="M6 21C6 17.6863 8.68629 15 12 15C15.3137 15 18 17.6863 18 21" stroke="currentColor" strokeWidth="2" />
                         </svg>
                       ) : (
                         <svg viewBox="0 0 24 24" fill="none">
-                          <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="currentColor" opacity="0.3"/>
-                          <path d="M2 17L12 22L22 17M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2"/>
+                          <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="currentColor" opacity="0.3" />
+                          <path d="M2 17L12 22L22 17M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" />
                         </svg>
                       )}
                     </div>
@@ -313,8 +358,8 @@ Answer the user's questions about this HAR file. Be concise and specific. If the
                   <div className="chat-message chat-message-assistant">
                     <div className="chat-message-avatar">
                       <svg viewBox="0 0 24 24" fill="none">
-                        <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="currentColor" opacity="0.3"/>
-                        <path d="M2 17L12 22L22 17M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2"/>
+                        <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="currentColor" opacity="0.3" />
+                        <path d="M2 17L12 22L22 17M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" />
                       </svg>
                     </div>
                     <div className="chat-message-bubble">
@@ -334,7 +379,7 @@ Answer the user's questions about this HAR file. Be concise and specific. If the
                 <textarea
                   ref={textareaRef}
                   className="chat-widget-textarea"
-                  placeholder="Ask about your HAR file..."
+                  placeholder={`Ask about ${isConsoleMode ? 'these logs' : 'this HAR file'}...`}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyPress={handleKeyPress}
@@ -347,7 +392,7 @@ Answer the user's questions about this HAR file. Be concise and specific. If the
                   disabled={isLoading || !input.trim()}
                 >
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                    <path d="M22 2L11 13M22 2L15 22L11 13L2 9L22 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M22 2L11 13M22 2L15 22L11 13L2 9L22 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                 </button>
               </div>

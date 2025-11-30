@@ -1,225 +1,357 @@
 // src/App.tsx
+
 import React, { useState, useEffect } from 'react';
 import FileUploader from './components/FileUploader';
 import FilterPanel from './components/FilterPanel';
 import RequestList from './components/RequestList';
 import RequestDetails from './components/RequestDetails';
+import ConsoleLogUploader from './components/ConsoleLogUploader';
+import ConsoleLogFilterPanel from './components/ConsoleLogFilterPanel';
+import ConsoleLogList from './components/ConsoleLogList';
+import ConsoleLogDetails from './components/ConsoleLogDetails';
+import ConsoleLogStatistics from './components/ConsoleLogStatistics';
 import Toolbar from './components/Toolbar';
 import { useHarData } from './hooks/useHarData';
+import { useConsoleLogData } from './hooks/useConsoleLogData';
 import { HarAnalyzer } from './utils/harAnalyzer';
+import { ConsoleLogAnalyzer } from './utils/consoleLogAnalyzer';
 import './styles/globals.css';
 import DarkModeToggle from './components/DarkModeToggle';
 import HarSanitizer from './components/HarSanitizer';
-import AiChat from './components/AiChat';
 import FloatingAiChat from './components/FloatingAiChat';
 
-
 interface RecentFile {
-    name: string;
-    timestamp: number;
-    data: File;
+  name: string;
+  timestamp: number;
+  data: File;
 }
 
 const MAX_RECENT_FILES = 5;
-const RECENT_FILES_KEY = 'har_analyzer_recent_files';
+const HAR_RECENT_FILES_KEY = 'har_analyzer_recent_files';
+const LOG_RECENT_FILES_KEY = 'console_log_recent_files';
 
 const App: React.FC = () => {
-    const {
-        harData,
-        filteredEntries,
-        selectedEntry,
-        filters,
-        isLoading,
-        error,
-        loadHarFile,
-        setSelectedEntry,
-        updateFilters,
-        clearData,
-    } = useHarData();
+  // HAR Analyzer state
+  const harState = useHarData();
+  const [harShowUploader, setHarShowUploader] = useState(false);
+  const [harRecentFiles, setHarRecentFiles] = useState<RecentFile[]>([]);
+  const [harCurrentFileName, setHarCurrentFileName] = useState('');
 
-    const [showUploader, setShowUploader] = useState(false);
-    const [recentFiles, setRecentFiles] = useState<RecentFile[]>([]);
-    const [currentFileName, setCurrentFileName] = useState<string>('');
-    const [activeMainTab, setActiveMainTab] = useState<'analyzer' | 'sanitizer' | 'ai'>('analyzer');
+  // Console Log Analyzer state
+  const logState = useConsoleLogData();
+  const [logShowUploader, setLogShowUploader] = useState(false);
+  const [logRecentFiles, setLogRecentFiles] = useState<RecentFile[]>([]);
+  const [logCurrentFileName, setLogCurrentFileName] = useState('');
 
-    // Load recent files from localStorage on mount
-    useEffect(() => {
-        try {
-            const stored = localStorage.getItem(RECENT_FILES_KEY);
-            if (stored) {
-                const parsed = JSON.parse(stored);
-                setRecentFiles(parsed);
-            }
-        } catch (err) {
-            console.error('Failed to load recent files:', err);
-        }
-    }, []);
+  // Main navigation
+  const [activeTool, setActiveTool] = useState<'har' | 'console'>('har');
+  const [activeTab, setActiveTab] = useState<'analyzer' | 'sanitizer'>('analyzer');
 
-    // Save recent files to localStorage
-    const saveRecentFiles = (files: RecentFile[]) => {
-        try {
-            // Don't store the actual File object, just metadata
-            const metadata = files.map(f => ({
-                name: f.name,
-                timestamp: f.timestamp,
-            }));
-            localStorage.setItem(RECENT_FILES_KEY, JSON.stringify(metadata));
-        } catch (err) {
-            console.error('Failed to save recent files:', err);
-        }
+  // Load recent files for both tools
+  useEffect(() => {
+    try {
+      const harStored = localStorage.getItem(HAR_RECENT_FILES_KEY);
+      if (harStored) setHarRecentFiles(JSON.parse(harStored));
+
+      const logStored = localStorage.getItem(LOG_RECENT_FILES_KEY);
+      if (logStored) setLogRecentFiles(JSON.parse(logStored));
+    } catch (err) {
+      console.error('Failed to load recent files:', err);
+    }
+  }, []);
+
+  // HAR file handlers
+  const handleHarFileUpload = async (file: File) => {
+    await harState.loadHarFile(file);
+    setHarCurrentFileName(file.name);
+    setHarShowUploader(false);
+
+    const newRecentFile: RecentFile = {
+      name: file.name,
+      timestamp: Date.now(),
+      data: file,
     };
 
-    const handleFileUpload = async (file: File) => {
-        await loadHarFile(file);
-        setCurrentFileName(file.name);
-        setShowUploader(false);
+    setHarRecentFiles(prev => {
+      const filtered = prev.filter(f => f.name !== file.name);
+      const updated = [newRecentFile, ...filtered].slice(0, MAX_RECENT_FILES);
+      localStorage.setItem(HAR_RECENT_FILES_KEY, JSON.stringify(updated.map(f => ({
+        name: f.name,
+        timestamp: f.timestamp,
+      }))));
+      return updated;
+    });
+  };
 
-        // Add to recent files
-        const newRecentFile: RecentFile = {
-            name: file.name,
-            timestamp: Date.now(),
-            data: file,
-        };
+  // Console log file handlers
+  const handleLogFileUpload = async (file: File) => {
+    await logState.loadLogFile(file);
+    setLogCurrentFileName(file.name);
+    setLogShowUploader(false);
 
-        setRecentFiles(prev => {
-            // Remove duplicate if exists
-            const filtered = prev.filter(f => f.name !== file.name);
-            // Add new file at the beginning
-            const updated = [newRecentFile, ...filtered].slice(0, MAX_RECENT_FILES);
-            saveRecentFiles(updated);
-            return updated;
-        });
+    const newRecentFile: RecentFile = {
+      name: file.name,
+      timestamp: Date.now(),
+      data: file,
     };
 
-    const handleUploadNew = () => {
-        setShowUploader(true);
-        clearData();
-        setCurrentFileName('');
-    };
+    setLogRecentFiles(prev => {
+      const filtered = prev.filter(f => f.name !== file.name);
+      const updated = [newRecentFile, ...filtered].slice(0, MAX_RECENT_FILES);
+      localStorage.setItem(LOG_RECENT_FILES_KEY, JSON.stringify(updated.map(f => ({
+        name: f.name,
+        timestamp: f.timestamp,
+      }))));
+      return updated;
+    });
+  };
 
-    const handleLoadRecent = (file: File) => {
-        loadHarFile(file);
-        setCurrentFileName(file.name);
-        setShowUploader(false);
-    };
+  const harGroupedEntries = React.useMemo(() => {
+    if (!harState.harData || harState.filters.groupBy === 'all') return null;
+    const pages = harState.harData.log.pages || [];
+    return HarAnalyzer.groupByPage(harState.filteredEntries, pages);
+  }, [harState.harData, harState.filteredEntries, harState.filters.groupBy]);
 
-    const handleClearRecent = () => {
-        setRecentFiles([]);
-        localStorage.removeItem(RECENT_FILES_KEY);
-    };
+  const logGroupedEntries = React.useMemo(() => {
+    if (logState.filters.groupBy === 'all') return null;
+    if (logState.filters.groupBy === 'level') {
+      return ConsoleLogAnalyzer.groupByLevel(logState.filteredEntries);
+    }
+    return ConsoleLogAnalyzer.groupBySource(logState.filteredEntries);
+  }, [logState.filteredEntries, logState.filters.groupBy]);
 
-    const groupedEntries = React.useMemo(() => {
-        if (!harData || filters.groupBy === 'all') return null;
-        const pages = harData.log.pages || [];
-        return HarAnalyzer.groupByPage(filteredEntries, pages);
-    }, [harData, filteredEntries, filters.groupBy]);
-
-    return (
-        <div className="app-container">
-            <header className="app-header">
-                <div className="header-brand">
-                    <h1>HAR Analyzer</h1>
-                    <span className="header-divider">Network Analysis Tool</span>
-                </div>
-                <DarkModeToggle />
-            </header>
-
-
-
-
-            <main className="main-content">
-                {harData && !showUploader && (
-                    <div className="main-tabs">
-                        <button
-                            className={`main-tab ${activeMainTab === 'analyzer' ? 'active' : ''}`}
-                            onClick={() => setActiveMainTab('analyzer')}
-                        >
-                            Analyzer
-                        </button>
-                        <button
-                            className={`main-tab ${activeMainTab === 'sanitizer' ? 'active' : ''}`}
-                            onClick={() => setActiveMainTab('sanitizer')}
-                        >
-                            Sanitizer
-                        </button>
-                        
-                    </div>
-                )}
-                {isLoading && (
-                    <div className="loading-overlay">
-                        <div className="spinner"></div>
-                        <p>Loading HAR file...</p>
-                    </div>
-                )}
-
-                {error && (
-                    <div className="error-banner">
-                        <span className="error-icon">⚠️</span>
-                        <span>{error}</span>
-                        <button onClick={clearData} className="btn-dismiss">✕</button>
-                    </div>
-                )}
-
-
-                {(showUploader || !harData) && !isLoading ? (
-                    <div className="upload-section">
-                        <FileUploader
-                            onFileUpload={handleFileUpload}
-                            recentFiles={recentFiles}
-                            onClearRecent={handleClearRecent}
-                        />
-                    </div>
-                ) : harData ? (
-                    <>
-                        {activeMainTab === 'analyzer' ? (
-
-                            <>
-                                <Toolbar
-                                    onUploadNew={handleUploadNew}
-                                    onLoadRecent={handleLoadRecent}
-                                    recentFiles={recentFiles}
-                                    onClearRecent={handleClearRecent}
-                                    currentFileName={currentFileName}
-                                />
-                                <div className="analyzer-layout">
-                                    <aside className="sidebar-left">
-                                        <FilterPanel filters={filters} onFilterChange={updateFilters} />
-                                    </aside>
-
-                                    <div className="content-area">
-                                        <RequestList
-                                            entries={filteredEntries}
-                                            groupedEntries={groupedEntries}
-                                            selectedEntry={selectedEntry}
-                                            onSelectEntry={setSelectedEntry}
-                                            timingType={filters.timingType}
-                                        />
-                                    </div>
-
-                                    {selectedEntry && (
-                                        <aside className="sidebar-right">
-                                            <RequestDetails entry={selectedEntry} onClose={() => setSelectedEntry(null)} />
-                                        </aside>
-                                    )}
-                                </div>
-                                <FloatingAiChat harData={harData} />
-                            </>
-                            
-                        ) : activeMainTab === 'sanitizer' ? (
-                            <div className="sanitizer-wrapper">
-                                <HarSanitizer />
-                            </div>
-                        ) : (
-                            // AI tab
-                            <div className="ai-wrapper">
-                                <AiChat harData={harData} />
-                            </div>
-                        )}
-                    </>
-                ) : null}
-            </main>
+  return (
+    <div className="app-container">
+      <header className="app-header">
+        <div className="header-brand">
+          <svg className="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+            <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+            <line x1="12" y1="22.08" x2="12" y2="12"></line>
+          </svg>
+          <h1>
+            {activeTool === 'har' ? 'HAR Analyzer' : 'Console Log Analyzer'}
+          </h1>
+          <span className="header-divider">
+            {activeTool === 'har' ? 'Network Analysis Tool' : 'Console Log Analysis'}
+          </span>
         </div>
-    );
+        <DarkModeToggle />
+      </header>
+
+      <main className="main-content">
+        {/* Tool Selector */}
+        <div className="tool-selector">
+          <button
+            className={`tool-tab ${activeTool === 'har' ? 'active' : ''}`}
+            onClick={() => setActiveTool('har')}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+            </svg>
+            HAR
+          </button>
+          <button
+            className={`tool-tab ${activeTool === 'console' ? 'active' : ''}`}
+            onClick={() => setActiveTool('console')}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <polyline points="4 17 10 11 4 5"></polyline>
+              <line x1="12" y1="19" x2="20" y2="19"></line>
+            </svg>
+            Console
+          </button>
+        </div>
+
+
+        {/* HAR Analyzer Tool */}
+        {activeTool === 'har' && (
+          <>
+            {harState.harData && !harShowUploader && (
+              <div className="main-tabs">
+                <button
+                  className={`main-tab ${activeTab === 'analyzer' ? 'active' : ''}`}
+                  onClick={() => setActiveTab('analyzer')}
+                >
+                  Analyzer
+                </button>
+                <button
+                  className={`main-tab ${activeTab === 'sanitizer' ? 'active' : ''}`}
+                  onClick={() => setActiveTab('sanitizer')}
+                >
+                  Sanitizer
+                </button>
+              </div>
+            )}
+
+            {harState.isLoading && (
+              <div className="loading-overlay">
+                <div className="spinner"></div>
+                <p>Loading HAR file...</p>
+              </div>
+            )}
+
+            {harState.error && (
+              <div className="error-banner">
+                <span className="error-icon">⚠️</span>
+                <span>{harState.error}</span>
+                <button onClick={harState.clearData} className="btn-dismiss">✕</button>
+              </div>
+            )}
+
+            {(harShowUploader || !harState.harData) && !harState.isLoading ? (
+              <div className="upload-section">
+                <FileUploader
+                  onFileUpload={handleHarFileUpload}
+                  recentFiles={harRecentFiles}
+                  onClearRecent={() => {
+                    setHarRecentFiles([]);
+                    localStorage.removeItem(HAR_RECENT_FILES_KEY);
+                  }}
+                />
+              </div>
+            ) : harState.harData ? (
+              <>
+                {activeTab === 'analyzer' ? (
+                  <>
+                    <Toolbar
+                      onUploadNew={() => {
+                        setHarShowUploader(true);
+                        harState.clearData();
+                        setHarCurrentFileName('');
+                      }}
+                      onLoadRecent={handleHarFileUpload}
+                      recentFiles={harRecentFiles}
+                      onClearRecent={() => {
+                        setHarRecentFiles([]);
+                        localStorage.removeItem(HAR_RECENT_FILES_KEY);
+                      }}
+                      currentFileName={harCurrentFileName}
+                      harEntries={harState.filteredEntries}
+                      totalHarEntries={harState.harData?.log.entries.length || 0}
+                    />
+
+
+                    <div className="analyzer-layout">
+                      <aside className="sidebar-left">
+                        <FilterPanel
+                          filters={harState.filters}
+                          onFilterChange={harState.updateFilters}
+                        />
+                      </aside>
+                      <div className="content-area">
+                        <RequestList
+                          entries={harState.filteredEntries}
+                          groupedEntries={harGroupedEntries}
+                          selectedEntry={harState.selectedEntry}
+                          onSelectEntry={harState.setSelectedEntry}
+                          timingType={harState.filters.timingType}
+                        />
+                      </div>
+                      {harState.selectedEntry && (
+                        <aside className="sidebar-right">
+                          <RequestDetails
+                            entry={harState.selectedEntry}
+                            onClose={() => harState.setSelectedEntry(null)}
+                          />
+                        </aside>
+                      )}
+                    </div>
+                    <FloatingAiChat harData={harState.harData} />
+                  </>
+                ) : (
+                  <div className="sanitizer-wrapper">
+                    <HarSanitizer />
+                  </div>
+                )}
+              </>
+            ) : null}
+          </>
+        )}
+
+        {/* Console Log Analyzer Tool */}
+        {activeTool === 'console' && (
+          <>
+            {logState.isLoading && (
+              <div className="loading-overlay">
+                <div className="spinner"></div>
+                <p>Loading console log file...</p>
+              </div>
+            )}
+
+            {logState.error && (
+              <div className="error-banner">
+                <span className="error-icon">⚠️</span>
+                <span>{logState.error}</span>
+                <button onClick={logState.clearData} className="btn-dismiss">✕</button>
+              </div>
+            )}
+
+            {(logShowUploader || !logState.logData) && !logState.isLoading ? (
+              <div className="upload-section">
+                <ConsoleLogUploader
+                  onFileUpload={handleLogFileUpload}
+                  recentFiles={logRecentFiles}
+                  onClearRecent={() => {
+                    setLogRecentFiles([]);
+                    localStorage.removeItem(LOG_RECENT_FILES_KEY);
+                  }}
+                />
+              </div>
+            ) : logState.logData ? (
+              <>
+                <Toolbar
+                  onUploadNew={() => {
+                    setLogShowUploader(true);
+                    logState.clearData();
+                    setLogCurrentFileName('');
+                  }}
+                  onLoadRecent={handleLogFileUpload}
+                  recentFiles={logRecentFiles}
+                  onClearRecent={() => {
+                    setLogRecentFiles([]);
+                    localStorage.removeItem(LOG_RECENT_FILES_KEY);
+                  }}
+                  currentFileName={logCurrentFileName}
+                  filteredEntries={logState.filteredEntries}
+                  totalEntries={logState.logData?.entries.length || 0}
+                />
+
+
+                <div className="analyzer-layout">
+                  <aside className="sidebar-left">
+                    <ConsoleLogFilterPanel
+                      filters={logState.filters}
+                      onFilterChange={logState.updateFilters}
+                    />
+                    <ConsoleLogStatistics entries={logState.filteredEntries} />
+                  </aside>
+                  <div className="content-area">
+                    <ConsoleLogList
+                      entries={logState.filteredEntries}
+                      groupedEntries={logGroupedEntries}
+                      selectedEntry={logState.selectedEntry}
+                      onSelectEntry={logState.setSelectedEntry}
+                    />
+                  </div>
+                  {logState.selectedEntry && (
+                    <aside className="sidebar-right">
+                      <ConsoleLogDetails
+                        entry={logState.selectedEntry}
+                        onClose={() => logState.setSelectedEntry(null)}
+                      />
+                    </aside>
+
+                  )}
+                </div>
+                <FloatingAiChat logData={logState.logData} />
+              </>
+            ) : null}
+          </>
+        )}
+      </main>
+    </div>
+  );
 };
 
 export default App;
