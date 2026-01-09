@@ -16,14 +16,41 @@ const RequestDetails: React.FC<RequestDetailsProps> = ({ entry, onClose }) => {
     const [copied, setCopied] = useState(false);
 
     const copyToClipboard = async (text: string) => {
-        try {
+    try {
+        // Modern Clipboard API (works in HTTPS or localhost)
+        if (navigator.clipboard && window.isSecureContext) {
             await navigator.clipboard.writeText(text);
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
-        } catch (err) {
-            console.error('Failed to copy:', err);
+        } else {
+            // Fallback for HTTP contexts
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-999999px';
+            textArea.style.top = '-999999px';
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            
+            try {
+                const successful = document.execCommand('copy');
+                if (successful) {
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                } else {
+                    throw new Error('Copy command failed');
+                }
+            } catch (err) {
+                console.error('Fallback: Failed to copy:', err);
+            } finally {
+                document.body.removeChild(textArea);
+            }
         }
-    };
+    } catch (err) {
+        console.error('Failed to copy:', err);
+    }
+};
 
     const formatRequestForCopy = (): string => {
         let output = '';
