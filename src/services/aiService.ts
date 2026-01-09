@@ -3,6 +3,12 @@ import { pipeline, env } from '@xenova/transformers';
 import { v4 as uuidv4 } from 'uuid';
 import { HarFile, Entry } from '../types/har';
 
+const OLLAMA_BASE_URL =
+  import.meta.env.VITE_OLLAMA_URL || 'http://localhost:11435';
+const OLLAMA_MODEL =
+  import.meta.env.VITE_OLLAMA_MODEL || 'llama3.2';
+
+
 // Disable local model loading, use CDN
 env.allowLocalModels = false;
 
@@ -58,9 +64,9 @@ export class HarAIService {
   // Check if Ollama is running
   async checkConnection(): Promise<{ ollama: boolean; model: string | null }> {
     try {
-      const response = await fetch('http://localhost:11435/api/tags', {
-        method: 'GET',
-      });
+      const response = await fetch(`${OLLAMA_BASE_URL}/api/tags`, {
+  method: 'GET',
+});
 
       if (!response.ok) {
         return { ollama: false, model: null };
@@ -241,13 +247,13 @@ Instructions:
 
 Answer:`;
 
-    const response = await fetch('http://localhost:11434/api/generate', {
+    const response = await fetch(`${OLLAMA_BASE_URL}/api/generate`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'llama3.2',
+        model: OLLAMA_MODEL,
         prompt: prompt,
         stream: false,
         options: {
@@ -297,13 +303,13 @@ Instructions:
 
 Answer:`;
 
-    const response = await fetch('http://localhost:11434/api/generate', {
+    const response = await fetch(`${OLLAMA_BASE_URL}/api/generate`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'llama3.2',
+        model: OLLAMA_MODEL,
         prompt: prompt,
         stream: true,
         options: {

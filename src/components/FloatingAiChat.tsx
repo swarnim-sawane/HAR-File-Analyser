@@ -6,6 +6,10 @@ import { HarFile } from '../types/har';
 import './FloatingAiChat.css';
 import { ConsoleLogFile } from '../types/consolelog';
 
+const OLLAMA_BASE_URL =
+  import.meta.env.VITE_OLLAMA_URL || 'http://localhost:11435';
+const OLLAMA_MODEL =
+  import.meta.env.VITE_OLLAMA_MODEL || 'llama3.2';
 
 interface Message {
   id: string;
@@ -47,8 +51,9 @@ const FloatingAiChat: React.FC<FloatingAiChatProps> = ({ harData, logData }) => 
 
   const checkOllama = async () => {
     try {
-      const response = await fetch('http://localhost:11435/api/tags');
-      setOllamaConnected(response.ok);
+     const res = await fetch(`${OLLAMA_BASE_URL}/api/tags`);
+      setOllamaConnected(res.ok);
+    
     } catch {
       setOllamaConnected(false);
     }
@@ -122,11 +127,11 @@ Answer the user's questions about these console logs. Be concise and specific. I
 ${contextSummary}
 
 Answer the user's questions about this HAR file. Be concise and specific. If they paste a URL, analyze that specific request. Format your responses using markdown for better readability.`;
-      const response = await fetch('http://localhost:11435/api/generate', {
+      const response = await fetch(`${OLLAMA_BASE_URL}/api/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'llama3.2',
+          model: OLLAMA_MODEL,
           prompt: `${systemPrompt}\n\nUser: ${input}\n\nAssistant:`,
           stream: true,
           options: {

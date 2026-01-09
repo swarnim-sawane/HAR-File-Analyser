@@ -12,7 +12,8 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "strict": true,
-    "noUnusedLocals": false,        
+"types": ["vite/client"],    
+"noUnusedLocals": false,        
     "noUnusedParameters": false, 
     "noFallthroughCasesInSwitch": true
   },
