@@ -232,7 +232,9 @@ const App: React.FC = () => {
                     />
 
 
-                    <div className="analyzer-layout">
+                    <div className={`analyzer-layout ${harState.selectedEntry ? 'with-details' : ''}`}>
+
+
                       <aside className="sidebar-left">
                         <FilterPanel
                           filters={harState.filters}
@@ -318,7 +320,8 @@ const App: React.FC = () => {
                 />
 
 
-                <div className="analyzer-layout">
+                <div className={`analyzer-layout ${logState.selectedEntry ? 'with-details' : ''}`}>
+
                   <aside className="sidebar-left">
                     <ConsoleLogFilterPanel
                       filters={logState.filters}
