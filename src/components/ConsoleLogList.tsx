@@ -69,7 +69,8 @@ ${entry.message}${entry.source ? `\nSource: ${entry.source}${entry.lineNumber ? 
       `[${e.level.toUpperCase()}] ${formatDate(e.timestamp)}\n${e.message}${e.source ? `\nSource: ${e.source}${e.lineNumber ? `:${e.lineNumber}` : ''}` : ''}`
     ).join('\n\n');
     navigator.clipboard.writeText(text);
-    alert(`Copied ${selectedEntries.length} log entries to clipboard`);
+    setCopiedId('bulk-copy');
+    setTimeout(() => setCopiedId(null), 1500);
   };
 
   const handleClearSelection = () => {
@@ -125,6 +126,19 @@ ${entry.message}${entry.source ? `\nSource: ${entry.source}${entry.lineNumber ? 
     return colors[level] || '#6b7280';
   };
 
+  const getLevelBadgeClass = (level: LogLevel): string => {
+    const classes: Record<LogLevel, string> = {
+      error: 'status-4xx',
+      warn: 'status-3xx',
+      info: 'status-1xx',
+      log: 'status-0',
+      debug: 'status-0',
+      trace: 'status-0',
+      verbose: 'status-0',
+    };
+    return classes[level] || 'status-0';
+  };
+
   const renderSortIcon = (field: SortField) => {
     if (sortField !== field) {
       return <span className="sort-icon inactive">⇅</span>;
@@ -142,20 +156,9 @@ ${entry.message}${entry.source ? `\nSource: ${entry.source}${entry.lineNumber ? 
     return (
       <div
         key={entry.id}
-        className={`log-entry level-${entry.level} ${isSelected ? 'selected' : ''} ${isChecked ? 'checked' : ''}`}
+        className={`request-item ${isSelected ? 'selected' : ''} ${isChecked ? 'checked-item' : ''}`}
         onClick={() => onSelectEntry(entry)}
       >
-        <button
-          className={`copy-btn-hover ${copiedId === entry.id ? 'copied' : ''}`}
-          onClick={(e) => handleCopyMessage(entry, e)}
-          title="Copy log entry"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-          </svg>
-        </button>
-
         <div className="log-checkbox">
           <input
             type="checkbox"
@@ -166,14 +169,8 @@ ${entry.message}${entry.source ? `\nSource: ${entry.source}${entry.lineNumber ? 
           <span className="checkbox-custom"></span>
         </div>
         
-        <div className="log-level">
-          <span
-            className="level-badge-glow"
-            style={{ 
-              backgroundColor: getLevelColor(entry.level),
-              boxShadow: `0 0 12px ${getLevelColor(entry.level)}40, 0 2px 4px ${getLevelColor(entry.level)}30`
-            }}
-          >
+        <div className="log-level-cell">
+          <span className={`status-badge ${getLevelBadgeClass(entry.level)}`}>
             {entry.level.toUpperCase()}
           </span>
           {priority >= 4 && (
@@ -183,15 +180,15 @@ ${entry.message}${entry.source ? `\nSource: ${entry.source}${entry.lineNumber ? 
           )}
         </div>
         
-        <div className="log-timestamp">
+        <div className="log-timestamp-cell">
           {formatDate(entry.timestamp)}
         </div>
         
-        <div className="log-message-container">
+        <div className="log-message-cell">
           <div className="log-message">{entry.message}</div>
         </div>
         
-        <div className="log-source">
+        <div className="log-source-cell">
           {entry.source && (
             <>
               <span className="source-file">{entry.source.split('/').pop()}</span>
@@ -200,6 +197,19 @@ ${entry.message}${entry.source ? `\nSource: ${entry.source}${entry.lineNumber ? 
               )}
             </>
           )}
+        </div>
+
+        <div className="log-actions-cell">
+          <button
+            className={`btn-copy ${copiedId === entry.id ? 'copied' : ''}`}
+            onClick={(e) => handleCopyMessage(entry, e)}
+            title="Copy log entry"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+          </button>
         </div>
       </div>
     );
@@ -231,8 +241,8 @@ ${entry.message}${entry.source ? `\nSource: ${entry.source}${entry.lineNumber ? 
       const warnCount = groupEntries.filter(e => e.level === 'warn').length;
 
       return (
-        <div key={groupKey} className="log-group">
-          <div className="group-header">
+        <div key={groupKey} className="page-group">
+          <div className="page-header">
             <div className="group-title-container">
               <span className="group-title">{groupKey}</span>
               {(errorCount > 0 || warnCount > 0) && (
@@ -242,7 +252,7 @@ ${entry.message}${entry.source ? `\nSource: ${entry.source}${entry.lineNumber ? 
                 </span>
               )}
             </div>
-            <span className="group-count">{groupEntries.length} entries</span>
+            <span className="page-count">{groupEntries.length} entries</span>
           </div>
           <div className="group-entries">
             {sortedGroupEntries.map(renderEntry)}
@@ -257,8 +267,8 @@ ${entry.message}${entry.source ? `\nSource: ${entry.source}${entry.lineNumber ? 
   const allSelected = selectedIds.size === entries.length && entries.length > 0;
 
   return (
-    <div className="log-list">
-      <div className="log-list-summary glass-summary">
+    <div className="request-list">
+      <div className="log-summary-bar">
         <div className="summary-left">
           <div className="select-all-container">
             <input
@@ -275,15 +285,15 @@ ${entry.message}${entry.source ? `\nSource: ${entry.source}${entry.lineNumber ? 
             </label>
           </div>
           <span className="summary-text">
-            Showing <strong>{entries.length}</strong> entries
+            <strong>{entries.length}</strong> entries
           </span>
           {errorCount > 0 && (
-            <span className="summary-badge error-badge">
+            <span className="summary-badge status-4xx">
               {errorCount} error{errorCount !== 1 ? 's' : ''}
             </span>
           )}
           {warnCount > 0 && (
-            <span className="summary-badge warn-badge">
+            <span className="summary-badge status-3xx">
               {warnCount} warning{warnCount !== 1 ? 's' : ''}
             </span>
           )}
@@ -291,8 +301,11 @@ ${entry.message}${entry.source ? `\nSource: ${entry.source}${entry.lineNumber ? 
         <div className="summary-right">
           {selectedIds.size > 0 && (
             <div className="selection-actions">
-              <button className="action-btn-glass copy_all " onClick={handleCopySelected}>
-                Copy Selected
+              <button 
+                className={`action-btn-glass copy-all ${copiedId === 'bulk-copy' ? 'copied' : ''}`}
+                onClick={handleCopySelected}
+              >
+                {copiedId === 'bulk-copy' ? '✓ Copied' : 'Copy Selected'}
               </button>
               <button className="action-btn-glass clear" onClick={handleClearSelection}>
                 ✕ Clear
@@ -305,27 +318,32 @@ ${entry.message}${entry.source ? `\nSource: ${entry.source}${entry.lineNumber ? 
               className={`sort-button ${sortField === 'timestamp' ? 'active' : ''}`}
               onClick={() => handleSort('timestamp')}
             >
-              Time {sortField === 'timestamp' && renderSortIcon('timestamp')}
+              Time {renderSortIcon('timestamp')}
             </button>
             <button
               className={`sort-button ${sortField === 'severity' ? 'active' : ''}`}
               onClick={() => handleSort('severity')}
             >
-              Severity {sortField === 'severity' && renderSortIcon('severity')}
+              Severity {renderSortIcon('severity')}
             </button>
           </div>
         </div>
       </div>
       
-      <div className="log-list-header">
-        <div className="header-cell copy-cell"></div>
+      <div className="request-list-header">
         <div className="header-cell checkbox-cell"></div>
-        <div className="header-cell">Level</div>
-        <div className="header-cell">Timestamp</div>
+        <div className="header-cell" onClick={() => handleSort('severity')} style={{ cursor: 'pointer' }}>
+          Level {renderSortIcon('severity')}
+        </div>
+        <div className="header-cell" onClick={() => handleSort('timestamp')} style={{ cursor: 'pointer' }}>
+          Timestamp {renderSortIcon('timestamp')}
+        </div>
         <div className="header-cell">Message</div>
         <div className="header-cell">Source</div>
+        <div className="header-cell actions-header">Actions</div>
       </div>
-      <div className="log-list-body">
+      
+      <div className="request-list-content">
         {entries.length === 0 ? (
           <div className="no-data">No log entries match the current filters</div>
         ) : (

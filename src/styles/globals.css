@@ -48,6 +48,8 @@ body {
     -moz-osx-font-smoothing: grayscale;
 }
 
+
+
 .app-container {
     min-height: 100vh;
     display: flex;
@@ -420,41 +422,114 @@ body {
 }
 
 
-/* Main Layout - FIXED */
+/* Main Layout - FINAL PRODUCTION VERSION */
 .main-content {
-    flex: 1;
-    overflow: hidden;
+  flex: 1;
+  overflow: hidden;
 }
 
 .analyzer-layout {
-    display: grid;
-    grid-template-columns: 280px 1fr;
-    height: calc(100vh - 61px);
-    background: var(--bg-secondary);
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  height: calc(100vh - 61px);
+  background: var(--bg-secondary);
 }
 
 .analyzer-layout.with-details {
-    grid-template-columns: 280px 1fr 450px;
+  grid-template-columns: 280px 1fr 450px;
 }
 
 .content-area {
-    overflow: hidden;
-    background: var(--bg-primary);
-    border-left: 1px solid var(--border-color);
-    border-right: 1px solid var(--border-color);
+  overflow: hidden;
+  background: var(--bg-primary);
+  border-left: 1px solid var(--border-color);
+  border-right: 1px solid var(--border-color);
 }
 
 /* Sidebar */
 .sidebar-left {
-    background: var(--bg-primary);
-    overflow-y: auto;
-    height: 100%;
+  background: var(--bg-primary);
+  overflow-y: auto;
+  height: 100%;
 }
 
 .sidebar-right {
-    background: var(--bg-primary);
-    overflow-y: auto;
-    height: 100%;
+  background: var(--bg-primary);
+  overflow-y: auto;
+  height: 100%;
+}
+
+/* Responsive - Simplified */
+@media (max-width: 1600px) {
+  .analyzer-layout {
+    grid-template-columns: 260px 1fr;
+  }
+  
+  .analyzer-layout.with-details {
+    grid-template-columns: 260px 1fr 420px;
+  }
+}
+
+@media (max-width: 1400px) {
+  .analyzer-layout {
+    grid-template-columns: 240px 1fr;
+  }
+  
+  .analyzer-layout.with-details {
+    grid-template-columns: 240px 1fr 400px;
+  }
+}
+
+@media (max-width: 1200px) {
+  .analyzer-layout {
+    grid-template-columns: 220px 1fr;
+  }
+  
+  .analyzer-layout.with-details {
+    grid-template-columns: 220px 1fr 380px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .analyzer-layout {
+    grid-template-columns: 200px 1fr;
+  }
+  
+  /* Details panel becomes fixed overlay on smaller screens */
+  .analyzer-layout.with-details {
+    grid-template-columns: 200px 1fr;
+  }
+  
+  .sidebar-right {
+    position: fixed;
+    right: 0;
+    top: 61px;
+    bottom: 0;
+    width: 420px;
+    max-width: 90vw;
+    z-index: 50;
+    box-shadow: -2px 0 16px rgba(0, 0, 0, 0.1);
+  }
+}
+
+@media (max-width: 768px) {
+  .analyzer-layout {
+    grid-template-columns: 1fr;
+  }
+  
+  .sidebar-left {
+    display: none;
+  }
+  
+  .content-area {
+    border-left: none;
+    border-right: none;
+  }
+  
+  .sidebar-right {
+    width: 100vw;
+    max-width: 100vw;
+  }
 }
 
 /* Filter Panel - Minimal Design */
@@ -6344,5 +6419,296 @@ html.dark-mode .tool-tab.active {
     .tool-tab svg {
         width: 14px;
         height: 14px;
+    }
+}
+
+/* Console Log List Styling - Matching HAR Analyzer */
+
+.log-summary-bar {
+    padding: 16px 24px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.summary-left {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.summary-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.summary-text {
+    font-size: 13px;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.summary-text strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.summary-badge {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 6px;
+}
+
+/* Sort Controls */
+.sort-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sort-label {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    font-weight: 500;
+}
+
+.sort-button {
+    padding: 6px 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.sort-button:hover {
+    background: var(--bg-tertiary);
+    border-color: var(--text-primary);
+    color: var(--text-primary);
+}
+
+.sort-button.active {
+    background: var(--text-primary);
+    border-color: var(--text-primary);
+    color: white;
+}
+
+.sort-icon {
+    font-size: 12px;
+    opacity: 1;
+}
+
+.sort-icon.inactive {
+    opacity: 0.5;
+}
+
+/* Update Request List Header for Logs */
+.request-list .request-list-header {
+    padding: 16px 24px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    display: grid;
+    grid-template-columns: 40px 110px 180px 1fr 200px 70px;
+    gap: 16px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.header-cell.checkbox-cell {
+    padding: 0;
+}
+
+.header-cell.actions-header {
+    text-align: center;
+}
+
+/* Log Entry as Request Item */
+.request-item {
+    display: grid;
+    grid-template-columns: 40px 110px 180px 1fr 200px 70px;
+    gap: 16px;
+    padding: 12px 24px;
+    border-bottom: 1px solid var(--bg-secondary);
+    cursor: pointer;
+    transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+    align-items: center;
+    font-size: 13px;
+}
+
+.request-item:hover {
+    background: var(--bg-secondary);
+}
+
+.request-item.selected {
+    background: var(--bg-tertiary);
+    border-left: 3px solid var(--text-primary);
+    padding-left: 21px;
+}
+
+.request-item.checked-item {
+    background: rgba(37, 99, 235, 0.05);
+}
+
+/* Log Cell Styling */
+.log-level-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.log-timestamp-cell {
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
+    font-variant-numeric: tabular-nums;
+}
+
+.log-message-cell {
+    overflow: hidden;
+}
+
+.log-message {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.log-source-cell {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.source-file {
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.source-line {
+    color: var(--text-tertiary);
+}
+
+.log-actions-cell {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+/* Copy Button */
+.log-actions-cell .btn-copy {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    padding: 6px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    color: var(--text-secondary);
+}
+
+.request-item:hover .log-actions-cell .btn-copy {
+    opacity: 1;
+}
+
+.log-actions-cell .btn-copy:hover {
+    background: var(--bg-secondary);
+    border-color: var(--text-primary);
+    color: var(--text-primary);
+}
+
+.log-actions-cell .btn-copy.copied {
+    background: #f0fdf4;
+    border-color: var(--success);
+    color: var(--success);
+    opacity: 1;
+}
+
+/* Priority Indicator */
+.priority-indicator {
+    font-size: 11px;
+    color: var(--error);
+    font-weight: 700;
+}
+
+/* Group Title Container */
+.group-title-container {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.group-title {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.group-severity {
+    display: flex;
+    gap: 8px;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.error-count {
+    color: var(--error);
+}
+
+.warn-count {
+    color: var(--warning);
+}
+
+/* Responsive */
+@media (max-width: 1200px) {
+
+    .request-list .request-list-header,
+    .request-item {
+        grid-template-columns: 40px 100px 160px 1fr 180px 60px;
+    }
+}
+
+@media (max-width: 768px) {
+
+    .request-list .request-list-header,
+    .request-item {
+        grid-template-columns: 40px 90px 1fr 60px;
+    }
+
+    .log-source-cell,
+    .log-timestamp-cell,
+    .header-cell:nth-child(3),
+    .header-cell:nth-child(5) {
+        display: none;
+    }
+
+    .log-summary-bar {
+        flex-direction: column;
+        align-items: flex-start;
     }
 }
