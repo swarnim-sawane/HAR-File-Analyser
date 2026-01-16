@@ -26,9 +26,6 @@ interface RecentFile {
   data: File;
 }
 
-const MAX_RECENT_FILES = 5;
-const HAR_RECENT_FILES_KEY = 'har_analyzer_recent_files';
-const LOG_RECENT_FILES_KEY = 'console_log_recent_files';
 
 const App: React.FC = () => {
   // HAR Analyzer state
@@ -36,6 +33,7 @@ const App: React.FC = () => {
   const [harShowUploader, setHarShowUploader] = useState(false);
   const [harRecentFiles, setHarRecentFiles] = useState<RecentFile[]>([]);
   const [harCurrentFileName, setHarCurrentFileName] = useState('');
+
 
   // Console Log Analyzer state
   const logState = useConsoleLogData();
@@ -46,6 +44,37 @@ const App: React.FC = () => {
   // Main navigation
   const [activeTool, setActiveTool] = useState<'har' | 'console'>('har');
   const [activeTab, setActiveTab] = useState<'analyzer' | 'sanitizer'>('analyzer');
+
+  const MAX_RECENT_FILES = 5;
+  const HAR_RECENT_FILES_KEY = 'har_analyzer_recent_files';
+  const LOG_RECENT_FILES_KEY = 'console_log_recent_files';
+
+  // near other useState()s in App.tsx
+  const [detailsWidth, setDetailsWidth] = useState(450); // default matches CSS
+  const DETAILS_MIN = 320;
+  const DETAILS_MAX = 900;
+
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = detailsWidth;
+
+    const onMove = (ev: MouseEvent) => {
+      const delta = startX - ev.clientX; // dragging left increases width
+      const next = Math.max(DETAILS_MIN, Math.min(DETAILS_MAX, startWidth + delta));
+      setDetailsWidth(next);
+    };
+
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+
 
   // Load recent files for both tools
   useEffect(() => {
@@ -232,7 +261,10 @@ const App: React.FC = () => {
                     />
 
 
-                    <div className={`analyzer-layout ${harState.selectedEntry ? 'with-details' : ''}`}>
+                    <div
+                      className={`analyzer-layout ${harState.selectedEntry ? 'with-details' : ''}`}
+                      style={harState.selectedEntry ? ({ ['--details-width' as any]: `${detailsWidth}px` }) : undefined}
+                    >
 
 
                       <aside className="sidebar-left">
@@ -252,6 +284,7 @@ const App: React.FC = () => {
                       </div>
                       {harState.selectedEntry && (
                         <aside className="sidebar-right">
+                          <div className="resize-handle" onMouseDown={startResize} />
                           <RequestDetails
                             entry={harState.selectedEntry}
                             onClose={() => harState.setSelectedEntry(null)}
@@ -320,7 +353,10 @@ const App: React.FC = () => {
                 />
 
 
-                <div className={`analyzer-layout ${logState.selectedEntry ? 'with-details' : ''}`}>
+                <div
+                  className={`analyzer-layout ${logState.selectedEntry ? 'with-details' : ''}`}
+                  style={logState.selectedEntry ? ({ ['--details-width' as any]: `${detailsWidth}px` }) : undefined}
+                >
 
                   <aside className="sidebar-left">
                     <ConsoleLogFilterPanel
@@ -339,6 +375,7 @@ const App: React.FC = () => {
                   </div>
                   {logState.selectedEntry && (
                     <aside className="sidebar-right">
+                      <div className="resize-handle" onMouseDown={startResize} />
                       <ConsoleLogDetails
                         entry={logState.selectedEntry}
                         onClose={() => logState.setSelectedEntry(null)}
