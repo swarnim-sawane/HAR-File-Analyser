@@ -5,6 +5,17 @@ import { Entry } from '../types/har';
 import { ConsoleLogExporter } from '../utils/consoleLogExporter';
 import { HarExporter } from '../utils/harExporter';
 
+import { 
+  ExportIcon, 
+  UploadIcon, 
+  FileIcon, 
+  ChevronDownIcon,
+  ClockIcon,
+  TrashIcon,
+  FileTextIcon,
+  CheckIcon
+} from './Icons';
+
 interface RecentFile {
   name: string;
   timestamp: number;
@@ -37,8 +48,6 @@ const Toolbar: React.FC<ToolbarProps> = ({
 }) => {
   const [showRecent, setShowRecent] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
-
-  
 
   // Determine which mode we're in
   const isHarMode = harEntries !== undefined && harEntries.length > 0;
@@ -116,7 +125,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
       <div className="toolbar-left">
         {currentFileName && (
           <div className="current-file">
-            <span className="file-icon">📄</span>
+            <FileIcon />
             <span className="file-name">{currentFileName}</span>
           </div>
         )}
@@ -126,7 +135,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
         {canExport && (
           <div className="toolbar-dropdown">
             <button
-              className="btn-toolbar btn-export"
+              className={`btn-toolbar btn-export ${showExportMenu ? 'active' : ''}`}
               type="button"
               onClick={(e) => {
                 e.preventDefault();
@@ -134,13 +143,13 @@ const Toolbar: React.FC<ToolbarProps> = ({
                 setShowExportMenu(!showExportMenu);
               }}
             >
-              <span className="btn-icon"></span>
+              <ExportIcon />
               <span>Export</span>
-              <span className="dropdown-arrow">▼</span>
+              <ChevronDownIcon />
             </button>
             {showExportMenu && (
               <div 
-                className="dropdown-menu export-menu"
+                className={`dropdown-menu export-menu ${showExportMenu ? 'active' : ''}`}
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
@@ -158,32 +167,47 @@ const Toolbar: React.FC<ToolbarProps> = ({
                   }}
                   type="button"
                 >
-                  <span className="item-icon"></span>
+                  <FileTextIcon />
                   <div className="item-content">
                     <span className="item-title">Export as CSV</span>
                     <span className="item-description">Comma-separated values</span>
                   </div>
                 </button>
                 
+                {/* <button 
+                  className="dropdown-item" 
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleExportExcel();
+                  }}
+                  type="button"
+                >
+                  <FileTextIcon />
+                  <div className="item-content">
+                    <span className="item-title">Export as Excel</span>
+                    <span className="item-description">Microsoft Excel format</span>
+                  </div>
+                </button> */}
               </div>
             )}
           </div>
         )}
 
         <button className="btn-toolbar btn-upload" onClick={onUploadNew}>
-          <span>📁</span>
-          Upload New
+          <UploadIcon />
+          <span>Upload New</span>
         </button>
 
         {recentFiles.length > 0 && (
-          <div className="recent-files-dropdown">
+          <div className={`recent-files-dropdown ${showRecent ? 'active' : ''}`}>
             <button
               className="btn-toolbar btn-recent"
               onClick={() => setShowRecent(!showRecent)}
             >
-              <span></span>
-              Recent Files
-              <span className="dropdown-icon">{showRecent ? '▲' : '▼'}</span>
+              <ClockIcon />
+              <span>Recent Files</span>
+              <ChevronDownIcon />
             </button>
 
             {showRecent && (
@@ -197,7 +221,8 @@ const Toolbar: React.FC<ToolbarProps> = ({
                       setShowRecent(false);
                     }}
                   >
-                    Clear All
+                    <TrashIcon />
+                    <span>Clear All</span>
                   </button>
                 </div>
                 <div className="dropdown-content">
@@ -210,7 +235,10 @@ const Toolbar: React.FC<ToolbarProps> = ({
                         setShowRecent(false);
                       }}
                     >
-                      <span className="recent-file-name">{file.name}</span>
+                      <div className="recent-file-info">
+                        <FileIcon />
+                        <span className="recent-file-name">{file.name}</span>
+                      </div>
                       <span className="recent-file-time">{formatDate(file.timestamp)}</span>
                     </button>
                   ))}
