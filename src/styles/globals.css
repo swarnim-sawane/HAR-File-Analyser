@@ -7147,4 +7147,126 @@ html.dark-mode .dropdown-item:hover {
 }
 
 
+/* Upload Error Banner - Better positioned and styled */
+.upload-error-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  margin-bottom: 24px;
+  color: var(--error);
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.1);
+  animation: slideDown 0.3s ease;
+}
+
+html.dark-mode .upload-error-banner {
+  background: #450a0a;
+  border-color: #7f1d1d;
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.2);
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.upload-error-banner .error-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.upload-error-banner .error-message {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.upload-error-banner .btn-dismiss {
+  margin-left: auto;
+  background: none;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  color: var(--text-tertiary);
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all 0.2s;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.upload-error-banner .btn-dismiss:hover {
+  color: var(--error);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+/* Validation state for drop zone */
+.drop-zone.validating {
+  pointer-events: none;
+  opacity: 0.7;
+  border-color: var(--accent);
+  animation: pulse-border 2s infinite;
+}
+
+@keyframes pulse-border {
+  0%, 100% {
+    border-color: var(--accent);
+  }
+  50% {
+    border-color: var(--accent-hover);
+  }
+}
+
+/* Disabled state for recent files */
+.recent-file-card:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.recent-file-card:disabled:hover {
+  transform: none;
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
+}
+
+html.dark-mode .recent-file-card:disabled:hover {
+  background: var(--bg-tertiary);
+}
+
+/* Ensure proper spacing in file uploader */
+.file-uploader {
+  max-width: 600px;
+  width: 100%;
+  height: fit-content;
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .upload-error-banner {
+    padding: 14px 16px;
+    border-radius: 8px;
+    gap: 10px;
+  }
+
+  .upload-error-banner .error-message {
+    font-size: 13px;
+  }
+
+  .upload-error-banner .error-icon {
+    font-size: 18px;
+  }
+}
+
+
+
 
