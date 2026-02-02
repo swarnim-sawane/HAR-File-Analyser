@@ -18,10 +18,10 @@ interface ValidationResult {
   error?: string;
 }
 
-const FileUploader: React.FC<FileUploaderProps> = ({ 
-  onFileUpload, 
+const FileUploader: React.FC<FileUploaderProps> = ({
+  onFileUpload,
   recentFiles = [],
-  onClearRecent 
+  onClearRecent
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -100,7 +100,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({
 
     try {
       const validation = await validateHarFile(file);
-      
+
       if (!validation.isValid) {
         setError(validation.error || 'Invalid HAR file');
         setIsValidating(false);
@@ -136,7 +136,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({
     setIsDragging(false);
 
     const files = Array.from(e.dataTransfer.files);
-    const harFile = files.find(file => 
+    const harFile = files.find(file =>
       file.name.endsWith('.har') || file.type === 'application/json'
     );
 
@@ -163,13 +163,13 @@ const FileUploader: React.FC<FileUploaderProps> = ({
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
     const diffMins = Math.floor(diffMs / 60000);
-    
+
     if (diffMins < 1) return 'Just now';
     if (diffMins < 60) return `${diffMins}m ago`;
-    
+
     const diffHours = Math.floor(diffMins / 60);
     if (diffHours < 24) return `${diffHours}h ago`;
-    
+
     const diffDays = Math.floor(diffHours / 24);
     return `${diffDays}d ago`;
   };
@@ -178,8 +178,8 @@ const FileUploader: React.FC<FileUploaderProps> = ({
     <div className="file-uploader">
       {/* Error Banner - Fixed Position with Smooth Animation */}
       {error && (
-        <div 
-          className="error-banner" 
+        <div
+          className="error-banner"
           style={{
             position: 'fixed',
             top: '80px',
@@ -193,10 +193,30 @@ const FileUploader: React.FC<FileUploaderProps> = ({
             pointerEvents: isErrorVisible ? 'auto' : 'none'
           }}
         >
-          <span className="error-icon">⚠️</span>
+          <span className="error-icon">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="icon icon-tabler icons-tabler-outline icon-tabler-file-alert"
+            >
+              <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+              <path d="M14 3v4a1 1 0 0 0 1 1h4" />
+              <path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2" />
+              <path d="M12 17l.01 0" />
+              <path d="M12 11l0 3" />
+            </svg>
+          </span>
+
           <span>{error}</span>
-          <button 
-            className="btn-dismiss" 
+          <button
+            className="btn-dismiss"
             onClick={handleDismiss}
             style={{
               transition: 'opacity 0.2s ease',
@@ -217,12 +237,12 @@ const FileUploader: React.FC<FileUploaderProps> = ({
         onDrop={handleDrop}
       >
         <div className="upload-icon">
-          {isValidating ? '⏳' : '📁'}
+          {isValidating ? <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="icon icon-tabler icons-tabler-outline icon-tabler-hourglass-empty"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M6 20v-2a6 6 0 1 1 12 0v2a1 1 0 0 1 -1 1h-10a1 1 0 0 1 -1 -1" /><path d="M6 4v2a6 6 0 1 0 12 0v-2a1 1 0 0 0 -1 -1h-10a1 1 0 0 0 -1 1" /></svg> : '📁'}
         </div>
         <h2>{isValidating ? 'Validating HAR File...' : 'Upload HAR File'}</h2>
         <p>
-          {isValidating 
-            ? 'Please wait while we validate your file' 
+          {isValidating
+            ? 'Please wait while we validate your file'
             : 'Drag and drop your .har file here'}
         </p>
         {!isValidating && (
@@ -260,7 +280,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({
                 disabled={isValidating}
               >
                 <div className="recent-file-info">
-                  <span className="recent-file-icon">📄</span>
+                  <span className="recent-file-icon"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" className="icon icon-tabler icons-tabler-filled icon-tabler-file"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M12 2l.117 .007a1 1 0 0 1 .876 .876l.007 .117v4l.005 .15a2 2 0 0 0 1.838 1.844l.157 .006h4l.117 .007a1 1 0 0 1 .876 .876l.007 .117v9a3 3 0 0 1 -2.824 2.995l-.176 .005h-10a3 3 0 0 1 -2.995 -2.824l-.005 -.176v-14a3 3 0 0 1 2.824 -2.995l.176 -.005h5z" /><path d="M19 7h-4l-.001 -4.001z" /></svg></span>
                   <div className="recent-file-details">
                     <span className="recent-file-name">{file.name}</span>
                     <span className="recent-file-time">{formatDate(file.timestamp)}</span>
@@ -282,7 +302,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({
           <li>Right-click and select "Save all as HAR with content"</li>
         </ol>
         <div style={{ marginTop: '16px', padding: '12px', background: 'var(--bg-secondary)', borderRadius: '6px', fontSize: '13px', color: 'var(--text-secondary)' }}>
-          <strong>💡 Tip:</strong> Make sure to record some network activity before saving the HAR file. Empty HAR files will be rejected.
+          <strong><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="icon icon-tabler icons-tabler-outline icon-tabler-bulb"><path stroke="none" d="M0 0h24v24H0z" fill="none" /><path d="M3 12h1m8 -9v1m8 8h1m-15.4 -6.4l.7 .7m12.1 -.7l-.7 .7" /><path d="M9 16a5 5 0 1 1 6 0a3.5 3.5 0 0 0 -1 3a2 2 0 0 1 -4 0a3.5 3.5 0 0 0 -1 -3" /><path d="M9.7 17l4.6 0" /></svg> Tip:</strong> Make sure to record some network activity before saving the HAR file. Empty HAR files will be rejected.
         </div>
       </div>
     </div>
