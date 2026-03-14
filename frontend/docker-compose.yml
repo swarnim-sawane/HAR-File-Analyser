@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  # HAR Analyzer Web App
+  har-analyzer:
+    build: .
+    container_name: har-analyzer-app
+    ports:
+      - "3000:3000"
+    depends_on:
+      - ollama
+    restart: unless-stopped
+    networks:
+      - har-network
+
+  # Ollama AI Service
+  ollama:
+    image: ollama/ollama:latest
+    container_name: har-analyzer-ollama
+    ports:
+      - "11435:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+    networks:
+      - har-network
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+networks:
+  har-network:
+    driver: bridge
+
+volumes:
+  ollama-data:
+    driver: local

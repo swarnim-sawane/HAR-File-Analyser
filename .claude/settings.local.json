@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(\"c:/Users/ssawane/Documents/Work/HAR LATEST/Deployed:*)",
+      "Bash(npx tsc:*)"
+    ]
+  }
+}
