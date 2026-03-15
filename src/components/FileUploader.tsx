@@ -1,7 +1,15 @@
-// src/components/FileUploader.tsx
-import React, { useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { chunkedUploader, UploadProgress, UploadResult } from '../services/chunkedUploader';
 import { wsClient } from '../services/websocketClient';
+import {
+  AlertIcon,
+  ChevronRightIcon,
+  CloseIcon,
+  FileTextIcon,
+  InfoIcon,
+  RefreshIcon,
+  UploadIcon,
+} from './Icons';
 
 interface RecentFile {
   name: string;
@@ -10,7 +18,7 @@ interface RecentFile {
 }
 
 interface FileUploaderProps {
-  onFileUpload: (result: UploadResult) => void; // ⚠️ Changed from File → UploadResult
+  onFileUpload: (result: UploadResult) => void | Promise<void>;
   recentFiles?: RecentFile[];
   onClearRecent?: () => void;
 }
@@ -20,17 +28,17 @@ interface ValidationResult {
   error?: string;
 }
 
-const FileUploader: React.FC<FileUploaderProps> = ({ 
-  onFileUpload, 
+const FileUploader: React.FC<FileUploaderProps> = ({
+  onFileUpload,
   recentFiles = [],
-  onClearRecent 
+  onClearRecent,
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isValidating, setIsValidating] = useState(false);
   const [isErrorVisible, setIsErrorVisible] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);                      // NEW
-  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null); // NEW
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
 
   useEffect(() => {
     if (error) {
@@ -40,7 +48,6 @@ const FileUploader: React.FC<FileUploaderProps> = ({
     }
   }, [error]);
 
-  // ---- validateHarFile: UNCHANGED from main ----
   const validateHarFile = async (file: File): Promise<ValidationResult> => {
     try {
       const text = await file.text();
@@ -58,7 +65,6 @@ const FileUploader: React.FC<FileUploaderProps> = ({
     }
   };
 
-  // ---- processFile: validate first, then chunked upload ----
   const processFile = async (file: File) => {
     setError(null);
     setIsValidating(true);
@@ -80,11 +86,10 @@ const FileUploader: React.FC<FileUploaderProps> = ({
       });
 
       wsClient.subscribeToFile(result.fileId);
-      onFileUpload(result);
+      await onFileUpload(result);
 
       setIsUploading(false);
       setUploadProgress(null);
-
     } catch (err) {
       setError((err as Error).message || 'Upload failed. Please try again.');
       setIsValidating(false);
@@ -93,19 +98,38 @@ const FileUploader: React.FC<FileUploaderProps> = ({
     }
   };
 
-  // ---- All handlers: UNCHANGED from main ----
-  const handleDismiss = () => { setIsErrorVisible(false); setTimeout(() => setError(null), 300); };
-  const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragging(true); }, []);
-  const handleDragLeave = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragging(false); }, []);
+  const handleDismiss = () => {
+    setIsErrorVisible(false);
+    setTimeout(() => setError(null), 300);
+  };
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  }, []);
+
   const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault(); setIsDragging(false);
-    const harFile = Array.from(e.dataTransfer.files).find(f => f.name.endsWith('.har') || f.type === 'application/json');
-    if (harFile) processFile(harFile); else setError('Please upload a valid .har file');
+    e.preventDefault();
+    setIsDragging(false);
+    const harFile = Array.from(e.dataTransfer.files).find((f) => f.name.endsWith('.har') || f.type === 'application/json');
+    if (harFile) processFile(harFile);
+    else setError('Please upload a valid .har file');
   }, []);
+
   const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]; if (file) processFile(file);
+    const file = e.target.files?.[0];
+    if (file) processFile(file);
   }, []);
-  const handleRecentFileClick = async (file: File) => { await processFile(file); };
+
+  const handleRecentFileClick = async (file: File) => {
+    await processFile(file);
+  };
+
   const formatDate = (timestamp: number) => {
     const diffMins = Math.floor((Date.now() - timestamp) / 60000);
     if (diffMins < 1) return 'Just now';
@@ -115,33 +139,71 @@ const FileUploader: React.FC<FileUploaderProps> = ({
     return `${Math.floor(diffHours / 24)}d ago`;
   };
 
-  // ---- JSX: main's UI + progress bar added ----
   return (
     <div className="file-uploader">
       {error && (
-        <div className="error-banner" style={{ position: 'fixed', top: '80px', left: '48%', transform: `translateX(-50%) translateY(${isErrorVisible ? '0' : '-20px'})`, zIndex: 1000, maxWidth: '550px', width: '90%', opacity: isErrorVisible ? 1 : 0, transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)', pointerEvents: isErrorVisible ? 'auto' : 'none' }}>
-          <span className="error-icon">⚠️</span>
+        <div
+          className="error-banner"
+          style={{
+            position: 'fixed',
+            top: '80px',
+            left: '48%',
+            transform: `translateX(-50%) translateY(${isErrorVisible ? '0' : '-20px'})`,
+            zIndex: 1000,
+            maxWidth: '550px',
+            width: '90%',
+            opacity: isErrorVisible ? 1 : 0,
+            transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+            pointerEvents: isErrorVisible ? 'auto' : 'none',
+          }}
+        >
+          <span className="uploader-inline-icon">
+            <AlertIcon />
+          </span>
           <span>{error}</span>
-          <button className="btn-dismiss" onClick={handleDismiss} style={{ transition: 'opacity 0.2s ease', cursor: 'pointer' }} onMouseEnter={(e) => e.currentTarget.style.opacity = '0.7'} onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}>✕</button>
+          <button
+            className="btn-dismiss"
+            onClick={handleDismiss}
+            style={{ transition: 'opacity 0.2s ease', cursor: 'pointer' }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.opacity = '0.7';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.opacity = '1';
+            }}
+          >
+            <span className="uploader-inline-icon uploader-close-icon">
+              <CloseIcon />
+            </span>
+          </button>
         </div>
       )}
 
       <div className={`drop-zone ${isDragging ? 'dragging' : ''} ${isValidating || isUploading ? 'validating' : ''}`} onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
-        {/* NEW: Show progress bar only during upload */}
         {isUploading && uploadProgress ? (
           <div className="upload-progress-view">
-            <div className="upload-icon">⏳</div>
+            <div className="uploader-leading-icon is-active is-uploading" aria-hidden="true">
+              <UploadIcon />
+            </div>
             <h2>Uploading...</h2>
             <p className="upload-filename">{uploadProgress.fileName}</p>
             <div className="progress-bar">
-              <div className="progress-fill" style={{ width: `${uploadProgress.progress}%` }}></div>
+              <div className="progress-fill" style={{ width: `${uploadProgress.progress}%` }} />
+              <div className="progress-glow" style={{ width: `${uploadProgress.progress}%` }} />
             </div>
-            <p className="upload-stats">Chunk {uploadProgress.uploadedChunks} of {uploadProgress.totalChunks} • {Math.round(uploadProgress.progress)}%</p>
+            <p className="upload-stats">
+              Chunk {uploadProgress.uploadedChunks} of {uploadProgress.totalChunks} - {Math.round(uploadProgress.progress)}%
+            </p>
           </div>
         ) : (
-          // Original main UI — completely untouched
           <>
-            <div className="upload-icon">{isValidating ? '⏳' : '📁'}</div>
+            <div className={`uploader-leading-icon ${isValidating ? 'is-active is-spinning' : ''}`} aria-hidden="true">
+              {isValidating ? (
+                <RefreshIcon />
+              ) : (
+                <UploadIcon />
+              )}
+            </div>
             <h2>{isValidating ? 'Validating HAR File...' : 'Upload HAR File'}</h2>
             <p>{isValidating ? 'Please wait while we validate your file' : 'Drag and drop your .har file here'}</p>
             {!isValidating && !isUploading && (
@@ -158,19 +220,27 @@ const FileUploader: React.FC<FileUploaderProps> = ({
         <div className="recent-files-section">
           <div className="recent-files-header">
             <h3>Recent Files</h3>
-            {onClearRecent && <button className="btn-clear-all" onClick={onClearRecent}>Clear All</button>}
+            {onClearRecent && (
+              <button className="btn-clear-all" onClick={onClearRecent}>
+                Clear All
+              </button>
+            )}
           </div>
           <div className="recent-files-list">
             {recentFiles.map((file, index) => (
               <button key={index} className="recent-file-card" onClick={() => handleRecentFileClick(file.data)} disabled={isValidating || isUploading}>
                 <div className="recent-file-info">
-                  <span className="recent-file-icon">📄</span>
+                  <span className="recent-file-icon">
+                    <FileTextIcon />
+                  </span>
                   <div className="recent-file-details">
                     <span className="recent-file-name">{file.name}</span>
                     <span className="recent-file-time">{formatDate(file.timestamp)}</span>
                   </div>
                 </div>
-                <span className="recent-file-arrow">→</span>
+                <span className="recent-file-arrow">
+                  <ChevronRightIcon />
+                </span>
               </button>
             ))}
           </div>
@@ -185,8 +255,13 @@ const FileUploader: React.FC<FileUploaderProps> = ({
           <li>Reload the page to capture network activity</li>
           <li>Right-click and select "Save all as HAR with content"</li>
         </ol>
-        <div style={{ marginTop: '16px', padding: '12px', background: 'var(--bg-secondary)', borderRadius: '6px', fontSize: '13px', color: 'var(--text-secondary)' }}>
-          <strong>💡 Tip:</strong> Make sure to record some network activity before saving the HAR file. Empty HAR files will be rejected.
+        <div className="uploader-tip-box">
+          <span className="uploader-tip-icon">
+            <InfoIcon />
+          </span>
+          <div>
+            <strong>Tip:</strong> Make sure to record some network activity before saving the HAR file. Empty HAR files will be rejected.
+          </div>
         </div>
       </div>
     </div>

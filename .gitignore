@@ -79,8 +79,6 @@ Desktop.ini
 .rts2_cache_es/
 .rts2_cache_umd/
 
-echo "backend/processed/" >> .gitignore
-echo "backend/uploads/" >> .gitignore
 
 # Optional REPL history
 .node_repl_history
@@ -135,3 +133,9 @@ $RECYCLE.BIN/
 *.bak
 *.backup
 *.old
+
+
+backend/processed/
+backend/uploads/
+backend/processed/
+backend/uploads/

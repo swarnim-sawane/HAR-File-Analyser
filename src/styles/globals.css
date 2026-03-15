@@ -190,19 +190,23 @@ body {
 }
 
 .drop-zone {
-    border: 2px dashed var(--border-color);
+    border: 1px dashed var(--border-color);
     border-radius: 12px;
-    padding: 64px 32px;
+    padding: 48px 32px;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     cursor: pointer;
     background: var(--bg-primary);
     margin-bottom: 32px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
 }
 
 .drop-zone:hover,
 .drop-zone.dragging {
-    border-color: var(--text-primary);
-    background: var(--bg-secondary);
+    border-color: var(--accent);
+    background: rgba(37, 99, 235, 0.04);
 }
 
 .upload-icon {
@@ -413,7 +417,7 @@ body {
     }
 
     .drop-zone {
-        padding: 48px 24px;
+        padding: 40px 24px;
     }
 
     .file-uploader {
@@ -1948,7 +1952,8 @@ html.dark-mode .app-header {
 
 html.dark-mode .drop-zone:hover,
 html.dark-mode .drop-zone.dragging {
-    background: var(--bg-tertiary);
+    background: rgba(59, 130, 246, 0.07);
+    border-color: var(--accent);
 }
 
 html.dark-mode .upload-button {
@@ -7270,3 +7275,214 @@ html.dark-mode .recent-file-card:disabled:hover {
 
 
 
+/* Uploader icons: shared Icons.tsx + minimal style */
+.uploader-inline-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+.uploader-inline-icon svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.uploader-close-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.uploader-leading-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 20px;
+  color: var(--text-secondary);
+  line-height: 0;
+  transition: color 0.2s ease, transform 0.2s ease;
+}
+
+.uploader-leading-icon svg {
+  width: 24px;
+  height: 24px;
+  display: block;
+}
+
+.uploader-leading-icon.is-active {
+  color: var(--accent);
+}
+
+.uploader-leading-icon.is-spinning svg {
+  animation: uploader-spin 1s linear infinite;
+}
+
+.uploader-leading-icon.is-uploading {
+  animation: uploader-float 1.8s ease-in-out infinite;
+}
+
+.upload-progress-view {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.upload-filename {
+  max-width: 100%;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.progress-bar {
+  position: relative;
+  width: min(420px, 100%);
+  height: 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #1d4ed8, #3b82f6 55%, #60a5fa);
+  transition: width 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.progress-glow {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0.45;
+  background: linear-gradient(100deg, transparent 20%, rgba(255, 255, 255, 0.45) 50%, transparent 80%);
+  animation: uploader-shimmer 1.5s linear infinite;
+}
+
+.upload-stats {
+  margin-top: 10px;
+  margin-bottom: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.recent-file-icon {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+}
+
+.recent-file-icon svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.recent-file-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+}
+
+.recent-file-arrow svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+  transition: transform 0.2s ease, color 0.2s ease;
+}
+
+.recent-file-card:hover .recent-file-arrow svg {
+  transform: translateX(3px);
+  color: var(--text-primary);
+}
+
+.uploader-tip-box {
+  margin-top: 16px;
+  padding: 12px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  line-height: 1.45;
+}
+
+.uploader-tip-icon {
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.uploader-tip-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.drop-zone.validating {
+  opacity: 0.95;
+  border-color: var(--accent);
+  background: rgba(37, 99, 235, 0.03);
+}
+
+@keyframes uploader-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes uploader-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes uploader-shimmer {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(120%);
+  }
+}
+
+html.dark-mode .uploader-leading-icon {
+  color: var(--text-secondary);
+}
+
+html.dark-mode .uploader-leading-icon.is-active {
+  color: #60a5fa;
+}
+
+html.dark-mode .progress-bar {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+html.dark-mode .uploader-tip-box {
+  background: var(--bg-tertiary);
+}

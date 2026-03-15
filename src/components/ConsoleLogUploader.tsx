@@ -1,6 +1,5 @@
-// src/components/ConsoleLogUploader.tsx
-
 import React, { useCallback, useState } from 'react';
+import { ChevronRightIcon, ConsoleIcon, FileTextIcon } from './Icons';
 
 interface RecentFile {
   name: string;
@@ -17,7 +16,7 @@ interface ConsoleLogUploaderProps {
 const ConsoleLogUploader: React.FC<ConsoleLogUploaderProps> = ({
   onFileUpload,
   recentFiles = [],
-  onClearRecent
+  onClearRecent,
 }) => {
   const [isDragging, setIsDragging] = useState(false);
 
@@ -36,9 +35,9 @@ const ConsoleLogUploader: React.FC<ConsoleLogUploaderProps> = ({
     setIsDragging(false);
 
     const files = Array.from(e.dataTransfer.files);
-    const logFile = files.find(file =>
-      file.name.endsWith('.log') || 
-      file.name.endsWith('.txt') || 
+    const logFile = files.find((file) =>
+      file.name.endsWith('.log') ||
+      file.name.endsWith('.txt') ||
       file.name.endsWith('.json') ||
       file.type === 'text/plain' ||
       file.type === 'application/json'
@@ -82,7 +81,9 @@ const ConsoleLogUploader: React.FC<ConsoleLogUploaderProps> = ({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        <div className="upload-icon">📋</div>
+        <div className="uploader-leading-icon" aria-hidden="true">
+          <ConsoleIcon />
+        </div>
         <h2>Upload Console Log File</h2>
         <p>Drag and drop your log file here</p>
         <p className="supported-formats">Supports: .log, .txt, .json</p>
@@ -115,13 +116,17 @@ const ConsoleLogUploader: React.FC<ConsoleLogUploaderProps> = ({
                 onClick={() => onFileUpload(file.data)}
               >
                 <div className="recent-file-info">
-                  <span className="recent-file-icon">📄</span>
+                  <span className="recent-file-icon">
+                    <FileTextIcon />
+                  </span>
                   <div className="recent-file-details">
                     <div className="recent-file-name">{file.name}</div>
                     <div className="recent-file-time">{formatDate(file.timestamp)}</div>
                   </div>
                 </div>
-                <span className="recent-file-arrow">→</span>
+                <span className="recent-file-arrow">
+                  <ChevronRightIcon />
+                </span>
               </button>
             ))}
           </div>

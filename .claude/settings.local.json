@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/ssawane/Documents/Work/HAR/ LATEST/Deployed/ build/HAR-File-Analyser/src/**)",
+      "Read(//c/Users/ssawane/Documents/Work/HAR/ LATEST/Deployed/ build/HAR-File-Analyser/src/components/**)",
+      "Read(//c/Users/ssawane/Documents/Work/HAR/ LATEST/Deployed/ build/HAR-File-Analyser/src/styles/**)"
+    ]
+  }
+}
