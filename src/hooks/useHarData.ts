@@ -12,6 +12,7 @@ export interface UseHarDataReturn {
   isLoading: boolean;
   error: string | null;
   loadHarFile: (file: File) => Promise<void>;
+  loadHarData: (harData: HarFile) => Promise<void>;
   setSelectedEntry: (entry: Entry | null) => void;
   updateFilters: (filters: Partial<FilterOptions>) => void;
   clearData: () => void;
@@ -55,6 +56,13 @@ export const useHarData = (): UseHarDataReturn => {
       setIsLoading(false);
     }
   }, [parser]);
+
+  const loadHarData = useCallback(async (incomingHarData: HarFile) => {
+    setError(null);
+    setHarData(incomingHarData);
+    setSelectedEntry(null);
+    setIsLoading(false);
+  }, []);
 
   const updateFilters = useCallback((newFilters: Partial<FilterOptions>) => {
     setFilters(prev => ({ ...prev, ...newFilters }));
@@ -105,7 +113,7 @@ export const useHarData = (): UseHarDataReturn => {
   const filteredEntries = useMemo(() => {
     if (!harData) return [];
 
-    let entries = parser.getEntries();
+    let entries = harData.log.entries || [];
 
     // Filter by status codes
     const activeStatusCodes = Object.entries(filters.statusCodes)
@@ -135,7 +143,7 @@ export const useHarData = (): UseHarDataReturn => {
     }
 
     return entries;
-  }, [harData, filters, parser]);
+  }, [harData, filters]);
 
   return {
     harData,
@@ -145,6 +153,7 @@ export const useHarData = (): UseHarDataReturn => {
     isLoading,
     error,
     loadHarFile,
+    loadHarData,
     setSelectedEntry,
     updateFilters,
     clearData,

@@ -19,6 +19,8 @@ import './styles/globals.css';
 import DarkModeToggle from './components/DarkModeToggle';
 import HarSanitizer from './components/HarSanitizer';
 import FloatingAiChat from './components/FloatingAiChat';
+import { UploadResult, chunkedUploader } from './services/chunkedUploader';
+import { apiClient } from './services/apiClient';
 
 interface RecentFile {
   name: string;
@@ -90,19 +92,15 @@ const App: React.FC = () => {
   }, []);
 
   // HAR file handlers
-  const handleHarFileUpload = async (file: File) => {
-    await harState.loadHarFile(file);
-    setHarCurrentFileName(file.name);
-    setHarShowUploader(false);
-
+  const registerRecentHarFile = (fileName: string, fileObj: File) => {
     const newRecentFile: RecentFile = {
-      name: file.name,
+      name: fileName,
       timestamp: Date.now(),
-      data: file,
+      data: fileObj,
     };
 
     setHarRecentFiles(prev => {
-      const filtered = prev.filter(f => f.name !== file.name);
+      const filtered = prev.filter(f => f.name !== fileName);
       const updated = [newRecentFile, ...filtered].slice(0, MAX_RECENT_FILES);
       localStorage.setItem(HAR_RECENT_FILES_KEY, JSON.stringify(updated.map(f => ({
         name: f.name,
@@ -110,6 +108,27 @@ const App: React.FC = () => {
       }))));
       return updated;
     });
+  };
+
+  const handleHarFileUpload = async (result: UploadResult) => {
+    setHarCurrentFileName(result.fileName);
+    setHarShowUploader(false);
+
+    const harData = await apiClient.getHarData(result.fileId);
+    await harState.loadHarData(harData);
+
+    // We only have backend metadata here, not the original disk file.
+    registerRecentHarFile(result.fileName, new File([], result.fileName));
+  };
+
+  const handleRecentHarFile = async (file: File) => {
+    try {
+      const result = await chunkedUploader.uploadFile(file, 'har', () => {});
+      await handleHarFileUpload(result);
+      registerRecentHarFile(file.name, file);
+    } catch (err) {
+      console.error('Failed to re-upload recent file:', err);
+    }
   };
 
   // Console log file handlers
@@ -249,7 +268,7 @@ const App: React.FC = () => {
                         harState.clearData();
                         setHarCurrentFileName('');
                       }}
-                      onLoadRecent={handleHarFileUpload}
+                      onLoadRecent={handleRecentHarFile}
                       recentFiles={harRecentFiles}
                       onClearRecent={() => {
                         setHarRecentFiles([]);
