@@ -3,13 +3,11 @@ import { pipeline, env } from '@xenova/transformers';
 import { v4 as uuidv4 } from 'uuid';
 import { HarFile, Entry } from '../types/har';
 
-const OLLAMA_BASE_URL =
-  import.meta.env.VITE_OLLAMA_URL || 'http://localhost:11435';
-const OLLAMA_MODEL =
-  import.meta.env.VITE_OLLAMA_MODEL || 'llama3.2';
+// ✅ Points to your backend proxy, not OCA directly
+const BACKEND_AI_URL = import.meta.env.VITE_BACKEND_URL
+  ? `${import.meta.env.VITE_BACKEND_URL}/api/ai`
+  : 'http://localhost:3001/api/ai';
 
-
-// Disable local model loading, use CDN
 env.allowLocalModels = false;
 
 interface ChunkMetadata {
@@ -46,14 +44,9 @@ export class HarAIService {
     this.initEmbedder();
   }
 
-  // Initialize the embedding model
   private async initEmbedder() {
     try {
-      // Use a lightweight embedding model that runs in browser
-      this.embedder = await pipeline(
-        'feature-extraction',
-        'Xenova/all-MiniLM-L6-v2'
-      );
+      this.embedder = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
       this.isEmbedderReady = true;
     } catch (error) {
       console.error('Failed to initialize embedder:', error);
@@ -61,43 +54,26 @@ export class HarAIService {
     }
   }
 
-  // Check if Ollama is running
-  async checkConnection(): Promise<{ ollama: boolean; model: string | null }> {
+  // ✅ UPDATED: Calls backend /api/ai/status instead of Ollama
+  async checkConnection(): Promise<{ connected: boolean; model: string | null }> {
     try {
-      const response = await fetch(`${OLLAMA_BASE_URL}/api/tags`, {
-  method: 'GET',
-});
-
-      if (!response.ok) {
-        return { ollama: false, model: null };
-      }
-
+      const response = await fetch(`${BACKEND_AI_URL}/status`);
+      if (!response.ok) return { connected: false, model: null };
       const data = await response.json();
-      const hasLlama = data.models?.some((m: any) => 
-        m.name.includes('llama3.2') || m.name.includes('llama3')
-      );
-
-      return {
-        ollama: true,
-        model: hasLlama ? 'llama3.2' : null,
-      };
-    } catch (error) {
-      return { ollama: false, model: null };
+      return { connected: data.connected, model: data.model };
+    } catch {
+      return { connected: false, model: null };
     }
   }
 
-  // Chunk HAR file into semantic pieces
+  // ---- Chunking, embeddings, cosine similarity — ALL UNCHANGED ----
   private chunkHarFile(harFile: HarFile): { chunks: string[]; metadata: ChunkMetadata[] } {
     const chunks: string[] = [];
     const metadata: ChunkMetadata[] = [];
 
     harFile.log.entries.forEach((entry, index) => {
       let domain = '';
-      try {
-        domain = new URL(entry.request.url).hostname;
-      } catch {
-        domain = 'unknown';
-      }
+      try { domain = new URL(entry.request.url).hostname; } catch { domain = 'unknown'; }
 
       const mimeType = entry.response.content.mimeType;
       let resourceType = 'other';
@@ -107,7 +83,7 @@ export class HarAIService {
       else if (mimeType.includes('json')) resourceType = 'api';
       else if (mimeType.includes('html')) resourceType = 'document';
 
-      const chunk = `
+      chunks.push(`
 Request #${index + 1}
 URL: ${entry.request.url}
 Method: ${entry.request.method}
@@ -123,213 +99,91 @@ Timing:
   Send: ${entry.timings.send}ms
   Wait: ${entry.timings.wait}ms
   Receive: ${entry.timings.receive}ms
-      `.trim();
+      `.trim());
 
-      chunks.push(chunk);
       metadata.push({
-        id: uuidv4(),
-        entryIndex: index,
-        url: entry.request.url,
-        method: entry.request.method,
-        status: entry.response.status,
-        domain,
-        resourceType,
-        timestamp: entry.startedDateTime,
+        id: uuidv4(), entryIndex: index, url: entry.request.url,
+        method: entry.request.method, status: entry.response.status,
+        domain, resourceType, timestamp: entry.startedDateTime,
       });
     });
 
     return { chunks, metadata };
   }
 
-  // Calculate cosine similarity
   private cosineSimilarity(a: number[], b: number[]): number {
-    let dotProduct = 0;
-    let normA = 0;
-    let normB = 0;
-
+    let dotProduct = 0, normA = 0, normB = 0;
     for (let i = 0; i < a.length; i++) {
-      dotProduct += a[i] * b[i];
-      normA += a[i] * a[i];
-      normB += b[i] * b[i];
+      dotProduct += a[i] * b[i]; normA += a[i] * a[i]; normB += b[i] * b[i];
     }
-
     return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
   }
 
-  // Generate embedding for text
   private async generateEmbedding(text: string): Promise<number[]> {
-    if (!this.isEmbedderReady) {
-      await this.initEmbedder();
-    }
-
-    const output = await this.embedder(text, {
-      pooling: 'mean',
-      normalize: true,
-    });
-
+    if (!this.isEmbedderReady) await this.initEmbedder();
+    const output = await this.embedder(text, { pooling: 'mean', normalize: true });
     return Array.from(output.data);
   }
 
-  // Index HAR file
   async indexHarFile(harFile: HarFile, onProgress?: (current: number, total: number) => void): Promise<void> {
     this.harData = harFile;
     this.chunks = [];
-
     const { chunks, metadata } = this.chunkHarFile(harFile);
-
-    // Generate embeddings for all chunks
     for (let i = 0; i < chunks.length; i++) {
       const embedding = await this.generateEmbedding(chunks[i]);
-      
-      this.chunks.push({
-        id: metadata[i].id,
-        text: chunks[i],
-        embedding,
-        metadata: metadata[i],
-      });
-
-      if (onProgress) {
-        onProgress(i + 1, chunks.length);
-      }
+      this.chunks.push({ id: metadata[i].id, text: chunks[i], embedding, metadata: metadata[i] });
+      if (onProgress) onProgress(i + 1, chunks.length);
     }
   }
 
-  // Retrieve relevant chunks using semantic search
-  private async retrieveRelevantChunks(
-    query: string,
-    topK: number = 5
-  ): Promise<{ documents: string[]; metadata: ChunkMetadata[] }> {
-    if (this.chunks.length === 0) {
-      throw new Error('HAR file not indexed. Please index first.');
-    }
-
-    // Generate embedding for query
+  private async retrieveRelevantChunks(query: string, topK = 5) {
+    if (this.chunks.length === 0) throw new Error('HAR file not indexed.');
     const queryEmbedding = await this.generateEmbedding(query);
-
-    // Calculate similarities
-    const similarities = this.chunks.map((chunk) => ({
-      chunk,
-      similarity: this.cosineSimilarity(queryEmbedding, chunk.embedding),
-    }));
-
-    // Sort by similarity and get top K
-    similarities.sort((a, b) => b.similarity - a.similarity);
-    const topChunks = similarities.slice(0, topK);
-
+    const similarities = this.chunks
+      .map(chunk => ({ chunk, similarity: this.cosineSimilarity(queryEmbedding, chunk.embedding) }))
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, topK);
     return {
-      documents: topChunks.map((item) => item.chunk.text),
-      metadata: topChunks.map((item) => item.chunk.metadata),
+      documents: similarities.map(s => s.chunk.text),
+      metadata: similarities.map(s => s.chunk.metadata),
     };
   }
 
-  // Generate analysis using Ollama API
-  async analyzeWithQuery(query: string): Promise<AnalysisResult> {
-    if (!this.harData) {
-      throw new Error('No HAR file loaded');
-    }
+  private buildSystemPrompt(context: string): string {
+    return `You are an expert network analyst analyzing HAR (HTTP Archive) files. Based on the following network request data, answer the user's question accurately and concisely.
+
+Context (Relevant Network Requests):
+${context}
+
+Instructions:
+- Provide specific, data-driven answers based on the context
+- Include relevant URLs, status codes, and timing information
+- If the question cannot be answered from the context, say so
+- Be concise but thorough
+- Format your response clearly with bullet points or paragraphs as appropriate`;
+  }
+
+  // ✅ UPDATED: Calls backend proxy, parses OpenAI SSE format
+  async *analyzeWithQueryStream(query: string): AsyncGenerator<string, void, unknown> {
+    if (!this.harData) throw new Error('No HAR file loaded');
 
     const { documents, metadata } = await this.retrieveRelevantChunks(query, 5);
     const context = documents.join('\n\n---\n\n');
 
-    const prompt = `You are an expert network analyst analyzing HAR (HTTP Archive) files. Based on the following network request data, answer the user's question accurately and concisely.
-
-Context (Relevant Network Requests):
-${context}
-
-User Question: ${query}
-
-Instructions:
-- Provide specific, data-driven answers based on the context
-- Include relevant URLs, status codes, and timing information
-- If the question cannot be answered from the context, say so
-- Be concise but thorough
-- Format your response clearly with bullet points or paragraphs as appropriate
-
-Answer:`;
-
-    const response = await fetch(`${OLLAMA_BASE_URL}/api/generate`, {
+    const response = await fetch(`${BACKEND_AI_URL}/chat`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: OLLAMA_MODEL,
-        prompt: prompt,
-        stream: false,
-        options: {
-          temperature: 0.3,
-          top_p: 0.9,
-          num_predict: 500,
-        },
+        systemPrompt: this.buildSystemPrompt(context),
+        messages: [{ role: 'user', content: query }],
       }),
     });
 
-    if (!response.ok) {
-      throw new Error('Failed to generate response from Ollama');
-    }
-
-    const data = await response.json();
-    const relevantEntries = metadata.map((m) => this.harData!.log.entries[m.entryIndex]);
-
-    return {
-      answer: data.response,
-      relevantEntries,
-      sources: metadata,
-    };
-  }
-
-  // Generate streaming analysis
-  async *analyzeWithQueryStream(query: string): AsyncGenerator<string, void, unknown> {
-    if (!this.harData) {
-      throw new Error('No HAR file loaded');
-    }
-
-    const { documents } = await this.retrieveRelevantChunks(query, 5);
-    const context = documents.join('\n\n---\n\n');
-
-    const prompt = `You are an expert network analyst analyzing HAR (HTTP Archive) files. Based on the following network request data, answer the user's question accurately and concisely.
-
-Context (Relevant Network Requests):
-${context}
-
-User Question: ${query}
-
-Instructions:
-- Provide specific, data-driven answers based on the context
-- Include relevant URLs, status codes, and timing information
-- If the question cannot be answered from the context, say so
-- Be concise but thorough
-- Format your response clearly with bullet points or paragraphs as appropriate
-
-Answer:`;
-
-    const response = await fetch(`${OLLAMA_BASE_URL}/api/generate`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: OLLAMA_MODEL,
-        prompt: prompt,
-        stream: true,
-        options: {
-          temperature: 0.3,
-          top_p: 0.9,
-          num_predict: 500,
-        },
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error('Failed to generate response from Ollama');
-    }
+    if (!response.ok) throw new Error('Failed to get response from AI service');
 
     const reader = response.body?.getReader();
     const decoder = new TextDecoder();
-
-    if (!reader) {
-      throw new Error('Response body is not readable');
-    }
+    if (!reader) throw new Error('Response body is not readable');
 
     try {
       while (true) {
@@ -337,17 +191,17 @@ Answer:`;
         if (done) break;
 
         const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n').filter(line => line.trim());
+        const lines = chunk.split('\n').filter(l => l.startsWith('data: '));
 
         for (const line of lines) {
+          const data = line.slice(6).trim(); // strip "data: "
+          if (data === '[DONE]') return;
           try {
-            const json = JSON.parse(line);
-            if (json.response) {
-              yield json.response;
-            }
-          } catch (e) {
-            // Skip invalid JSON
-          }
+            const json = JSON.parse(data);
+            // ✅ OpenAI SSE format (OCA) — NOT Ollama's json.response
+            const content = json.choices?.[0]?.delta?.content;
+            if (content) yield content;
+          } catch { /* skip malformed lines */ }
         }
       }
     } finally {
@@ -355,7 +209,21 @@ Answer:`;
     }
   }
 
-  // Suggest common analysis queries
+  async analyzeWithQuery(query: string): Promise<AnalysisResult> {
+    if (!this.harData) throw new Error('No HAR file loaded');
+    const { documents, metadata } = await this.retrieveRelevantChunks(query, 5);
+    let answer = '';
+    // Collect full stream
+    for await (const chunk of this.analyzeWithQueryStream(query)) {
+      answer += chunk;
+    }
+    return {
+      answer,
+      relevantEntries: metadata.map(m => this.harData!.log.entries[m.entryIndex]),
+      sources: metadata,
+    };
+  }
+
   getSuggestedQueries(): string[] {
     return [
       'What are the slowest requests and why?',
@@ -371,14 +239,6 @@ Answer:`;
     ];
   }
 
-  // Get indexing status
-  isIndexed(): boolean {
-    return this.chunks.length > 0;
-  }
-
-  // Clean up
-  cleanup(): void {
-    this.chunks = [];
-    this.harData = null;
-  }
+  isIndexed(): boolean { return this.chunks.length > 0; }
+  cleanup(): void { this.chunks = []; this.harData = null; }
 }

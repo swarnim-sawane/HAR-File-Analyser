@@ -6,10 +6,10 @@ import { HarFile } from '../types/har';
 import './FloatingAiChat.css';
 import { ConsoleLogFile } from '../types/consolelog';
 
-const OLLAMA_BASE_URL =
-  import.meta.env.VITE_OLLAMA_URL || 'http://localhost:11435';
-const OLLAMA_MODEL =
-  import.meta.env.VITE_OLLAMA_MODEL || 'llama3.2';
+// ✅ Points to backend proxy, not OCA directly
+const BACKEND_AI_URL = import.meta.env.VITE_BACKEND_URL
+  ? `${import.meta.env.VITE_BACKEND_URL}/api/ai`
+  : 'http://localhost:3001/api/ai';
 
 interface Message {
   id: string;
@@ -29,16 +29,43 @@ const FloatingAiChat: React.FC<FloatingAiChatProps> = ({ harData, logData }) => 
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [ollamaConnected, setOllamaConnected] = useState<boolean>(true);
+  const [ocaConnected, setOcaConnected] = useState<boolean>(true); // ✅ renamed
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const isConsoleMode = !!logData;
 
+  const normalizeAssistantMarkdown = (text: string) => {
+    if (!text) return '';
+
+    let normalized = text.replace(/\r\n/g, '\n');
+
+    // Convert #N — patterns (all dash variants, with or without preceding bullet char)
+    normalized = normalized.replace(/^[ \t]*[•●▪▸▹]?\s*#(\d+)\s*[\u2014\u2013\u2012\u2015\-]\s+/gm, '$1. ');
+
+    // Normalize remaining unicode bullets to markdown bullets
+    normalized = normalized.replace(/^[ \t]*[•●▪▸▹]\s+/gm, '- ');
+    normalized = normalized.replace(/^[ \t]*[◦▫‣]\s+/gm, '  - ');
+
+    // Trim trailing spaces and excessive blank lines
+    normalized = normalized.replace(/[ \t]+\n/g, '\n');
+    normalized = normalized.replace(/\n{3,}/g, '\n\n');
+
+    // Collapse single blank lines between consecutive list-item lines (prevents loose lists)
+    let prev: string;
+    do {
+      prev = normalized;
+      normalized = normalized.replace(
+        /(\n[ \t]*(?:\d+\.|-|\*|\+|[•●▪▸▹◦▫‣])\s.+)\n\n([ \t]*(?:\d+\.|-|\*|\+|[•●▪▸▹◦▫‣])\s)/g,
+        '$1\n$2'
+      );
+    } while (normalized !== prev);
+
+    return normalized.trim();
+  };
+
   useEffect(() => {
-    if (isOpen) {
-      checkOllama();
-    }
+    if (isOpen) checkOca();
   }, [isOpen]);
 
   useEffect(() => {
@@ -49,56 +76,97 @@ const FloatingAiChat: React.FC<FloatingAiChatProps> = ({ harData, logData }) => 
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  const checkOllama = async () => {
+  // ✅ UPDATED: Hits backend status endpoint instead of Ollama
+  const checkOca = async () => {
     try {
-     const res = await fetch(`${OLLAMA_BASE_URL}/api/tags`);
-      setOllamaConnected(res.ok);
-    
+      const res = await fetch(`${BACKEND_AI_URL}/status`);
+      const data = await res.json();
+      setOcaConnected(data.connected);
     } catch {
-      setOllamaConnected(false);
+      setOcaConnected(false);
     }
   };
 
-  const getHarSummary = () => {
+  // ---- Context helpers ----
+  const getHarContext = () => {
     if (!harData) return '';
     const entries = harData.log.entries;
-    const totalRequests = entries.length;
-    const totalSize = entries.reduce((sum, e) => sum + e.response.bodySize, 0);
+
+    // Aggregate summary
+    const totalSize = entries.reduce(
+      (sum, e) => sum + (e.response.bodySize > 0 ? e.response.bodySize : 0),
+      0
+    );
     const totalTime = entries.reduce((sum, e) => sum + e.time, 0);
-    const domains = [...new Set(entries.map(e => {
-      try {
-        return new URL(e.request.url).hostname;
-      } catch {
-        return 'unknown';
-      }
-    }))];
+    const domains = [
+      ...new Set(
+        entries.map((e) => {
+          try {
+            return new URL(e.request.url).hostname;
+          } catch {
+            return 'unknown';
+          }
+        })
+      ),
+    ];
     const errorCount = entries.filter(e => e.response.status >= 400).length;
 
-    return `HAR File Context:
-- Total Requests: ${totalRequests}
+    const summary = `HAR File Summary:
+- Total Requests: ${entries.length}
 - Total Size: ${(totalSize / 1024 / 1024).toFixed(2)} MB
-- Total Time: ${(totalTime / 1000).toFixed(2)} seconds
-- Unique Domains: ${domains.length}
+- Total Time: ${(totalTime / 1000).toFixed(2)}s
+- Unique Domains: ${domains.join(', ')}
 - Failed Requests: ${errorCount}`;
+
+    // Top 30 requests sorted by time descending
+    const topRequests = [...entries]
+      .sort((a, b) => b.time - a.time)
+      .slice(0, 30)
+      .map((e, i) => {
+        let domain = 'unknown';
+        try {
+          domain = new URL(e.request.url).hostname;
+        } catch {
+          // Keep unknown domain
+        }
+
+        const sizeKb = e.response.bodySize > 0 ? e.response.bodySize / 1024 : 0;
+        return `#${i + 1} [${e.request.method}] ${e.request.url}
+  Status: ${e.response.status} | Time: ${e.time.toFixed(0)}ms | Size: ${sizeKb.toFixed(1)}KB
+  DNS: ${((e.timings?.dns as number) || 0).toFixed(0)}ms | Connect: ${((e.timings?.connect as number) || 0).toFixed(0)}ms | SSL: ${((e.timings?.ssl as number) || 0).toFixed(0)}ms | Wait: ${((e.timings?.wait as number) || 0).toFixed(0)}ms | Receive: ${((e.timings?.receive as number) || 0).toFixed(0)}ms`;
+      })
+      .join('\n\n');
+
+    // All failed requests
+    const failedRequests = entries
+      .filter((e) => e.response.status >= 400)
+      .map(
+        (e) =>
+          `[${e.request.method}] ${e.request.url} -> ${e.response.status} ${e.response.statusText}`
+      )
+      .join('\n');
+
+    return `${summary}
+
+Top 30 Requests by Duration:
+${topRequests}
+
+${errorCount > 0 ? `Failed Requests:\n${failedRequests}` : ''}`;
   };
 
   const getLogSummary = () => {
     if (!logData) return '';
     const entries = logData.entries;
-    const totalEntries = entries.length;
-    const errorCount = entries.filter(e => e.level === 'error').length;
-    const warnCount = entries.filter(e => e.level === 'warn').length;
-    const infoCount = entries.filter(e => e.level === 'info').length;
     const sources = [...new Set(entries.map(e => e.source).filter(Boolean))];
-
     return `Console Log Context:
-- Total Entries: ${totalEntries}
-- Errors: ${errorCount}
-- Warnings: ${warnCount}
-- Info Messages: ${infoCount}
+- Total Entries: ${entries.length}
+- Errors: ${entries.filter(e => e.level === 'error').length}
+- Warnings: ${entries.filter(e => e.level === 'warn').length}
+- Info Messages: ${entries.filter(e => e.level === 'info').length}
 - Unique Sources: ${sources.length}`;
   };
 
+  // ✅ UPDATED: Calls backend proxy, parses OpenAI SSE format
   const sendMessage = async () => {
     if (!input.trim() || isLoading) return;
 
@@ -114,30 +182,23 @@ const FloatingAiChat: React.FC<FloatingAiChatProps> = ({ harData, logData }) => 
     setIsLoading(true);
 
     try {
-      const contextSummary = isConsoleMode ? getLogSummary() : getHarSummary();
+      const contextSummary = isConsoleMode ? getLogSummary() : getHarContext();
 
       const systemPrompt = isConsoleMode
-        ? `You are a helpful console log analyzer assistant. You're analyzing console logs with the following information:
+        ? `You are an expert console log analyst. You have been given detailed console log context below. Answer questions directly using the data - never say you lack information if it is present in the context. Format responses with strict GitHub markdown. Rules: use '-' bullet lists (NO blank lines between items); indent sub-details with '   - ' (3 spaces + dash); use backtick \`code\` for values; use **bold** for key metrics. Never use unicode bullets (•,◦).
 
-${contextSummary}
+${contextSummary}`
+        : `You are an expert HAR file network analyst. You have been given detailed per-request data below. Answer questions directly using the data - never say you lack information if it is present in the context. Format responses with strict GitHub markdown. Rules: use '1.' numbered lists for request entries (NO blank lines between items); indent sub-details with '   - ' (3 spaces + dash); use backtick \`code\` for URLs and values; use **bold** for key timings. Never use unicode bullets (•,◦) or #N— prefixes.
 
-Answer the user's questions about these console logs. Be concise and specific. Identify patterns, common errors, and provide actionable insights. Format your responses using markdown for better readability.`
-        : `You are a helpful HAR file analyzer assistant. You're analyzing a HAR (HTTP Archive) file with the following information:
+${contextSummary}`;
 
-${contextSummary}
-
-Answer the user's questions about this HAR file. Be concise and specific. If they paste a URL, analyze that specific request. Format your responses using markdown for better readability.`;
-      const response = await fetch(`${OLLAMA_BASE_URL}/api/generate`, {
+      // ✅ OpenAI chat/completions format
+      const response = await fetch(`${BACKEND_AI_URL}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: OLLAMA_MODEL,
-          prompt: `${systemPrompt}\n\nUser: ${input}\n\nAssistant:`,
-          stream: true,
-          options: {
-            temperature: 0.7,
-            num_predict: 400,
-          },
+          systemPrompt,
+          messages: [{ role: 'user', content: input }],
         }),
       });
 
@@ -158,31 +219,33 @@ Answer the user's questions about this HAR file. Be concise and specific. If the
           const { done, value } = await reader.read();
           if (done) break;
 
-          const chunk = decoder.decode(value);
-          const lines = chunk.split('\n').filter(line => line.trim());
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split('\n').filter(l => l.startsWith('data: '));
 
           for (const line of lines) {
+            const data = line.slice(6).trim(); // strip "data: "
+            if (data === '[DONE]') break;
             try {
-              const json = JSON.parse(line);
-              if (json.response) {
-                assistantMessage.content += json.response;
+              const json = JSON.parse(data);
+              // ✅ OpenAI SSE format — NOT Ollama's json.response
+              const content = json.choices?.[0]?.delta?.content;
+              if (content) {
+                assistantMessage.content += content;
                 setMessages(prev => {
-                  const newMessages = [...prev];
-                  newMessages[newMessages.length - 1] = { ...assistantMessage };
-                  return newMessages;
+                  const updated = [...prev];
+                  updated[updated.length - 1] = { ...assistantMessage };
+                  return updated;
                 });
               }
-            } catch {
-              // Skip invalid JSON
-            }
+            } catch { /* skip malformed lines */ }
           }
         }
       }
-    } catch (error) {
+    } catch {
       setMessages(prev => [...prev, {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: '❌ Failed to get response. Make sure Ollama is running.',
+        content: '❌ Failed to get response. Make sure the backend is running and OCA token is valid.',
         timestamp: new Date(),
       }]);
     } finally {
@@ -197,17 +260,10 @@ Answer the user's questions about this HAR file. Be concise and specific. If the
     }
   };
 
+  // ---- Everything below: COMPLETELY UNCHANGED ----
   const quickQuestions = isConsoleMode
-    ? [
-      'Show me all errors',
-      'What are the most common warnings?',
-      'Identify any patterns',
-    ]
-    : [
-      'Show slowest requests',
-      'Any errors?',
-      'Performance issues?',
-    ];
+    ? ['Show me all errors', 'What are the most common warnings?', 'Identify any patterns']
+    : ['Show slowest requests', 'Any errors?', 'Performance issues?'];
 
   const dataCount = isConsoleMode
     ? logData?.entries.length || 0
@@ -240,20 +296,16 @@ Answer the user's questions about this HAR file. Be concise and specific. If the
           </div>
           <div>
             <h3>AI Assistant</h3>
-            {ollamaConnected && (
+            {ocaConnected && (
               <span className="chat-widget-status">
                 <span className="status-indicator"></span>
-                Online
+                Online · OCA gpt-5.4 {/* ✅ updated label */}
               </span>
             )}
           </div>
         </div>
         <div className="chat-widget-actions">
-          <button
-            className="chat-action-btn"
-            onClick={() => setIsMinimized(!isMinimized)}
-            title={isMinimized ? 'Expand' : 'Minimize'}
-          >
+          <button className="chat-action-btn" onClick={() => setIsMinimized(!isMinimized)} title={isMinimized ? 'Expand' : 'Minimize'}>
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
               {isMinimized ? (
                 <rect x="3" y="3" width="10" height="10" stroke="currentColor" strokeWidth="2" />
@@ -262,11 +314,7 @@ Answer the user's questions about this HAR file. Be concise and specific. If the
               )}
             </svg>
           </button>
-          <button
-            className="chat-action-btn"
-            onClick={() => setIsOpen(false)}
-            title="Close"
-          >
+          <button className="chat-action-btn" onClick={() => setIsOpen(false)} title="Close">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
               <path d="M3 3L13 13M13 3L3 13" stroke="currentColor" strokeWidth="2" />
             </svg>
@@ -276,7 +324,8 @@ Answer the user's questions about this HAR file. Be concise and specific. If the
 
       {!isMinimized && (
         <>
-          {!ollamaConnected ? (
+          {/* ✅ UPDATED: OCA-specific error message */}
+          {!ocaConnected ? (
             <div className="chat-widget-error">
               <div className="error-icon-wrapper">
                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none">
@@ -284,9 +333,9 @@ Answer the user's questions about this HAR file. Be concise and specific. If the
                   <path d="M12 8V12M12 16H12.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
                 </svg>
               </div>
-              <h4>Ollama Not Connected</h4>
-              <p className="error-help">Run: <code>ollama pull llama3.2</code></p>
-              <button className="btn-retry-small" onClick={checkOllama}>
+              <h4>AI Service Not Connected</h4>
+              <p className="error-help">Check that the backend is running and <code>OCA_TOKEN</code> is set in <code>backend/.env</code></p>
+              <button className="btn-retry-small" onClick={checkOca}>
                 Retry Connection
               </button>
             </div>
@@ -302,26 +351,11 @@ Answer the user's questions about this HAR file. Be concise and specific. If the
                       </svg>
                     </div>
                     <h3>Welcome! 👋</h3>
-                    <p>
-                      I'm analyzing your {isConsoleMode ? 'console logs' : 'HAR file'} with{' '}
-                      {dataCount} {isConsoleMode ? 'entries' : 'requests'}.
-                    </p>
-                    <p>
-                      Ask me about {isConsoleMode
-                        ? 'errors, warnings, or patterns'
-                        : 'performance, errors, or any specific requests'}.
-                    </p>
-
+                    <p>I'm analyzing your {isConsoleMode ? 'console logs' : 'HAR file'} with {dataCount} {isConsoleMode ? 'entries' : 'requests'}.</p>
+                    <p>Ask me about {isConsoleMode ? 'errors, warnings, or patterns' : 'performance, errors, or any specific requests'}.</p>
                     <div className="quick-questions">
                       {quickQuestions.map((q, i) => (
-                        <button
-                          key={i}
-                          className="quick-question-btn"
-                          onClick={() => {
-                            setInput(q);
-                            textareaRef.current?.focus();
-                          }}
-                        >
+                        <button key={i} className="quick-question-btn" onClick={() => { setInput(q); textareaRef.current?.focus(); }}>
                           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                             <path d="M8 3V13M13 8H3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
                           </svg>
@@ -350,7 +384,7 @@ Answer the user's questions about this HAR file. Be concise and specific. If the
                     <div className="chat-message-bubble">
                       {message.role === 'assistant' ? (
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {message.content}
+                          {normalizeAssistantMarkdown(message.content)}
                         </ReactMarkdown>
                       ) : (
                         message.content
@@ -368,15 +402,10 @@ Answer the user's questions about this HAR file. Be concise and specific. If the
                       </svg>
                     </div>
                     <div className="chat-message-bubble">
-                      <div className="chat-typing">
-                        <span></span>
-                        <span></span>
-                        <span></span>
-                      </div>
+                      <div className="chat-typing"><span></span><span></span><span></span></div>
                     </div>
                   </div>
                 )}
-
                 <div ref={messagesEndRef} />
               </div>
 
@@ -391,11 +420,7 @@ Answer the user's questions about this HAR file. Be concise and specific. If the
                   rows={1}
                   disabled={isLoading}
                 />
-                <button
-                  className="chat-widget-send"
-                  onClick={sendMessage}
-                  disabled={isLoading || !input.trim()}
-                >
+                <button className="chat-widget-send" onClick={sendMessage} disabled={isLoading || !input.trim()}>
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                     <path d="M22 2L11 13M22 2L15 22L11 13L2 9L22 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>

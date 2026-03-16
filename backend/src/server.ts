@@ -176,6 +176,7 @@ async function startServer() {
     const harRoutes = (await import('./routes/harRoutes')).default;
     const consoleLogRoutes = (await import('./routes/consoleLogRoutes')).default;
     const aiRoutes = (await import('./routes/aiRoutes')).default;
+    const sanitizeRoutes = (await import('./routes/sanitizeRoutes')).default;
 
     // 4. Health check endpoint
     app.get('/health', (req, res) => {
@@ -195,6 +196,7 @@ async function startServer() {
     app.use('/api/har', harRoutes);
     app.use('/api/console-log', consoleLogRoutes);
     app.use('/api/ai', aiRoutes);
+    app.use('/api/sanitize', sanitizeRoutes);
 
     // 6. Start HTTP server
     server.listen(PORT, () => {
