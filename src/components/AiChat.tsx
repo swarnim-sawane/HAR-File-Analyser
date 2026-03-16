@@ -20,27 +20,29 @@ const AiChat: React.FC<AiChatProps> = ({ harData }) => {
   const [ollamaConnected, setOllamaConnected] = useState<boolean | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [ocaConnected, setOcaConnected] = useState<boolean | null>(null);
 
-  useEffect(() => {
-    checkOllama();
-  }, []);
 
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
 
+  useEffect(() => { checkOca(); }, []);
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  const checkOllama = async () => {
+  const checkOca = async () => {
     try {
-      const response = await fetch('http://localhost:11435/api/tags');
-      setOllamaConnected(response.ok);
+      const res = await fetch('http://localhost:3001/api/ai/status');
+      const data = await res.json();
+      setOcaConnected(data.connected);
     } catch {
-      setOllamaConnected(false);
+      setOcaConnected(false);
     }
   };
+
+
 
   const getHarSummary = () => {
     const entries = harData.log.entries;
@@ -82,7 +84,7 @@ const AiChat: React.FC<AiChatProps> = ({ harData }) => {
 
     try {
       const harSummary = getHarSummary();
-      
+
       const systemPrompt = `You are a helpful HAR file analyzer assistant. You're analyzing a HAR (HTTP Archive) file with the following information:
 
 ${harSummary}
@@ -180,21 +182,18 @@ Answer the user's questions about this HAR file. Be concise, helpful, and specif
     );
   }
 
-  if (ollamaConnected === false) {
+  if (ocaConnected === false) {
     return (
       <div className="ai-chat">
         <div className="chat-setup">
           <div className="setup-icon">🤖</div>
           <h2>AI Chat Not Available</h2>
-          <p>Ollama is not running. To use AI analysis:</p>
+          <p>Cannot reach Oracle Code Assist API. Check that:</p>
           <ol>
-            <li>Install Ollama: <code>curl -fsSL https://ollama.com/install.sh | sh</code></li>
-            <li>Pull model: <code>ollama pull llama3.2</code></li>
-            <li>Ollama should start automatically</li>
+            <li>The backend server is running on port 3001</li>
+            <li><code>OCA_TOKEN</code> is set in <code>backend/.env</code></li>
           </ol>
-          <button className="btn-retry" onClick={checkOllama}>
-            Retry Connection
-          </button>
+          <button className="btn-retry" onClick={checkOca}>Retry Connection</button>
         </div>
       </div>
     );
@@ -209,8 +208,9 @@ Answer the user's questions about this HAR file. Be concise, helpful, and specif
         </div>
         <div className="chat-status">
           <span className="status-dot"></span>
-          <span>Ollama Connected</span>
+          <span>OCA Connected · gpt-5.4</span>
         </div>
+
       </div>
 
       <div className="chat-messages">
@@ -220,7 +220,7 @@ Answer the user's questions about this HAR file. Be concise, helpful, and specif
             <h3>Welcome! I'm your HAR Analysis Assistant</h3>
             <p>I've analyzed your HAR file with {harData.log.entries.length} requests.</p>
             <p>Ask me anything about network performance, errors, or optimization opportunities.</p>
-            
+
             <div className="suggested-questions">
               <h4>Try asking:</h4>
               <div className="question-buttons">

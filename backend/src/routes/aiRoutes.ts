@@ -1,59 +1,76 @@
-import express, { Request, Response } from 'express';
-import { getRedis } from '../config/database';
-import { queryWithContext } from '../services/embeddingService';
-import { streamLLMResponse } from '../services/ollamaPool';
-import crypto from 'crypto';
+import { Router, Request, Response } from 'express';
 
-const router = express.Router();
+const router = Router();
 
-// Query HAR/Log with AI
-router.post('/query', async (req: Request, res: Response) => {
+// POST /api/ai/chat  — proxies to OCA, streams response back
+router.post('/chat', async (req: Request, res: Response) => {
+  const { messages, systemPrompt } = req.body;
+
+  if (!messages || !Array.isArray(messages)) {
+    return res.status(400).json({ error: 'messages array required' });
+  }
+
+  const allMessages = systemPrompt
+    ? [{ role: 'system', content: systemPrompt }, ...messages]
+    : messages;
+
   try {
-    const { fileId, query, fileType } = req.body;
-    
-    if (!fileId || !query) {
-      return res.status(400).json({ error: 'Missing fileId or query' });
+    const ocaResponse = await fetch(
+      `${process.env.OCA_BASE_URL}/chat/completions`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${process.env.OCA_TOKEN}`,
+        },
+        body: JSON.stringify({
+          model: process.env.OCA_MODEL || 'oca/gpt-5.4',
+          messages: allMessages,
+          stream: true, // OCA only supports streaming
+        }),
+      }
+    );
+
+    if (!ocaResponse.ok) {
+      const err = await ocaResponse.text();
+      return res.status(ocaResponse.status).json({ error: err });
     }
-    
-    const redis = getRedis();
-    
-    // Generate cache key
-    const cacheKey = `query:${fileId}:${crypto.createHash('md5').update(query).digest('hex')}`;
-    
-    // Check cache
-    const cached = await redis.get(cacheKey);
-    if (cached) {
-      return res.json({
-        response: cached,
-        cached: true
-      });
-    }
-    
-    // Get relevant context from vector DB
-    const context = await queryWithContext(fileId, query, fileType || 'har');
-    
-    // Set up SSE
+
+    // Pipe OCA's SSE stream directly to client
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    
-    let fullResponse = '';
-    
-    // Stream LLM response
-    for await (const token of streamLLMResponse(query, context)) {
-      fullResponse += token;
-      res.write(`data: ${JSON.stringify({ token })}\n\n`);
+
+    const reader = ocaResponse.body?.getReader();
+    const decoder = new TextDecoder();
+
+    if (!reader) return res.status(500).json({ error: 'No response body' });
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(decoder.decode(value, { stream: true }));
     }
-    
-    // Cache the full response
-    await redis.setex(cacheKey, 3600, fullResponse); // 1 hour TTL
-    
-    res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+
     res.end();
-    
-  } catch (error) {
-    console.error('AI query error:', error);
-    res.status(500).json({ error: 'Failed to process query' });
+  } catch (err) {
+    console.error('OCA proxy error:', err);
+    res.status(500).json({ error: 'Failed to reach OCA API' });
+  }
+});
+
+// GET /api/ai/status — health check for frontend
+router.get('/status', async (_req: Request, res: Response) => {
+  try {
+    const response = await fetch(
+      `${process.env.OCA_BASE_URL}/models`,
+      {
+        headers: { Authorization: `Bearer ${process.env.OCA_TOKEN}` },
+      }
+    );
+    res.json({ connected: response.ok, model: process.env.OCA_MODEL });
+  } catch {
+    res.json({ connected: false, model: null });
   }
 });
 
