@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { chunkedUploader, UploadProgress, UploadResult } from '../services/chunkedUploader';
+
 import { wsClient } from '../services/websocketClient';
+import SanitizeModal from './SanitizeModal';
 import {
   AlertIcon,
   ChevronRightIcon,
@@ -39,6 +41,8 @@ const FileUploader: React.FC<FileUploaderProps> = ({
   const [isErrorVisible, setIsErrorVisible] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
+  const [pendingUploadResult, setPendingUploadResult] = useState<UploadResult | null>(null);
+  const [showSanitizeModal, setShowSanitizeModal] = useState(false);
 
   useEffect(() => {
     if (error) {
@@ -68,7 +72,6 @@ const FileUploader: React.FC<FileUploaderProps> = ({
   const processFile = async (file: File) => {
     setError(null);
     setIsValidating(true);
-    setUploadProgress(null);
 
     try {
       const validation = await validateHarFile(file);
@@ -85,17 +88,23 @@ const FileUploader: React.FC<FileUploaderProps> = ({
         setUploadProgress(progress);
       });
 
-      wsClient.subscribeToFile(result.fileId);
-      await onFileUpload(result);
-
       setIsUploading(false);
       setUploadProgress(null);
+      setPendingUploadResult(result);
+      setShowSanitizeModal(true);
     } catch (err) {
-      setError((err as Error).message || 'Upload failed. Please try again.');
+      setError((err as Error).message || 'Upload failed.');
       setIsValidating(false);
       setIsUploading(false);
       setUploadProgress(null);
     }
+  };
+
+  const handleSanitizeComplete = (fileId: string) => {
+    setShowSanitizeModal(false);
+    wsClient.subscribeToFile(fileId);
+    onFileUpload({ ...pendingUploadResult!, fileId });
+    setPendingUploadResult(null);
   };
 
   const handleDismiss = () => {
@@ -141,6 +150,14 @@ const FileUploader: React.FC<FileUploaderProps> = ({
 
   return (
     <div className="file-uploader">
+      {showSanitizeModal && pendingUploadResult && (
+        <SanitizeModal
+          uploadResult={pendingUploadResult}
+          onProceed={handleSanitizeComplete}
+          onCancel={() => { setShowSanitizeModal(false); setPendingUploadResult(null); }}
+        />
+      )}
+
       {error && (
         <div
           className="error-banner"

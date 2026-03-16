@@ -21,6 +21,8 @@ import HarSanitizer from './components/HarSanitizer';
 import FloatingAiChat from './components/FloatingAiChat';
 import { UploadResult, chunkedUploader } from './services/chunkedUploader';
 import { apiClient } from './services/apiClient';
+import RequestFlowDiagram from './components/RequestFlowDiagram';
+import PerformanceScorecard from './components/PerformanceScorecard';
 
 interface RecentFile {
   name: string;
@@ -45,7 +47,7 @@ const App: React.FC = () => {
 
   // Main navigation
   const [activeTool, setActiveTool] = useState<'har' | 'console'>('har');
-  const [activeTab, setActiveTab] = useState<'analyzer' | 'sanitizer'>('analyzer');
+  const [activeTab, setActiveTab] = useState<'analyzer' | 'sanitizer' | 'flow' | 'scorecard'>('analyzer');
 
   const MAX_RECENT_FILES = 5;
   const HAR_RECENT_FILES_KEY = 'har_analyzer_recent_files';
@@ -224,10 +226,22 @@ const App: React.FC = () => {
                   Analyzer
                 </button>
                 <button
+                  className={`main-tab ${activeTab === 'flow' ? 'active' : ''}`}
+                  onClick={() => setActiveTab('flow')}
+                >
+                  Request Flow
+                </button>
+                <button
                   className={`main-tab ${activeTab === 'sanitizer' ? 'active' : ''}`}
                   onClick={() => setActiveTab('sanitizer')}
                 >
                   Sanitizer
+                </button>
+                <button
+                  className={`main-tab ${activeTab === 'scorecard' ? 'active' : ''}`}
+                  onClick={() => setActiveTab('scorecard')}
+                >
+                  Scorecard
                 </button>
               </div>
             )}
@@ -313,11 +327,25 @@ const App: React.FC = () => {
                     </div>
                     <FloatingAiChat harData={harState.harData} />
                   </>
-                ) : (
+                )  : activeTab === 'sanitizer' ? (
                   <div className="sanitizer-wrapper">
                     <HarSanitizer />
                   </div>
-                )}
+                ) : activeTab === 'flow' ? (
+                  <div style={{ height: 'calc(100vh - 200px)' }}>
+                    <RequestFlowDiagram
+                      entries={harState.filteredEntries}
+                      onNodeClick={(entry: any) => {
+                        harState.setSelectedEntry(entry);
+                        setActiveTab('analyzer');
+                      }}
+                    />
+                  </div>
+                ) : activeTab === 'scorecard' ? (
+                  <div className="scorecard-wrapper">
+                    <PerformanceScorecard harData={harState.harData} />
+                  </div>
+                ) : null}
               </>
             ) : null}
           </>
