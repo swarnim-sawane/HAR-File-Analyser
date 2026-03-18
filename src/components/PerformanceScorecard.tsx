@@ -210,7 +210,7 @@ const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData }) => {
 
         {/* Summary */}
         <div className="score-summary">
-          <h2>Performance Scorecard</h2>
+          <h2>Performance Insight</h2>
           <p>{harData.log.entries.length} requests · {domainCount} domain{domainCount !== 1 ? 's' : ''}</p>
           <div className="score-badges">
             <span className="badge badge-good"><span className="badge-dot" />{good} passed</span>

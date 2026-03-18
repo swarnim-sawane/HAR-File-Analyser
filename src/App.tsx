@@ -23,6 +23,7 @@ import { UploadResult, chunkedUploader } from './services/chunkedUploader';
 import { apiClient } from './services/apiClient';
 import RequestFlowDiagram from './components/RequestFlowDiagram';
 import PerformanceScorecard from './components/PerformanceScorecard';
+import AiInsights from './components/AiInsights';
 
 interface RecentFile {
   name: string;
@@ -30,6 +31,10 @@ interface RecentFile {
   data: File;
 }
 
+const BACKEND_URL =
+  import.meta.env.VITE_BACKEND_URL ||
+  import.meta.env.VITE_API_URL ||
+  'http://localhost:4000';
 
 const App: React.FC = () => {
   // HAR Analyzer state
@@ -47,7 +52,8 @@ const App: React.FC = () => {
 
   // Main navigation
   const [activeTool, setActiveTool] = useState<'har' | 'console'>('har');
-  const [activeTab, setActiveTab] = useState<'analyzer' | 'sanitizer' | 'flow' | 'scorecard'>('analyzer');
+  const [activeTab, setActiveTab] = useState<'analyzer' | 'sanitizer' | 'flow' | 'scorecard' | 'insights'>('analyzer');
+  const [isInsightsGenerating, setIsInsightsGenerating] = useState(false);
 
   const MAX_RECENT_FILES = 5;
   const HAR_RECENT_FILES_KEY = 'har_analyzer_recent_files';
@@ -76,6 +82,43 @@ const App: React.FC = () => {
 
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+  };
+
+  const confirmLeaveInsights = (destination: string): boolean => {
+    if (activeTool === 'har' && activeTab === 'insights' && isInsightsGenerating) {
+      return window.confirm(
+        `AI Insights generation is in progress. Leaving will cancel the analysis.\n\nLeave Insights and go to ${destination}?`
+      );
+    }
+    return true;
+  };
+
+  const handleToolChange = (nextTool: 'har' | 'console') => {
+    if (nextTool === activeTool) return;
+    const destination = nextTool === 'har' ? 'HAR' : 'Console';
+    if (!confirmLeaveInsights(destination)) return;
+    if (activeTool === 'har' && activeTab === 'insights') {
+      setIsInsightsGenerating(false);
+    }
+    setActiveTool(nextTool);
+  };
+
+  const handleHarTabChange = (nextTab: 'analyzer' | 'sanitizer' | 'flow' | 'scorecard' | 'insights') => {
+    if (nextTab === activeTab) return;
+    const destination = nextTab === 'insights'
+      ? 'AI Insights'
+      : nextTab === 'analyzer'
+        ? 'Analyzer'
+        : nextTab === 'flow'
+          ? 'Request Flow'
+          : nextTab === 'sanitizer'
+            ? 'Sanitizer'
+            : 'Scorecard';
+    if (!confirmLeaveInsights(destination)) return;
+    if (activeTab === 'insights' && nextTab !== 'insights') {
+      setIsInsightsGenerating(false);
+    }
+    setActiveTab(nextTab);
   };
 
 
@@ -194,7 +237,7 @@ const App: React.FC = () => {
         <div className="tool-selector">
           <button
             className={`tool-tab ${activeTool === 'har' ? 'active' : ''}`}
-            onClick={() => setActiveTool('har')}
+            onClick={() => handleToolChange('har')}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
@@ -203,7 +246,7 @@ const App: React.FC = () => {
           </button>
           <button
             className={`tool-tab ${activeTool === 'console' ? 'active' : ''}`}
-            onClick={() => setActiveTool('console')}
+            onClick={() => handleToolChange('console')}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <polyline points="4 17 10 11 4 5"></polyline>
@@ -221,27 +264,33 @@ const App: React.FC = () => {
               <div className="main-tabs">
                 <button
                   className={`main-tab ${activeTab === 'analyzer' ? 'active' : ''}`}
-                  onClick={() => setActiveTab('analyzer')}
+                  onClick={() => handleHarTabChange('analyzer')}
                 >
                   Analyzer
                 </button>
                 <button
                   className={`main-tab ${activeTab === 'flow' ? 'active' : ''}`}
-                  onClick={() => setActiveTab('flow')}
+                  onClick={() => handleHarTabChange('flow')}
                 >
                   Request Flow
                 </button>
                 <button
                   className={`main-tab ${activeTab === 'sanitizer' ? 'active' : ''}`}
-                  onClick={() => setActiveTab('sanitizer')}
+                  onClick={() => handleHarTabChange('sanitizer')}
                 >
                   Sanitizer
                 </button>
                 <button
                   className={`main-tab ${activeTab === 'scorecard' ? 'active' : ''}`}
-                  onClick={() => setActiveTab('scorecard')}
+                  onClick={() => handleHarTabChange('scorecard')}
                 >
                   Scorecard
+                </button>
+                <button
+                  className={`main-tab ${activeTab === 'insights' ? 'active' : ''}`}
+                  onClick={() => handleHarTabChange('insights')}
+                >
+                  AI Insights
                 </button>
               </div>
             )}
@@ -345,6 +394,12 @@ const App: React.FC = () => {
                   <div className="scorecard-wrapper">
                     <PerformanceScorecard harData={harState.harData} />
                   </div>
+                ) : activeTab === 'insights' ? (
+                  <AiInsights
+                    harData={harState.harData}
+                    backendUrl={BACKEND_URL}
+                    onGeneratingChange={setIsInsightsGenerating}
+                  />
                 ) : null}
               </>
             ) : null}
