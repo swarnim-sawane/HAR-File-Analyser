@@ -1,0 +1,1 @@
+{"context":"HAR OVERVIEW\nrequests=1\nerrors=0\nredirects=0\ndomains=1\nsize_mb=0.01\ntotal_time_s=0.20\np95_request_ms=200\n\nTOP SLOW REQUESTS\nGET example.com/vbdt/ status=200 total_ms=200 wait_ms=150 size_kb=2.0"}
