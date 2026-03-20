@@ -6,10 +6,13 @@ import { ConsoleLogAnalyzer } from '../utils/consoleLogAnalyzer';
 
 interface ConsoleLogStatisticsProps {
   entries: ConsoleLogEntry[];
+  totalEntries?: number;   // actual total in backend (may be > entries.length)
+  truncatedAt?: number;    // set when backend has more entries than loaded
 }
 
-const ConsoleLogStatistics: React.FC<ConsoleLogStatisticsProps> = ({ entries }) => {
+const ConsoleLogStatistics: React.FC<ConsoleLogStatisticsProps> = ({ entries, totalEntries, truncatedAt }) => {
   const stats = ConsoleLogAnalyzer.getStatistics(entries);
+  const isTruncated = truncatedAt !== undefined && (totalEntries ?? 0) > truncatedAt;
 
   const levelColors: Record<string, string> = {
     error: '#ef4444',
@@ -21,14 +24,33 @@ const ConsoleLogStatistics: React.FC<ConsoleLogStatisticsProps> = ({ entries }) 
     verbose: '#06b6d4',
   };
 
+  const fmt = (n: number) => n.toLocaleString();
+
   return (
     <div className="filter-panel console-stats-panel">
+      {isTruncated && (
+        <div style={{
+          background: 'rgba(245, 158, 11, 0.12)',
+          border: '1px solid rgba(245, 158, 11, 0.4)',
+          borderRadius: '8px',
+          padding: '10px 12px',
+          marginBottom: '12px',
+          fontSize: '12px',
+          lineHeight: '1.5',
+          color: 'var(--text-secondary, #888)',
+        }}>
+          <strong style={{ color: '#f59e0b' }}>⚠ Large file</strong><br />
+          Showing first <strong>{fmt(truncatedAt!)}</strong> of <strong>{fmt(totalEntries ?? 0)}</strong> entries.
+          Use <strong>Filters</strong> or <strong>Search</strong> to narrow results.
+        </div>
+      )}
+
       <div className="filter-section">
         <h3>Statistics</h3>
 
         <div className="console-stats-total-card">
           <div className="console-stats-total-label">Total Entries</div>
-          <div className="console-stats-total-value">{stats.totalEntries}</div>
+          <div className="console-stats-total-value">{fmt(totalEntries ?? stats.totalEntries)}</div>
         </div>
 
         <div className="console-stats-level-list">

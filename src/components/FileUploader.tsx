@@ -3,6 +3,7 @@ import { chunkedUploader, UploadProgress, UploadResult } from '../services/chunk
 
 import { wsClient } from '../services/websocketClient';
 import SanitizeModal from './SanitizeModal';
+import BatchSanitizeModal from './BatchSanitizeModal';
 import {
   AlertIcon,
   ChevronRightIcon,
@@ -23,6 +24,8 @@ interface FileUploaderProps {
   onFileUpload: (result: UploadResult) => void | Promise<void>;
   recentFiles?: RecentFile[];
   onClearRecent?: () => void;
+  /** Allow selecting/dropping multiple .har files at once (each creates its own tab) */
+  multiple?: boolean;
 }
 
 interface ValidationResult {
@@ -34,6 +37,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({
   onFileUpload,
   recentFiles = [],
   onClearRecent,
+  multiple = false,
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,6 +47,11 @@ const FileUploader: React.FC<FileUploaderProps> = ({
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [pendingUploadResult, setPendingUploadResult] = useState<UploadResult | null>(null);
   const [showSanitizeModal, setShowSanitizeModal] = useState(false);
+  // Multi-file batch upload state
+  const [multiTotal, setMultiTotal] = useState(0);
+  const [multiDone, setMultiDone] = useState(0);
+  // Holds uploaded results waiting for the BatchSanitizeModal decision
+  const [pendingBatchResults, setPendingBatchResults] = useState<UploadResult[] | null>(null);
 
   useEffect(() => {
     if (error) {
@@ -69,7 +78,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({
     }
   };
 
-  const processFile = async (file: File) => {
+  const processFile = async (file: File, skipSanitizeModal = false) => {
     setError(null);
     setIsValidating(true);
 
@@ -90,14 +99,84 @@ const FileUploader: React.FC<FileUploaderProps> = ({
 
       setIsUploading(false);
       setUploadProgress(null);
-      setPendingUploadResult(result);
-      setShowSanitizeModal(true);
+
+      if (skipSanitizeModal) {
+        // Multi-file batch: skip the sanitize prompt, open directly
+        wsClient.subscribeToFile(result.fileId);
+        await onFileUpload(result);
+      } else {
+        setPendingUploadResult(result);
+        setShowSanitizeModal(true);
+      }
     } catch (err) {
       setError((err as Error).message || 'Upload failed.');
       setIsValidating(false);
       setIsUploading(false);
       setUploadProgress(null);
     }
+  };
+
+  /**
+   * Upload all files first (showing progress), then show BatchSanitizeModal
+   * for a single sanitization decision before opening any tabs.
+   */
+  const processMultipleFiles = async (files: File[]) => {
+    const harFiles = files.filter(f => f.name.endsWith('.har') || f.type === 'application/json');
+    if (harFiles.length === 0) {
+      setError('No valid .har files found in your selection');
+      return;
+    }
+
+    // Validate all files first — collect errors but don't stop the whole batch
+    setIsValidating(true);
+    const validFiles: File[] = [];
+    for (const file of harFiles) {
+      const v = await validateHarFile(file);
+      if (v.isValid) {
+        validFiles.push(file);
+      } else {
+        console.warn(`Skipping invalid HAR: ${file.name} — ${v.error}`);
+      }
+    }
+    setIsValidating(false);
+
+    if (validFiles.length === 0) {
+      setError('None of the selected files are valid HAR files');
+      return;
+    }
+
+    // Upload all valid files sequentially, showing per-file progress
+    setMultiTotal(validFiles.length);
+    setMultiDone(0);
+    setIsUploading(true);
+
+    const collectedResults: UploadResult[] = [];
+
+    for (const file of validFiles) {
+      try {
+        const result = await chunkedUploader.uploadFile(file, 'har', (progress) => {
+          setUploadProgress(progress);
+        });
+        collectedResults.push(result);
+      } catch (err) {
+        console.error(`Failed to upload ${file.name}:`, err);
+        setError(`Failed to upload ${file.name}. Other files are still being processed.`);
+      }
+      setMultiDone(prev => prev + 1);
+    }
+
+    setIsUploading(false);
+    setUploadProgress(null);
+    setMultiTotal(0);
+    setMultiDone(0);
+
+    if (collectedResults.length === 0) {
+      setError('All uploads failed. Please try again.');
+      return;
+    }
+
+    // Show the batch sanitize modal — user makes ONE decision for all files
+    setPendingBatchResults(collectedResults);
   };
 
   const handleSanitizeComplete = (fileId: string) => {
@@ -125,14 +204,31 @@ const FileUploader: React.FC<FileUploaderProps> = ({
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    const harFile = Array.from(e.dataTransfer.files).find((f) => f.name.endsWith('.har') || f.type === 'application/json');
-    if (harFile) processFile(harFile);
-    else setError('Please upload a valid .har file');
+    const allFiles = Array.from(e.dataTransfer.files);
+    const harFiles = allFiles.filter(f => f.name.endsWith('.har') || f.type === 'application/json');
+    if (harFiles.length === 0) {
+      setError('Please upload a valid .har file');
+      return;
+    }
+    if (harFiles.length === 1) {
+      processFile(harFiles[0]);
+    } else {
+      processMultipleFiles(harFiles);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) processFile(file);
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    if (files.length === 1) {
+      processFile(files[0]);
+    } else {
+      processMultipleFiles(files);
+    }
+    // Reset input so the same files can be re-selected if needed
+    e.target.value = '';
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleRecentFileClick = async (file: File) => {
@@ -148,13 +244,32 @@ const FileUploader: React.FC<FileUploaderProps> = ({
     return `${Math.floor(diffHours / 24)}d ago`;
   };
 
+  /** Called when the BatchSanitizeModal resolves with final (possibly-redacted) file IDs */
+  const handleBatchSanitizeComplete = async (finalResults: UploadResult[]) => {
+    setPendingBatchResults(null);
+    for (const result of finalResults) {
+      wsClient.subscribeToFile(result.fileId);
+      await onFileUpload(result);
+    }
+  };
+
   return (
     <div className="file-uploader">
+      {/* Single-file sanitize modal */}
       {showSanitizeModal && pendingUploadResult && (
         <SanitizeModal
           uploadResult={pendingUploadResult}
           onProceed={handleSanitizeComplete}
           onCancel={() => { setShowSanitizeModal(false); setPendingUploadResult(null); }}
+        />
+      )}
+
+      {/* Multi-file batch sanitize modal */}
+      {pendingBatchResults && (
+        <BatchSanitizeModal
+          uploadResults={pendingBatchResults}
+          onProceed={handleBatchSanitizeComplete}
+          onCancel={() => setPendingBatchResults(null)}
         />
       )}
 
@@ -222,11 +337,32 @@ const FileUploader: React.FC<FileUploaderProps> = ({
               )}
             </div>
             <h2>{isValidating ? 'Validating HAR File...' : 'Upload HAR File'}</h2>
-            <p>{isValidating ? 'Please wait while we validate your file' : 'Drag and drop your .har file here'}</p>
+            <p>
+              {isValidating
+                ? 'Please wait while we validate your file'
+                : multiple
+                  ? 'Drag and drop one or more .har files here'
+                  : 'Drag and drop your .har file here'}
+            </p>
+            {multiTotal > 0 && (
+              <p style={{ fontSize: '13px', color: 'var(--text-secondary, #888)', marginTop: '4px' }}>
+                Opening file {multiDone + 1} of {multiTotal}…
+              </p>
+            )}
             {!isValidating && !isUploading && (
               <>
-                <input type="file" accept=".har,application/json" onChange={handleFileInput} style={{ display: 'none' }} id="file-input" disabled={isUploading} />
-                <label htmlFor="file-input" className="upload-button">Choose File</label>
+                <input
+                  type="file"
+                  accept=".har,application/json"
+                  onChange={handleFileInput}
+                  style={{ display: 'none' }}
+                  id="file-input"
+                  disabled={isUploading}
+                  multiple={multiple}
+                />
+                <label htmlFor="file-input" className="upload-button">
+                  {multiple ? 'Choose Files' : 'Choose File'}
+                </label>
               </>
             )}
           </>
