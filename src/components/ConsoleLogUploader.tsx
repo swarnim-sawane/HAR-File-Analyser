@@ -1,5 +1,14 @@
-import React, { useCallback, useState } from 'react';
-import { ChevronRightIcon, ConsoleIcon, FileTextIcon } from './Icons';
+import React, { useCallback, useEffect, useState } from 'react';
+import { chunkedUploader, UploadProgress, UploadResult } from '../services/chunkedUploader';
+import {
+  AlertIcon,
+  ChevronRightIcon,
+  CloseIcon,
+  ConsoleIcon,
+  FileTextIcon,
+  RefreshIcon,
+  UploadIcon,
+} from './Icons';
 
 interface RecentFile {
   name: string;
@@ -8,7 +17,7 @@ interface RecentFile {
 }
 
 interface ConsoleLogUploaderProps {
-  onFileUpload: (file: File) => void;
+  onFileUpload: (result: UploadResult, sourceFile?: File) => void | Promise<void>;
   recentFiles?: RecentFile[];
   onClearRecent?: () => void;
 }
@@ -19,6 +28,67 @@ const ConsoleLogUploader: React.FC<ConsoleLogUploaderProps> = ({
   onClearRecent,
 }) => {
   const [isDragging, setIsDragging] = useState(false);
+  const [isValidating, setIsValidating] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isErrorVisible, setIsErrorVisible] = useState(false);
+
+  useEffect(() => {
+    if (!error) {
+      setIsErrorVisible(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setIsErrorVisible(true), 10);
+    return () => window.clearTimeout(timer);
+  }, [error]);
+
+  const isSupportedLogFile = useCallback((file: File) =>
+    file.name.endsWith('.log') ||
+    file.name.endsWith('.txt') ||
+    file.name.endsWith('.json') ||
+    file.type === 'text/plain' ||
+    file.type === 'application/json', []);
+
+  const validateLogFile = useCallback(async (file: File): Promise<{ isValid: boolean; error?: string }> => {
+    if (!isSupportedLogFile(file)) {
+      return { isValid: false, error: 'Please upload a valid log file (.log, .txt, or .json)' };
+    }
+    if (file.size <= 0) {
+      return { isValid: false, error: 'The selected file is empty. Please choose a valid log file.' };
+    }
+    return { isValid: true };
+  }, [isSupportedLogFile]);
+
+  const processFile = useCallback(async (file: File) => {
+    setError(null);
+    setIsValidating(true);
+
+    try {
+      const validation = await validateLogFile(file);
+      if (!validation.isValid) {
+        setError(validation.error || 'Invalid log file');
+        return;
+      }
+
+      setIsValidating(false);
+      setIsUploading(true);
+
+      const result = await chunkedUploader.uploadFile(file, 'log', (progress) => {
+        setUploadProgress(progress);
+      });
+
+      setIsUploading(false);
+      setUploadProgress(null);
+      await onFileUpload(result, file);
+    } catch (err) {
+      setError((err as Error)?.message || 'Log upload failed.');
+      setIsUploading(false);
+      setUploadProgress(null);
+    } finally {
+      setIsValidating(false);
+    }
+  }, [onFileUpload, validateLogFile]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -35,27 +105,34 @@ const ConsoleLogUploader: React.FC<ConsoleLogUploaderProps> = ({
     setIsDragging(false);
 
     const files = Array.from(e.dataTransfer.files);
-    const logFile = files.find((file) =>
-      file.name.endsWith('.log') ||
-      file.name.endsWith('.txt') ||
-      file.name.endsWith('.json') ||
-      file.type === 'text/plain' ||
-      file.type === 'application/json'
-    );
+    const logFile = files.find(isSupportedLogFile);
 
     if (logFile) {
-      onFileUpload(logFile);
+      processFile(logFile);
     } else {
-      alert('Please upload a valid log file (.log, .txt, or .json)');
+      setError('Please upload a valid log file (.log, .txt, or .json)');
     }
-  }, [onFileUpload]);
+  }, [isSupportedLogFile, processFile]);
 
   const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      onFileUpload(file);
+      processFile(file);
     }
-  }, [onFileUpload]);
+  }, [processFile]);
+
+  const handleDismiss = () => {
+    setIsErrorVisible(false);
+    window.setTimeout(() => setError(null), 300);
+  };
+
+  const handleRecentFileClick = (file: RecentFile) => {
+    if (!(file.data instanceof File)) {
+      setError('Recent file data is unavailable. Please upload the file again.');
+      return;
+    }
+    void processFile(file.data);
+  };
 
   const formatDate = (timestamp: number) => {
     const date = new Date(timestamp);
@@ -75,30 +152,73 @@ const ConsoleLogUploader: React.FC<ConsoleLogUploaderProps> = ({
 
   return (
     <div className="file-uploader">
+      {error && (
+        <div
+          className="upload-error-banner"
+          style={{
+            opacity: isErrorVisible ? 1 : 0,
+            transform: `translateY(${isErrorVisible ? '0' : '-8px'})`,
+            transition: 'opacity 0.2s ease, transform 0.2s ease',
+          }}
+        >
+          <span className="uploader-inline-icon error-icon">
+            <AlertIcon />
+          </span>
+          <span className="error-message">{error}</span>
+          <button className="btn-dismiss" onClick={handleDismiss} aria-label="Dismiss error">
+            <span className="uploader-inline-icon uploader-close-icon">
+              <CloseIcon />
+            </span>
+          </button>
+        </div>
+      )}
+
       <div
-        className={`drop-zone ${isDragging ? 'dragging' : ''}`}
+        className={`drop-zone ${isDragging ? 'dragging' : ''} ${isValidating || isUploading ? 'validating' : ''}`}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        <div className="uploader-leading-icon" aria-hidden="true">
-          <ConsoleIcon />
-        </div>
-        <h2>Upload Console Log File</h2>
-        <p>Drag and drop your log file here</p>
-        <p className="supported-formats">Supports: .log, .txt, .json</p>
-        <label className="upload-button">
-          <input
-            type="file"
-            accept=".log,.txt,.json,text/plain,application/json"
-            onChange={handleFileInput}
-            style={{ display: 'none' }}
-          />
-          Choose File
-        </label>
+        {isUploading && uploadProgress ? (
+          <div className="upload-progress-view">
+            <div className="uploader-leading-icon is-active is-uploading" aria-hidden="true">
+              <UploadIcon />
+            </div>
+            <h2>Uploading Console Log...</h2>
+            <p className="upload-filename">{uploadProgress.fileName}</p>
+            <div className="progress-bar">
+              <div className="progress-fill" style={{ width: `${uploadProgress.progress}%` }} />
+              <div className="progress-glow" style={{ width: `${uploadProgress.progress}%` }} />
+            </div>
+            <p className="upload-stats">
+              Chunk {uploadProgress.uploadedChunks} of {uploadProgress.totalChunks} - {Math.round(uploadProgress.progress)}%
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className={`uploader-leading-icon ${isValidating ? 'is-active is-spinning' : ''}`} aria-hidden="true">
+              {isValidating ? <RefreshIcon /> : <ConsoleIcon />}
+            </div>
+            <h2>{isValidating ? 'Validating Console Log...' : 'Upload Console Log File'}</h2>
+            <p>{isValidating ? 'Please wait while we validate your file' : 'Drag and drop your log file here'}</p>
+            <p className="supported-formats">Supports: .log, .txt, .json</p>
+            {!isValidating && !isUploading && (
+              <label className="upload-button">
+                <input
+                  type="file"
+                  accept=".log,.txt,.json,text/plain,application/json"
+                  onChange={handleFileInput}
+                  style={{ display: 'none' }}
+                  disabled={isUploading}
+                />
+                Choose File
+              </label>
+            )}
+          </>
+        )}
       </div>
 
-      {recentFiles.length > 0 && (
+      {recentFiles.length > 0 && !isUploading && (
         <div className="recent-files-section">
           <div className="recent-files-header">
             <h3>Recent Files</h3>
@@ -113,7 +233,8 @@ const ConsoleLogUploader: React.FC<ConsoleLogUploaderProps> = ({
               <button
                 key={index}
                 className="recent-file-card"
-                onClick={() => onFileUpload(file.data)}
+                onClick={() => handleRecentFileClick(file)}
+                disabled={isValidating || isUploading}
               >
                 <div className="recent-file-info">
                   <span className="recent-file-icon">

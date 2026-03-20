@@ -22,132 +22,68 @@ const ConsoleLogStatistics: React.FC<ConsoleLogStatisticsProps> = ({ entries }) 
   };
 
   return (
-    <div className="filter-panel" style={{ marginTop: '16px' }}>
+    <div className="filter-panel console-stats-panel">
       <div className="filter-section">
         <h3>Statistics</h3>
-        
-        <div style={{ 
-          background: 'var(--bg-secondary)', 
-          padding: '16px', 
-          borderRadius: '8px',
-          marginBottom: '16px',
-          textAlign: 'center'
-        }}>
-          <div style={{ 
-            fontSize: '11px', 
-            color: 'var(--text-tertiary)',
-            marginBottom: '8px',
-            textTransform: 'uppercase',
-            letterSpacing: '0.05em',
-            fontWeight: 600
-          }}>
-            Total Entries
-          </div>
-          <div style={{ 
-            fontSize: '32px', 
-            fontWeight: 700,
-            color: 'var(--text-primary)'
-          }}>
-            {stats.totalEntries}
-          </div>
+
+        <div className="console-stats-total-card">
+          <div className="console-stats-total-label">Total Entries</div>
+          <div className="console-stats-total-value">{stats.totalEntries}</div>
         </div>
 
-        {Object.entries(stats.levelCounts).map(([level, count]) => (
-          count > 0 && (
-            <div key={level} style={{ 
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              marginBottom: '8px',
-              fontSize: '13px'
-            }}>
-              <span 
-                className="level-badge"
-                style={{ 
-                  backgroundColor: levelColors[level],
-                  fontSize: '9px',
-                  padding: '2px 8px'
-                }}
-              >
-                {level.toUpperCase()}
-              </span>
-              <span style={{ flex: 1, color: 'var(--text-secondary)' }}>
-                {count}
-              </span>
-              <div style={{ 
-                flex: 2,
-                height: '6px',
-                background: 'var(--bg-tertiary)',
-                borderRadius: '3px',
-                overflow: 'hidden'
-              }}>
-                <div 
-                  style={{ 
-                    width: `${(count / stats.totalEntries) * 100}%`,
-                    height: '100%',
-                    background: levelColors[level]
-                  }}
-                />
+        <div className="console-stats-level-list">
+          {Object.entries(stats.levelCounts).map(([level, count]) => {
+            if (count <= 0) return null;
+            const percent = stats.totalEntries > 0 ? (count / stats.totalEntries) * 100 : 0;
+            return (
+              <div key={level} className="console-stats-level-row">
+                <span
+                  className="console-stats-level-badge"
+                  style={{ backgroundColor: levelColors[level] }}
+                >
+                  {level.toUpperCase()}
+                </span>
+                <span className="console-stats-level-count">{count}</span>
+                <div className="console-stats-level-bar">
+                  <div
+                    className="console-stats-level-bar-fill"
+                    style={{
+                      width: `${percent}%`,
+                      backgroundColor: levelColors[level],
+                    }}
+                  />
+                </div>
               </div>
-            </div>
-          )
-        ))}
+            );
+          })}
+        </div>
       </div>
 
       {stats.topErrors.length > 0 && (
         <div className="filter-section">
           <h3>Top Errors</h3>
-          {stats.topErrors.slice(0, 5).map((error, index) => (
-            <div key={index} style={{ 
-              marginBottom: '12px',
-              padding: '10px',
-              background: 'var(--bg-secondary)',
-              borderRadius: '6px',
-              fontSize: '12px'
-            }}>
-              <div style={{ 
-                fontFamily: '"SF Mono", "Monaco", monospace',
-                marginBottom: '4px',
-                color: 'var(--text-primary)',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap'
-              }}>
-                {error.message}
+          <div className="console-stats-error-list">
+            {stats.topErrors.slice(0, 5).map((error, index) => (
+              <div key={index} className="console-stats-error-card">
+                <div className="console-stats-error-message">{error.message}</div>
+                <div className="console-stats-error-count">{error.count}x occurrences</div>
               </div>
-              <div style={{ 
-                color: 'var(--error)',
-                fontWeight: 600,
-                fontSize: '11px'
-              }}>
-                {error.count}× occurrences
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       )}
 
       {stats.timeRange && (
         <div className="filter-section">
           <h3>Time Range</h3>
-          <div style={{ 
-            background: 'var(--bg-secondary)',
-            padding: '12px',
-            borderRadius: '6px',
-            fontSize: '12px',
-            lineHeight: '1.6'
-          }}>
-            <div style={{ marginBottom: '6px' }}>
-              <strong style={{ color: 'var(--text-primary)' }}>Start:</strong>{' '}
-              <span style={{ color: 'var(--text-secondary)' }}>
-                {new Date(stats.timeRange.start).toLocaleString()}
-              </span>
+          <div className="console-stats-time-card">
+            <div className="console-stats-time-row">
+              <strong>Start:</strong>
+              <span>{new Date(stats.timeRange.start).toLocaleString()}</span>
             </div>
-            <div>
-              <strong style={{ color: 'var(--text-primary)' }}>End:</strong>{' '}
-              <span style={{ color: 'var(--text-secondary)' }}>
-                {new Date(stats.timeRange.end).toLocaleString()}
-              </span>
+            <div className="console-stats-time-row">
+              <strong>End:</strong>
+              <span>{new Date(stats.timeRange.end).toLocaleString()}</span>
             </div>
           </div>
         </div>
