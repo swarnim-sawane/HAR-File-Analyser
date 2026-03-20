@@ -40,13 +40,12 @@ export async function processConsoleLog(data: LogJobData): Promise<void> {
     redis = getRedis();
   }
 
-  console.log(`📋 Processing console log: ${fileName} (${fileSize} bytes)`);
+  console.log(`📋 Processing console log: ${fileName} (${(fileSize / 1024 / 1024).toFixed(1)} MB)`);
 
   try {
     // Update status
     await updateFileStatus(fileId, 'parsing');
 
-    // ✅ FIXED: Calculate stats on-the-fly instead of storing all entries
     const statsAccumulator = {
       levels: {} as Record<string, number>,
       sources: {} as Record<string, number>,
@@ -60,12 +59,15 @@ export async function processConsoleLog(data: LogJobData): Promise<void> {
     const logsCollection = db.collection('console_logs');
     let batchBuffer: ParsedLogEntry[] = [];
     const BATCH_SIZE = 1000;
-    let totalEntries = 0; // ✅ FIXED: Just track count, not store entries
+    let totalEntries = 0;
+    let bytesProcessed = 0;
+    // ✅ FIXED: track size of parsed entries for file-size-based progress
+    // Average log line ≈ 200 bytes — we get a real estimate from totalEntries * avgLineSize
+    let lastProgressEmit = 0;
+    const PROGRESS_EMIT_EVERY = 5000; // emit progress every 5k entries
 
     await streamParseConsoleLog(filePath, async (entry, index) => {
       batchBuffer.push(entry);
-
-      // ✅ FIXED: Update stats on-the-fly
       updateStatsWithEntry(statsAccumulator, entry);
       totalEntries++;
 
@@ -78,15 +80,22 @@ export async function processConsoleLog(data: LogJobData): Promise<void> {
         }));
 
         await logsCollection.insertMany(toInsert, { ordered: false });
+        batchBuffer = [];
 
-        // Emit progress
-        const progress = Math.min((totalEntries / 10000) * 80, 80); // Max 80% during parsing
-        emitProgress(fileId, 'parsing', progress);
-
-        batchBuffer = []; // Clear buffer
+        // ✅ FIXED: Progress based on estimated bytes read vs total file size.
+        // Use a rolling average of ~150 bytes/line (conservative for log lines).
+        // Caps at 85% so the final "analyzing" phase has visible room.
+        if (totalEntries - lastProgressEmit >= PROGRESS_EMIT_EVERY) {
+          lastProgressEmit = totalEntries;
+          const estimatedBytesRead = totalEntries * 150;
+          const rawPct = fileSize > 0 ? (estimatedBytesRead / fileSize) * 85 : 50;
+          const progress = Math.min(rawPct, 85);
+          emitProgress(fileId, 'parsing', progress);
+          console.log(`  ↳ ${totalEntries.toLocaleString()} entries parsed (~${progress.toFixed(0)}%)`);
+        }
 
         // Force GC periodically for very large files
-        if (totalEntries % 10000 === 0 && typeof global.gc === 'function') {
+        if (totalEntries % 50000 === 0 && typeof global.gc === 'function') {
           global.gc();
         }
       }

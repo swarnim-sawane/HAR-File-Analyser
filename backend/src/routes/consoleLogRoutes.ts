@@ -1,5 +1,5 @@
 import express, { Request, Response } from 'express';
-import { getMongoDb } from '../config/database';
+import { getMongoDb, getRedis } from '../config/database';
 
 const router = express.Router();
 
@@ -105,19 +105,35 @@ router.get('/:fileId/status', async (req: Request, res: Response) => {
     const db = getMongoDb();
 
     const file = await db.collection('console_log_files').findOne({ fileId });
-    
-    if (!file) {
-      return res.status(404).json({ error: 'File not found' });
+
+    if (file) {
+      return res.json({
+        fileId: file.fileId,
+        fileName: file.fileName,
+        status: file.status,
+        totalEntries: file.totalEntries,
+        uploadedAt: file.uploadedAt,
+        processedAt: file.processedAt
+      });
     }
 
-    res.json({
-      fileId: file.fileId,
-      fileName: file.fileName,
-      status: file.status,
-      totalEntries: file.totalEntries,
-      uploadedAt: file.uploadedAt,
-      processedAt: file.processedAt
-    });
+    // File not in MongoDB yet — check Redis for in-progress status
+    // (the upload pipeline writes file:{fileId}:metadata immediately with status:'processing')
+    const redis = getRedis();
+    const metadata = await redis.get(`file:${fileId}:metadata`);
+    if (metadata) {
+      const data = JSON.parse(metadata);
+      return res.json({
+        fileId,
+        fileName: data.fileName,
+        status: data.status,
+        totalEntries: data.totalEntries ?? null,
+        uploadedAt: data.uploadedAt ?? null,
+        processedAt: null
+      });
+    }
+
+    return res.status(404).json({ error: 'File not found' });
   } catch (error) {
     console.error('Failed to fetch log status:', error);
     res.status(500).json({ error: 'Failed to fetch status' });
