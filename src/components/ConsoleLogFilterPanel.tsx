@@ -56,29 +56,29 @@ const ConsoleLogFilterPanel: React.FC<ConsoleLogFilterPanelProps> = ({
   const allSelected = Object.values(filters.levels).every(v => v);
 
   return (
-    <div className="filter-panel pro-filter-panel">
+    <div className="filter-panel pro-filter-panel console-filter-panel">
       <div className="filter-section">
-        <div className="filter-section-header">
+        <div className="filter-section-header console-filter-section-header">
           <h3>Log Levels</h3>
-          <button className="btn-select-all" onClick={handleSelectAll}>
+          <button className="btn-select-all console-select-all-btn" onClick={handleSelectAll}>
             {allSelected ? 'Deselect All' : 'Select All'}
           </button>
         </div>
         
-        <div className="checkbox-list">
+        <div className="checkbox-list console-level-list">
           {levelConfig.map(({ key, label, color }) => (
-            <label key={key} className="checkbox-item">
+            <label key={key} className="checkbox-item console-level-item">
               <input
                 type="checkbox"
                 checked={filters.levels[key as keyof ConsoleFilterOptions['levels']]}
                 onChange={() => handleLevelChange(key as keyof ConsoleFilterOptions['levels'])}
               />
-              <span className="checkbox-custom"></span>
+              <span className="checkbox-custom console-level-check"></span>
               <span 
-                className="level-indicator"
+                className="level-indicator console-level-indicator"
                 style={{ backgroundColor: color }}
               ></span>
-              <span className="checkbox-label">{label}</span>
+              <span className="checkbox-label console-level-label">{label}</span>
             </label>
           ))}
         </div>
@@ -91,7 +91,7 @@ const ConsoleLogFilterPanel: React.FC<ConsoleLogFilterPanelProps> = ({
           value={filters.searchTerm}
           onChange={handleSearchChange}
           placeholder="Search logs..."
-          className="search-input"
+          className="search-input console-search-input"
         />
       </div>
 
@@ -100,7 +100,7 @@ const ConsoleLogFilterPanel: React.FC<ConsoleLogFilterPanelProps> = ({
         <select
           value={filters.groupBy}
           onChange={handleGroupByChange}
-          className="select-input"
+          className="select-input console-select-input"
         >
           <option value="all">All Entries</option>
           <option value="level">Log Level</option>

@@ -173,7 +173,7 @@ const RequestList: React.FC<RequestListProps> = ({
   };
 
   return (
-    <div className="request-list">
+    <div className="request-list har-request-list">
       <div className="request-list-header">
         <button 
           className="header-cell sortable" 

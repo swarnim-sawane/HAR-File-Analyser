@@ -1,6 +1,6 @@
 // src/components/ConsoleLogList.tsx
 
-import React, { useState, useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { ConsoleLogEntry, LogLevel } from '../types/consolelog';
 import { formatDate } from '../utils/formatters';
 
@@ -30,15 +30,17 @@ const ConsoleLogList: React.FC<ConsoleLogListProps> = ({
       setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
     } else {
       setSortField(field);
-      setSortDirection(field === 'timestamp' ? 'desc' : 'desc');
+      setSortDirection('desc');
     }
   };
 
   const handleCopyMessage = (entry: ConsoleLogEntry, e: React.MouseEvent) => {
     e.stopPropagation();
     const formattedText = `[${entry.level.toUpperCase()}] ${formatDate(entry.timestamp)}
-${entry.message}${entry.source ? `\nSource: ${entry.source}${entry.lineNumber ? `:${entry.lineNumber}` : ''}` : ''}`;
-    
+${entry.message}${
+      entry.source ? `\nSource: ${entry.source}${entry.lineNumber ? `:${entry.lineNumber}` : ''}` : ''
+    }`;
+
     navigator.clipboard.writeText(formattedText);
     setCopiedId(entry.id);
     setTimeout(() => setCopiedId(null), 1500);
@@ -48,7 +50,7 @@ ${entry.message}${entry.source ? `\nSource: ${entry.source}${entry.lineNumber ? 
     if (selectedIds.size === entries.length) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(entries.map(e => e.id)));
+      setSelectedIds(new Set(entries.map((e) => e.id)));
     }
   };
 
@@ -64,10 +66,15 @@ ${entry.message}${entry.source ? `\nSource: ${entry.source}${entry.lineNumber ? 
   };
 
   const handleCopySelected = () => {
-    const selectedEntries = entries.filter(e => selectedIds.has(e.id));
-    const text = selectedEntries.map(e => 
-      `[${e.level.toUpperCase()}] ${formatDate(e.timestamp)}\n${e.message}${e.source ? `\nSource: ${e.source}${e.lineNumber ? `:${e.lineNumber}` : ''}` : ''}`
-    ).join('\n\n');
+    const selectedEntries = entries.filter((e) => selectedIds.has(e.id));
+    const text = selectedEntries
+      .map(
+        (e) =>
+          `[${e.level.toUpperCase()}] ${formatDate(e.timestamp)}\n${e.message}${
+            e.source ? `\nSource: ${e.source}${e.lineNumber ? `:${e.lineNumber}` : ''}` : ''
+          }`
+      )
+      .join('\n\n');
     navigator.clipboard.writeText(text);
     setCopiedId('bulk-copy');
     setTimeout(() => setCopiedId(null), 1500);
@@ -113,19 +120,6 @@ ${entry.message}${entry.source ? `\nSource: ${entry.source}${entry.lineNumber ? 
     return sorted;
   }, [entries, sortField, sortDirection]);
 
-  const getLevelColor = (level: LogLevel): string => {
-    const colors: Record<LogLevel, string> = {
-      error: '#ef4444',
-      warn: '#f59e0b',
-      info: '#3b82f6',
-      log: '#6b7280',
-      debug: '#8b5cf6',
-      trace: '#ec4899',
-      verbose: '#06b6d4',
-    };
-    return colors[level] || '#6b7280';
-  };
-
   const getLevelBadgeClass = (level: LogLevel): string => {
     const classes: Record<LogLevel, string> = {
       error: 'status-4xx',
@@ -141,11 +135,13 @@ ${entry.message}${entry.source ? `\nSource: ${entry.source}${entry.lineNumber ? 
 
   const renderSortIcon = (field: SortField) => {
     if (sortField !== field) {
-      return <span className="sort-icon inactive">⇅</span>;
+      return <span className="sort-icon console-sort-icon inactive">⇅</span>;
     }
-    return sortDirection === 'asc'
-      ? <span className="sort-icon">↑</span>
-      : <span className="sort-icon">↓</span>;
+    return sortDirection === 'asc' ? (
+      <span className="sort-icon console-sort-icon">↑</span>
+    ) : (
+      <span className="sort-icon console-sort-icon">↓</span>
+    );
   };
 
   const renderEntry = (entry: ConsoleLogEntry) => {
@@ -166,35 +162,29 @@ ${entry.message}${entry.source ? `\nSource: ${entry.source}${entry.lineNumber ? 
             onChange={(e) => handleSelectEntry(entry.id, e as any)}
             onClick={(e) => e.stopPropagation()}
           />
-          <span className="checkbox-custom"></span>
+          <span className="checkbox-custom console-row-checkbox"></span>
         </div>
-        
+
         <div className="log-level-cell">
-          <span className={`status-badge ${getLevelBadgeClass(entry.level)}`}>
-            {entry.level.toUpperCase()}
-          </span>
+          <span className={`status-badge ${getLevelBadgeClass(entry.level)}`}>{entry.level.toUpperCase()}</span>
           {priority >= 4 && (
             <span className="priority-indicator" title={`Priority: ${priority}`}>
               {'!'.repeat(priority - 3)}
             </span>
           )}
         </div>
-        
-        <div className="log-timestamp-cell">
-          {formatDate(entry.timestamp)}
-        </div>
-        
+
+        <div className="log-timestamp-cell">{formatDate(entry.timestamp)}</div>
+
         <div className="log-message-cell">
           <div className="log-message">{entry.message}</div>
         </div>
-        
+
         <div className="log-source-cell">
           {entry.source && (
             <>
               <span className="source-file">{entry.source.split('/').pop()}</span>
-              {entry.lineNumber && (
-                <span className="source-line">:{entry.lineNumber}</span>
-              )}
+              {entry.lineNumber && <span className="source-line">:{entry.lineNumber}</span>}
             </>
           )}
         </div>
@@ -237,8 +227,8 @@ ${entry.message}${entry.source ? `\nSource: ${entry.source}${entry.lineNumber ? 
         return sortDirection === 'asc' ? comparison : -comparison;
       });
 
-      const errorCount = groupEntries.filter(e => e.level === 'error').length;
-      const warnCount = groupEntries.filter(e => e.level === 'warn').length;
+      const errorCount = groupEntries.filter((e) => e.level === 'error').length;
+      const warnCount = groupEntries.filter((e) => e.level === 'warn').length;
 
       return (
         <div key={groupKey} className="page-group">
@@ -254,74 +244,67 @@ ${entry.message}${entry.source ? `\nSource: ${entry.source}${entry.lineNumber ? 
             </div>
             <span className="page-count">{groupEntries.length} entries</span>
           </div>
-          <div className="group-entries">
-            {sortedGroupEntries.map(renderEntry)}
-          </div>
+          <div className="group-entries">{sortedGroupEntries.map(renderEntry)}</div>
         </div>
       );
     });
   };
 
-  const errorCount = entries.filter(e => e.level === 'error').length;
-  const warnCount = entries.filter(e => e.level === 'warn').length;
+  const errorCount = entries.filter((e) => e.level === 'error').length;
+  const warnCount = entries.filter((e) => e.level === 'warn').length;
   const allSelected = selectedIds.size === entries.length && entries.length > 0;
 
   return (
-    <div className="request-list">
-      <div className="log-summary-bar">
-        <div className="summary-left">
-          <div className="select-all-container">
-            <input
-              type="checkbox"
-              id="select-all"
-              checked={allSelected}
-              onChange={handleSelectAll}
-            />
-            <label htmlFor="select-all" className="select-all-label">
-              <span className="checkbox-custom"></span>
-              <span className="select-text">
+    <div className="request-list console-request-list">
+      <div className="log-summary-bar console-log-summary-bar">
+        <div className="summary-left console-summary-left">
+          <div className="select-all-container console-select-all-container">
+            <input type="checkbox" id="select-all" checked={allSelected} onChange={handleSelectAll} />
+            <label htmlFor="select-all" className="select-all-label console-select-all-label">
+              <span className="checkbox-custom console-select-all-checkbox"></span>
+              <span className="select-text console-select-text">
                 {selectedIds.size > 0 ? `${selectedIds.size} selected` : 'Select all'}
               </span>
             </label>
           </div>
-          <span className="summary-text">
+          <span className="summary-text console-summary-text">
             <strong>{entries.length}</strong> entries
           </span>
           {errorCount > 0 && (
-            <span className="summary-badge status-4xx">
+            <span className="summary-badge console-summary-badge status-4xx">
               {errorCount} error{errorCount !== 1 ? 's' : ''}
             </span>
           )}
           {warnCount > 0 && (
-            <span className="summary-badge status-3xx">
+            <span className="summary-badge console-summary-badge status-3xx">
               {warnCount} warning{warnCount !== 1 ? 's' : ''}
             </span>
           )}
         </div>
-        <div className="summary-right">
+        <div className="summary-right console-summary-right">
           {selectedIds.size > 0 && (
-            <div className="selection-actions">
-              <button 
-                className={`action-btn-glass copy-all ${copiedId === 'bulk-copy' ? 'copied' : ''}`}
+            <div className="selection-actions console-selection-actions">
+              <button
+                className={`action-btn-glass console-action-btn copy-all ${copiedId === 'bulk-copy' ? 'copied' : ''}`}
                 onClick={handleCopySelected}
               >
                 {copiedId === 'bulk-copy' ? '✓ Copied' : 'Copy Selected'}
               </button>
-              <button className="action-btn-glass clear" onClick={handleClearSelection}>
-                ✕ Clear
+              <button className="action-btn-glass console-action-btn clear" onClick={handleClearSelection}>
+                x Clear
               </button>
             </div>
           )}
-          <div className="sort-controls">
-            <span className="sort-label">Sort by:</span>
+          <div className="sort-controls console-sort-controls">
+            <span className="sort-label console-sort-label">Sort by:</span>
             <button
-              className={`sort-button ${sortField === 'timestamp' ? 'active' : ''}`}
+              className={`sort-button console-sort-button ${sortField === 'timestamp' ? 'active' : ''}`}
               onClick={() => handleSort('timestamp')}
             >
               Time {renderSortIcon('timestamp')}
             </button>
             <button
-              className={`sort-button ${sortField === 'severity' ? 'active' : ''}`}
+              className={`sort-button console-sort-button ${sortField === 'severity' ? 'active' : ''}`}
               onClick={() => handleSort('severity')}
             >
               Severity {renderSortIcon('severity')}
@@ -329,7 +312,7 @@ ${entry.message}${entry.source ? `\nSource: ${entry.source}${entry.lineNumber ? 
           </div>
         </div>
       </div>
-      
+
       <div className="request-list-header">
         <div className="header-cell checkbox-cell"></div>
         <div className="header-cell" onClick={() => handleSort('severity')} style={{ cursor: 'pointer' }}>
@@ -342,7 +325,7 @@ ${entry.message}${entry.source ? `\nSource: ${entry.source}${entry.lineNumber ? 
         <div className="header-cell">Source</div>
         <div className="header-cell actions-header">Actions</div>
       </div>
-      
+
       <div className="request-list-content">
         {entries.length === 0 ? (
           <div className="no-data">No log entries match the current filters</div>
