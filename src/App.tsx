@@ -1,30 +1,23 @@
 // src/App.tsx
 
-import React, { useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useRef, useState, useEffect } from 'react';
 import FileUploader from './components/FileUploader';
-import FilterPanel from './components/FilterPanel';
-import RequestList from './components/RequestList';
-import RequestDetails from './components/RequestDetails';
 import ConsoleLogUploader from './components/ConsoleLogUploader';
 import ConsoleLogFilterPanel from './components/ConsoleLogFilterPanel';
 import ConsoleLogList from './components/ConsoleLogList';
 import ConsoleLogDetails from './components/ConsoleLogDetails';
 import ConsoleLogStatistics from './components/ConsoleLogStatistics';
 import Toolbar from './components/Toolbar';
-import { useHarData } from './hooks/useHarData';
+import HarTabContent from './components/HarTabContent';
 import { useConsoleLogData } from './hooks/useConsoleLogData';
-import { HarAnalyzer } from './utils/harAnalyzer';
 import { ConsoleLogAnalyzer } from './utils/consoleLogAnalyzer';
 import './styles/globals.css';
 import DarkModeToggle from './components/DarkModeToggle';
-import HarSanitizer from './components/HarSanitizer';
 import FloatingAiChat from './components/FloatingAiChat';
 import { UploadResult, chunkedUploader } from './services/chunkedUploader';
 import { apiClient } from './services/apiClient';
 import { wsClient } from './services/websocketClient';
-import RequestFlowDiagram from './components/RequestFlowDiagram';
-import PerformanceScorecard from './components/PerformanceScorecard';
-import AiInsights from './components/AiInsights';
+import HarCompare from './components/HarCompare';
 
 interface RecentFile {
   name: string;
@@ -32,12 +25,17 @@ interface RecentFile {
   data: File;
 }
 
-type HarTab = 'analyzer' | 'sanitizer' | 'flow' | 'scorecard' | 'insights';
+/** A single open HAR file tab */
+interface HarFileTab {
+  id: string;       // unique tab id (generated)
+  fileId: string;   // backend file id (used to load data)
+  fileName: string; // display name
+}
 
 interface PendingLeaveNavigation {
   destination: string;
-  nextTool?: 'har' | 'console';
-  nextTab?: HarTab;
+  nextTool?: 'har' | 'console' | 'compare';
+  nextTabId?: string; // for switching between HAR file tabs
 }
 
 const BACKEND_URL =
@@ -46,35 +44,40 @@ const BACKEND_URL =
   'http://localhost:4000';
 
 const App: React.FC = () => {
-  // HAR Analyzer state
-  const harState = useHarData();
-  const [harShowUploader, setHarShowUploader] = useState(false);
+  // ── HAR multi-tab state ──────────────────────────────────────────────────────
+  const [harTabs, setHarTabs] = useState<HarFileTab[]>([]);
+  const [activeHarTabId, setActiveHarTabId] = useState<string | null>(null);
+  const [harShowUploader, setHarShowUploader] = useState(true);
   const [harRecentFiles, setHarRecentFiles] = useState<RecentFile[]>([]);
-  const [harCurrentFileName, setHarCurrentFileName] = useState('');
+  // Ref to hidden file-input used for the "+" add-tab button in the tab bar
+  const addTabInputRef = useRef<HTMLInputElement>(null);
+  // Track which tab (if any) is currently generating insights — for the leave guard
+  const tabInsightsRef = useRef<Record<string, boolean>>({});
+  const [activeTabGeneratingInsights, setActiveTabGeneratingInsights] = useState(false);
 
-
-  // Console Log Analyzer state
+  // ── Console Log state ────────────────────────────────────────────────────────
   const logState = useConsoleLogData();
   const [logShowUploader, setLogShowUploader] = useState(false);
   const [logRecentFiles, setLogRecentFiles] = useState<RecentFile[]>([]);
   const [logCurrentFileName, setLogCurrentFileName] = useState('');
   const [isLogProcessing, setIsLogProcessing] = useState(false);
   const [logLoadingMessage, setLogLoadingMessage] = useState('Loading console log file...');
+  const [showLogLocalFallback, setShowLogLocalFallback] = useState(false);
+  const logCancelRef = React.useRef<(() => void) | null>(null);
 
-  // Main navigation
-  const [activeTool, setActiveTool] = useState<'har' | 'console'>('har');
-  const [activeTab, setActiveTab] = useState<HarTab>('analyzer');
-  const [isInsightsGenerating, setIsInsightsGenerating] = useState(false);
+  // ── Main navigation ──────────────────────────────────────────────────────────
+  const [activeTool, setActiveTool] = useState<'har' | 'console' | 'compare'>('har');
   const [pendingLeaveNavigation, setPendingLeaveNavigation] = useState<PendingLeaveNavigation | null>(null);
 
+  const MAX_HAR_TABS = 8;
   const MAX_RECENT_FILES = 5;
   const HAR_RECENT_FILES_KEY = 'har_analyzer_recent_files';
   const LOG_RECENT_FILES_KEY = 'console_log_recent_files';
   const LOG_STATUS_POLL_INTERVAL_MS = 2000;
   const LOG_STATUS_TIMEOUT_MS = 180000;
 
-  // near other useState()s in App.tsx
-  const [detailsWidth, setDetailsWidth] = useState(450); // default matches CSS
+  // ── Console log details resize ───────────────────────────────────────────────
+  const [detailsWidth, setDetailsWidth] = useState(450);
   const DETAILS_MIN = 320;
   const DETAILS_MAX = 900;
 
@@ -82,18 +85,15 @@ const App: React.FC = () => {
     e.preventDefault();
     const startX = e.clientX;
     const startWidth = detailsWidth;
-
     const onMove = (ev: MouseEvent) => {
-      const delta = startX - ev.clientX; // dragging left increases width
+      const delta = startX - ev.clientX;
       const next = Math.max(DETAILS_MIN, Math.min(DETAILS_MAX, startWidth + delta));
       setDetailsWidth(next);
     };
-
     const onUp = () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
-
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
   };
@@ -104,40 +104,31 @@ const App: React.FC = () => {
     const deepLinkFileId = params.get('fileId');
     if (!deepLinkFileId) return;
 
-    // Subscribe to socket room so we get the ready event if processing is still in progress
     wsClient.connect();
     wsClient.subscribeToFile(deepLinkFileId);
 
-    const loadFile = async (fileId: string, fileName?: string) => {
-      try {
-        const harData = await apiClient.getHarData(fileId);
-        await harState.loadHarData(harData);
-        setHarCurrentFileName(fileName || fileId);
-        setHarShowUploader(false);
-        // Remove the ?fileId param from the URL bar without triggering a reload
-        const clean = window.location.pathname + window.location.hash;
-        window.history.replaceState({}, '', clean);
-      } catch {
-        // File not ready yet — wait for socket event below
-      }
+    const tryOpenTab = (fileId: string, fileName?: string) => {
+      openHarTab({ fileId, fileName: fileName || fileId, fileSize: 0, hash: '', jobId: '', success: true, message: '' });
+      const clean = window.location.pathname + window.location.hash;
+      window.history.replaceState({}, '', clean);
     };
 
-    // Try immediately (file may already be processed by the time user clicks)
-    loadFile(deepLinkFileId);
+    // Try immediately
+    apiClient.getHarData(deepLinkFileId)
+      .then(() => tryOpenTab(deepLinkFileId))
+      .catch(() => { /* wait for socket */ });
 
-    // Also listen for the backend's ready event in case processing is still running
     const handleStatus = (data: { fileId: string; status: string; fileName?: string }) => {
       if (data.fileId !== deepLinkFileId || data.status !== 'ready') return;
-      loadFile(deepLinkFileId, data.fileName);
+      tryOpenTab(deepLinkFileId, data.fileName);
     };
-
     wsClient.on('file:status', handleStatus);
     return () => { wsClient.off('file:status', handleStatus); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const isLeaveInsightsGuardActive =
-    activeTool === 'har' && activeTab === 'insights' && isInsightsGenerating;
+    activeTool === 'har' && activeTabGeneratingInsights;
 
   useEffect(() => {
     if (!pendingLeaveNavigation) return;
@@ -152,54 +143,57 @@ const App: React.FC = () => {
     };
   }, [pendingLeaveNavigation]);
 
-  const getHarTabLabel = (tab: HarTab): string => {
-    if (tab === 'insights') return 'AI Insights';
-    if (tab === 'analyzer') return 'Analyzer';
-    if (tab === 'flow') return 'Request Flow';
-    if (tab === 'sanitizer') return 'Sanitizer';
-    return 'Scorecard';
-  };
+  // Show "Parse locally instead" button after 10s of waiting for backend
+  useEffect(() => {
+    if (!isLogProcessing) {
+      setShowLogLocalFallback(false);
+      return;
+    }
+    const timer = setTimeout(() => setShowLogLocalFallback(true), 10000);
+    return () => clearTimeout(timer);
+  }, [isLogProcessing]);
 
   const applyPendingLeaveNavigation = () => {
     if (!pendingLeaveNavigation) return;
-
     if (pendingLeaveNavigation.nextTool) {
       setActiveTool(pendingLeaveNavigation.nextTool);
     }
-
-    if (pendingLeaveNavigation.nextTab) {
-      setActiveTab(pendingLeaveNavigation.nextTab);
+    if (pendingLeaveNavigation.nextTabId) {
+      setActiveHarTabId(pendingLeaveNavigation.nextTabId);
     }
-
-    setIsInsightsGenerating(false);
+    setActiveTabGeneratingInsights(false);
     setPendingLeaveNavigation(null);
   };
 
-  const handleToolChange = (nextTool: 'har' | 'console') => {
+  const handleToolChange = (nextTool: 'har' | 'console' | 'compare') => {
     if (nextTool === activeTool) return;
-    const destination = nextTool === 'har' ? 'HAR' : 'Console';
+    const destination = nextTool === 'har' ? 'HAR Analyzer' : nextTool === 'compare' ? 'HAR Compare' : 'Console';
     if (isLeaveInsightsGuardActive) {
       setPendingLeaveNavigation({ destination, nextTool });
       return;
     }
-    if (activeTool === 'har' && activeTab === 'insights') {
-      setIsInsightsGenerating(false);
-    }
     setActiveTool(nextTool);
   };
 
-  const handleHarTabChange = (nextTab: HarTab) => {
-    if (nextTab === activeTab) return;
-    const destination = getHarTabLabel(nextTab);
+  /** Switch to a different open HAR file tab */
+  const handleHarFileTabSwitch = (tabId: string) => {
+    if (tabId === activeHarTabId) return;
     if (isLeaveInsightsGuardActive) {
-      setPendingLeaveNavigation({ destination, nextTab });
+      const tab = harTabs.find(t => t.id === tabId);
+      setPendingLeaveNavigation({ destination: tab?.fileName || 'another file', nextTabId: tabId });
       return;
     }
-    if (activeTab === 'insights' && nextTab !== 'insights') {
-      setIsInsightsGenerating(false);
-    }
-    setActiveTab(nextTab);
+    setActiveHarTabId(tabId);
   };
+
+  /** Called by each HarTabContent to report its insights state */
+  const handleTabInsightsGeneratingChange = useCallback((tabId: string, generating: boolean) => {
+    tabInsightsRef.current[tabId] = generating;
+    // Only the active tab's state matters for the guard
+    if (tabId === activeHarTabId) {
+      setActiveTabGeneratingInsights(generating);
+    }
+  }, [activeHarTabId]);
 
 
 
@@ -216,43 +210,83 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // HAR file handlers
-  const registerRecentHarFile = (fileName: string, fileObj: File) => {
-    const newRecentFile: RecentFile = {
-      name: fileName,
-      timestamp: Date.now(),
-      data: fileObj,
-    };
+  // ── HAR file / tab management ─────────────────────────────────────────────────
 
+  const registerRecentHarFile = (fileName: string, fileObj: File) => {
     setHarRecentFiles(prev => {
       const filtered = prev.filter(f => f.name !== fileName);
-      const updated = [newRecentFile, ...filtered].slice(0, MAX_RECENT_FILES);
-      localStorage.setItem(HAR_RECENT_FILES_KEY, JSON.stringify(updated.map(f => ({
-        name: f.name,
-        timestamp: f.timestamp,
-      }))));
+      const updated = [{ name: fileName, timestamp: Date.now(), data: fileObj }, ...filtered].slice(0, MAX_RECENT_FILES);
+      localStorage.setItem(HAR_RECENT_FILES_KEY, JSON.stringify(updated.map(f => ({ name: f.name, timestamp: f.timestamp }))));
       return updated;
     });
   };
 
-  const handleHarFileUpload = async (result: UploadResult) => {
-    setHarCurrentFileName(result.fileName);
+  /** Open a new HAR tab for the given upload result */
+  const openHarTab = useCallback((result: UploadResult) => {
+    if (harTabs.length >= MAX_HAR_TABS) {
+      console.warn(`Max ${MAX_HAR_TABS} HAR tabs open — close one first`);
+      return;
+    }
+    const newTab: HarFileTab = {
+      id: `tab_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      fileId: result.fileId,
+      fileName: result.fileName,
+    };
+    setHarTabs(prev => [...prev, newTab]);
+    setActiveHarTabId(newTab.id);
     setHarShowUploader(false);
-
-    const harData = await apiClient.getHarData(result.fileId);
-    await harState.loadHarData(harData);
-
-    // We only have backend metadata here, not the original disk file.
     registerRecentHarFile(result.fileName, new File([], result.fileName));
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [harTabs.length]);
+
+  const handleHarFileUpload = useCallback(async (result: UploadResult) => {
+    openHarTab(result);
+  }, [openHarTab]);
 
   const handleRecentHarFile = async (file: File) => {
     try {
       const result = await chunkedUploader.uploadFile(file, 'har', () => {});
-      await handleHarFileUpload(result);
+      openHarTab(result);
       registerRecentHarFile(file.name, file);
     } catch (err) {
       console.error('Failed to re-upload recent file:', err);
+    }
+  };
+
+  /** Close a HAR file tab; activate the nearest remaining tab */
+  const closeHarTab = (tabId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setHarTabs(prev => {
+      const idx = prev.findIndex(t => t.id === tabId);
+      const next = prev.filter(t => t.id !== tabId);
+      if (activeHarTabId === tabId) {
+        // Activate the tab to the left, or the right if it was the first
+        const nextActive = next[Math.max(0, idx - 1)]?.id ?? next[0]?.id ?? null;
+        setActiveHarTabId(nextActive);
+        if (next.length === 0) setHarShowUploader(true);
+      }
+      // Clean up insights tracking
+      delete tabInsightsRef.current[tabId];
+      return next;
+    });
+  };
+
+  /** Triggered by the "+" button in the tab bar — opens the hidden file input */
+  const handleAddTabClick = () => {
+    addTabInputRef.current?.click();
+  };
+
+  const handleAddTabFileInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    for (const file of files) {
+      try {
+        const result = await chunkedUploader.uploadFile(file, 'har', () => {});
+        openHarTab(result);
+        registerRecentHarFile(file.name, file);
+      } catch (err) {
+        console.error('Failed to upload HAR file:', err);
+      }
     }
   };
 
@@ -274,7 +308,10 @@ const App: React.FC = () => {
     });
   };
 
-  const waitForLogReady = useCallback((fileId: string): Promise<void> => {
+  const waitForLogReady = useCallback((
+    fileId: string,
+    cancelRef?: React.MutableRefObject<(() => void) | null>
+  ): Promise<void> => {
     wsClient.connect();
     wsClient.subscribeToFile(fileId);
 
@@ -291,13 +328,17 @@ const App: React.FC = () => {
         }
         if (data.status === 'error') {
           finish(() => reject(new Error(data.error || 'Console log processing failed')));
+          return;
         }
+        if (data.status === 'parsing') setLogLoadingMessage('Parsing log entries on server...');
+        if (data.status === 'analyzing') setLogLoadingMessage('Analyzing log statistics...');
       };
 
       const cleanup = () => {
         if (pollTimer) clearInterval(pollTimer);
         if (timeoutTimer) clearTimeout(timeoutTimer);
         wsClient.off('file:status', handleStatus);
+        if (cancelRef) cancelRef.current = null;
       };
 
       const finish = (fn: () => void) => {
@@ -306,6 +347,10 @@ const App: React.FC = () => {
         cleanup();
         fn();
       };
+
+      if (cancelRef) {
+        cancelRef.current = () => finish(() => reject(new Error('Cancelled by user')));
+      }
 
       const pollStatus = async () => {
         try {
@@ -316,7 +361,10 @@ const App: React.FC = () => {
           }
           if (status?.status === 'error') {
             finish(() => reject(new Error(status.error || 'Console log processing failed')));
+            return;
           }
+          if (status?.status === 'parsing') setLogLoadingMessage('Parsing log entries on server...');
+          if (status?.status === 'analyzing') setLogLoadingMessage('Analyzing log statistics...');
         } catch (err: any) {
           const statusCode = err?.response?.status;
           if (statusCode && statusCode !== 404) {
@@ -335,14 +383,38 @@ const App: React.FC = () => {
     });
   }, []);
 
+  // Files under this limit are parsed locally (instant, no backend dependency).
+  // Mirrors the HAR flow which reads from disk immediately after upload.
+  const LOCAL_PARSE_THRESHOLD = 20 * 1024 * 1024; // 20 MB
+
   // Console log file handlers
   const handleLogUploadComplete = async (result: UploadResult, sourceFile?: File) => {
     setLogCurrentFileName(result.fileName);
     setIsLogProcessing(true);
+    logCancelRef.current = null;
 
+    // Small files: parse locally in the browser — no waiting for the backend worker.
+    // The file was already uploaded so the backend can still index it for AI features.
+    if (sourceFile && result.fileSize <= LOCAL_PARSE_THRESHOLD) {
+      setLogLoadingMessage('Parsing console log...');
+      try {
+        const loaded = await logState.loadLogFile(sourceFile);
+        if (loaded) {
+          setLogCurrentFileName(sourceFile.name);
+          setLogShowUploader(false);
+          registerRecentLogFile(sourceFile.name, sourceFile);
+        }
+      } finally {
+        setIsLogProcessing(false);
+        setLogLoadingMessage('Loading console log file...');
+      }
+      return;
+    }
+
+    // Large files: wait for the backend worker (which handles streaming + pagination).
     try {
       setLogLoadingMessage('Processing console log on server...');
-      await waitForLogReady(result.fileId);
+      await waitForLogReady(result.fileId, logCancelRef);
 
       setLogLoadingMessage('Loading parsed console entries...');
       const loadedFromBackend = await logState.loadLogFromBackend(result.fileId, result.fileName);
@@ -395,12 +467,6 @@ const App: React.FC = () => {
     }
   };
 
-  const harGroupedEntries = React.useMemo(() => {
-    if (!harState.harData || harState.filters.groupBy === 'all') return null;
-    const pages = harState.harData.log.pages || [];
-    return HarAnalyzer.groupByPage(harState.filteredEntries, pages);
-  }, [harState.harData, harState.filteredEntries, harState.filters.groupBy]);
-
   const logGroupedEntries = React.useMemo(() => {
     if (logState.filters.groupBy === 'all') return null;
     if (logState.filters.groupBy === 'level') {
@@ -419,10 +485,10 @@ const App: React.FC = () => {
             <line x1="12" y1="22.08" x2="12" y2="12"></line>
           </svg>
           <h1>
-            {activeTool === 'har' ? 'HAR Analyzer' : 'Console Log Analyzer'}
+            {activeTool === 'har' ? 'HAR Analyzer' : activeTool === 'compare' ? 'HAR Compare' : 'Console Log Analyzer'}
           </h1>
           <span className="header-divider">
-            {activeTool === 'har' ? 'Network Analysis Tool' : 'Console Log Analysis'}
+            {activeTool === 'har' ? 'Network Analysis Tool' : activeTool === 'compare' ? 'Side-by-side HAR comparison' : 'Console Log Analysis'}
           </span>
         </div>
         <DarkModeToggle />
@@ -450,65 +516,79 @@ const App: React.FC = () => {
             </svg>
             Console
           </button>
+          <button
+            className={`tool-tab ${activeTool === 'compare' ? 'active' : ''}`}
+            onClick={() => handleToolChange('compare')}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="3" y="3" width="8" height="11" rx="1"></rect>
+              <rect x="13" y="3" width="8" height="11" rx="1"></rect>
+              <path d="M7 18h10M12 14v4" strokeLinecap="round"></path>
+            </svg>
+            Compare
+          </button>
         </div>
 
 
-        {/* HAR Analyzer Tool */}
+        {/* HAR Analyzer Tool — multi-tab */}
         {activeTool === 'har' && (
           <>
-            {harState.harData && !harShowUploader && (
-              <div className="main-tabs">
-                <button
-                  className={`main-tab ${activeTab === 'analyzer' ? 'active' : ''}`}
-                  onClick={() => handleHarTabChange('analyzer')}
-                >
-                  Analyzer
-                </button>
-                <button
-                  className={`main-tab ${activeTab === 'flow' ? 'active' : ''}`}
-                  onClick={() => handleHarTabChange('flow')}
-                >
-                  Request Flow
-                </button>
-                <button
-                  className={`main-tab ${activeTab === 'sanitizer' ? 'active' : ''}`}
-                  onClick={() => handleHarTabChange('sanitizer')}
-                >
-                  Sanitizer
-                </button>
-                <button
-                  className={`main-tab ${activeTab === 'scorecard' ? 'active' : ''}`}
-                  onClick={() => handleHarTabChange('scorecard')}
-                >
-                  Scorecard
-                </button>
-                <button
-                  className={`main-tab ${activeTab === 'insights' ? 'active' : ''}`}
-                  onClick={() => handleHarTabChange('insights')}
-                >
-                  AI Insights
-                </button>
+            {/* ── HAR file tab bar ─────────────────────────────────────── */}
+            {harTabs.length > 0 && (
+              <div className="har-file-tabs">
+                {harTabs.map(tab => (
+                  <button
+                    key={tab.id}
+                    className={`har-file-tab ${tab.id === activeHarTabId ? 'active' : ''}`}
+                    onClick={() => handleHarFileTabSwitch(tab.id)}
+                    title={tab.fileName}
+                  >
+                    <svg className="har-file-tab-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <path d="M3 2h7l3 3v9H3z" />
+                      <path d="M10 2v3h3" />
+                    </svg>
+                    <span className="har-file-tab-name">{tab.fileName}</span>
+                    <span
+                      className="har-file-tab-close"
+                      role="button"
+                      aria-label={`Close ${tab.fileName}`}
+                      onClick={(e) => closeHarTab(tab.id, e)}
+                    >
+                      ×
+                    </span>
+                  </button>
+                ))}
+
+                {/* Add new tab button */}
+                {harTabs.length < MAX_HAR_TABS && (
+                  <button
+                    className="har-file-tab-add"
+                    onClick={handleAddTabClick}
+                    title="Open another HAR file"
+                  >
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M8 3v10M3 8h10" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                )}
+
+                {/* Hidden file input for the "+" button */}
+                <input
+                  ref={addTabInputRef}
+                  type="file"
+                  accept=".har,application/json"
+                  multiple
+                  style={{ display: 'none' }}
+                  onChange={handleAddTabFileInput}
+                />
               </div>
             )}
 
-            {harState.isLoading && (
-              <div className="loading-overlay">
-                <div className="spinner"></div>
-                <p>Loading HAR file...</p>
-              </div>
-            )}
-
-            {harState.error && (
-              <div className="error-banner">
-                <span className="error-icon">⚠️</span>
-                <span>{harState.error}</span>
-                <button onClick={harState.clearData} className="btn-dismiss">✕</button>
-              </div>
-            )}
-
-            {(harShowUploader || !harState.harData) && !harState.isLoading ? (
+            {/* ── Upload screen when no files are open yet ─────────────── */}
+            {harShowUploader && harTabs.length === 0 && (
               <div className="upload-section">
                 <FileUploader
+                  multiple
                   onFileUpload={handleHarFileUpload}
                   recentFiles={harRecentFiles}
                   onClearRecent={() => {
@@ -517,90 +597,32 @@ const App: React.FC = () => {
                   }}
                 />
               </div>
-            ) : harState.harData ? (
-              <>
-                {activeTab === 'analyzer' ? (
-                  <>
-                    <Toolbar
-                      onUploadNew={() => {
-                        setHarShowUploader(true);
-                        harState.clearData();
-                        setHarCurrentFileName('');
-                      }}
-                      onLoadRecent={handleRecentHarFile}
-                      recentFiles={harRecentFiles}
-                      onClearRecent={() => {
-                        setHarRecentFiles([]);
-                        localStorage.removeItem(HAR_RECENT_FILES_KEY);
-                      }}
-                      currentFileName={harCurrentFileName}
-                      harEntries={harState.filteredEntries}
-                      totalHarEntries={harState.harData?.log.entries.length || 0}
-                    />
+            )}
 
-
-                    <div
-                      className={`analyzer-layout ${harState.selectedEntry ? 'with-details' : ''}`}
-                      style={harState.selectedEntry ? ({ ['--details-width' as any]: `${detailsWidth}px` }) : undefined}
-                    >
-
-
-                      <aside className="sidebar-left">
-                        <FilterPanel
-                          filters={harState.filters}
-                          onFilterChange={harState.updateFilters}
-                        />
-                      </aside>
-                      <div className="content-area">
-                        <RequestList
-                          entries={harState.filteredEntries}
-                          groupedEntries={harGroupedEntries}
-                          selectedEntry={harState.selectedEntry}
-                          onSelectEntry={harState.setSelectedEntry}
-                          timingType={harState.filters.timingType}
-                        />
-                      </div>
-                      {harState.selectedEntry && (
-                        <aside className="sidebar-right">
-                          <div className="resize-handle" onMouseDown={startResize} />
-                          <RequestDetails
-                            entry={harState.selectedEntry}
-                            onClose={() => harState.setSelectedEntry(null)}
-                          />
-                        </aside>
-                      )}
-                    </div>
-                    <FloatingAiChat harData={harState.harData} />
-                  </>
-                )  : activeTab === 'sanitizer' ? (
-                  <div className="sanitizer-wrapper">
-                    <HarSanitizer />
-                  </div>
-                ) : activeTab === 'flow' ? (
-                  <div style={{ height: 'calc(100vh - 200px)' }}>
-                    <RequestFlowDiagram
-                      entries={harState.filteredEntries}
-                      onNodeClick={(entry: any) => {
-                        harState.setSelectedEntry(entry);
-                        setActiveTab('analyzer');
-                      }}
-                    />
-                  </div>
-                ) : activeTab === 'scorecard' ? (
-                  <div className="scorecard-wrapper">
-                    <PerformanceScorecard harData={harState.harData} />
-                  </div>
-                ) : activeTab === 'insights' ? (
-                  <AiInsights
-                    harData={harState.harData}
-                    backendUrl={BACKEND_URL}
-                    onGeneratingChange={setIsInsightsGenerating}
-                  />
-                ) : null}
-              </>
-            ) : null}
+            {/* ── One HarTabContent per open file (all mounted, only active shown) */}
+            {harTabs.map(tab => (
+              <HarTabContent
+                key={tab.id}
+                tabId={tab.id}
+                fileId={tab.fileId}
+                fileName={tab.fileName}
+                isActive={tab.id === activeHarTabId}
+                backendUrl={BACKEND_URL}
+                recentFiles={harRecentFiles}
+                onAddNewTab={handleAddTabClick}
+                onLoadRecentNewTab={handleRecentHarFile}
+                onClearRecent={() => {
+                  setHarRecentFiles([]);
+                  localStorage.removeItem(HAR_RECENT_FILES_KEY);
+                }}
+                onInsightsGeneratingChange={handleTabInsightsGeneratingChange}
+              />
+            ))}
           </>
         )}
+
+        {/* HAR Compare Tool */}
+        {activeTool === 'compare' && <HarCompare />}
 
         {/* Console Log Analyzer Tool */}
         {activeTool === 'console' && (
@@ -609,6 +631,14 @@ const App: React.FC = () => {
               <div className="loading-overlay">
                 <div className="spinner"></div>
                 <p>{logLoadingMessage}</p>
+                {isLogProcessing && showLogLocalFallback && (
+                  <button
+                    className="btn-local-fallback"
+                    onClick={() => logCancelRef.current?.()}
+                  >
+                    Parse locally instead
+                  </button>
+                )}
               </div>
             )}
 
@@ -663,7 +693,11 @@ const App: React.FC = () => {
                         filters={logState.filters}
                         onFilterChange={logState.updateFilters}
                       />
-                      <ConsoleLogStatistics entries={logState.filteredEntries} />
+                      <ConsoleLogStatistics
+                        entries={logState.filteredEntries}
+                        totalEntries={logState.logData?.metadata.totalEntries}
+                        truncatedAt={logState.logData?.metadata.truncatedAt}
+                      />
                     </div>
                   </aside>
                   <div className="content-area">

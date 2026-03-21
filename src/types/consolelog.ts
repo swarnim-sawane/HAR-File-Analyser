@@ -23,6 +23,8 @@ export interface ConsoleLogFile {
     totalEntries: number;
     browser?: string;
     version?: string;
+    /** Set when the backend has more entries than were loaded into the browser */
+    truncatedAt?: number;
   };
   entries: ConsoleLogEntry[];
 }

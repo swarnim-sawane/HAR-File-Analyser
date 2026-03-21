@@ -83,6 +83,11 @@ export const useConsoleLogData = () => {
     }
   }, []);
 
+  // Maximum entries to load into the browser at once.
+  // Loading millions of entries causes browser OOM / freeze on large files.
+  // Engineers can use filters/search to drill into the full dataset on the backend.
+  const MAX_BROWSER_ENTRIES = 50_000;
+
   const loadLogFromBackend = useCallback(async (fileId: string, fileName: string) => {
     setIsLoading(true);
     setError(null);
@@ -98,7 +103,7 @@ export const useConsoleLogData = () => {
       let hasMore = true;
       let expectedTotal = typeof status?.totalEntries === 'number' ? status.totalEntries : 0;
 
-      while (hasMore) {
+      while (hasMore && allEntries.length < MAX_BROWSER_ENTRIES) {
         const pageData = await apiClient.getLogEntries(fileId, page, pageSize) as {
           entries?: BackendLogEntry[];
           pagination?: { hasMore?: boolean; totalEntries?: number };
@@ -137,11 +142,15 @@ export const useConsoleLogData = () => {
 
       const resolvedTotal = expectedTotal > 0 ? expectedTotal : allEntries.length;
       const resolvedName = typeof status?.fileName === 'string' ? status.fileName : fileName;
+      const isTruncated = resolvedTotal > MAX_BROWSER_ENTRIES && allEntries.length >= MAX_BROWSER_ENTRIES;
+
       setLogData({
         metadata: {
           fileName: resolvedName,
           uploadedAt,
           totalEntries: resolvedTotal,
+          // Pass truncation info through so UI can show a warning banner
+          ...(isTruncated ? { truncatedAt: MAX_BROWSER_ENTRIES } : {}),
         },
         entries: allEntries,
       });
