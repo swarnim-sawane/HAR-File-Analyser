@@ -2,7 +2,16 @@ import axios from 'axios';
 import { apiClient } from './apiClient';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
-const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+
+// ✅ Tuned for large files:
+// 10MB chunks → fewer round trips for GB-scale files
+// 4 parallel streams → saturates most connections without overloading the server
+const CHUNK_SIZE = 10 * 1024 * 1024; // 10 MB per chunk
+const PARALLEL_UPLOADS = 4;           // concurrent chunk uploads
+const CHUNK_TIMEOUT_MS = 120_000;     // 2 min per chunk (large files on slow connections)
+// Assembly timeout scales with file size: base 30s + 1s per MB, capped at 30 min
+const assemblyTimeout = (fileSizeBytes: number) =>
+  Math.min(30_000 + Math.ceil(fileSizeBytes / 1024 / 1024) * 1000, 30 * 60 * 1000);
 
 export interface UploadProgress {
   fileId: string;
@@ -30,36 +39,42 @@ class ChunkedUploader {
   ): Promise<UploadResult> {
     const fileId = this.generateFileId();
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-    
+
     console.log(`Starting chunked upload: ${file.name}`);
-    console.log(`File size: ${file.size} bytes, Chunks: ${totalChunks}`);
+    console.log(`File size: ${(file.size / 1024 / 1024).toFixed(1)} MB, Chunks: ${totalChunks} × ${CHUNK_SIZE / 1024 / 1024}MB, Parallel: ${PARALLEL_UPLOADS}`);
 
-    // Upload chunks
-    for (let i = 0; i < totalChunks; i++) {
-      const start = i * CHUNK_SIZE;
-      const end = Math.min(start + CHUNK_SIZE, file.size);
-      const chunk = file.slice(start, end);
+    let uploadedChunks = 0;
 
-      await this.uploadChunk(fileId, i, totalChunks, chunk);
+    // ✅ Upload in parallel batches of PARALLEL_UPLOADS
+    for (let batchStart = 0; batchStart < totalChunks; batchStart += PARALLEL_UPLOADS) {
+      const batchEnd = Math.min(batchStart + PARALLEL_UPLOADS, totalChunks);
+      const batch = [];
 
-      // Report progress
-      const progress: UploadProgress = {
-        fileId,
-        fileName: file.name,
-        totalChunks,
-        uploadedChunks: i + 1,
-        progress: ((i + 1) / totalChunks) * 100
-      };
+      for (let i = batchStart; i < batchEnd; i++) {
+        const start = i * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, file.size);
+        const chunk = file.slice(start, end);
+        batch.push(this.uploadChunk(fileId, i, totalChunks, chunk));
+      }
+
+      // Wait for this batch of parallel uploads to complete
+      await Promise.all(batch);
+      uploadedChunks += batchEnd - batchStart;
 
       if (onProgress) {
-        onProgress(progress);
+        onProgress({
+          fileId,
+          fileName: file.name,
+          totalChunks,
+          uploadedChunks,
+          progress: (uploadedChunks / totalChunks) * 100
+        });
       }
     }
 
-    // Complete upload
-    console.log(`All chunks uploaded, assembling file...`);
-    const result = await this.completeUpload(fileId, totalChunks, file.name, fileType);
-    
+    // Complete upload (stream-assemble on server)
+    console.log(`All ${totalChunks} chunks uploaded, requesting assembly...`);
+    const result = await this.completeUpload(fileId, totalChunks, file.name, fileType, file.size);
     return result;
   }
 
@@ -75,17 +90,27 @@ class ChunkedUploader {
     formData.append('chunkIndex', chunkIndex.toString());
     formData.append('totalChunks', totalChunks.toString());
 
-    try {
-      await axios.post(`${API_BASE_URL}/api/upload/chunk`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-          'X-Session-Id': apiClient.getSessionId()
-        },
-        timeout: 60000
-      });
-    } catch (error) {
-      console.error(`Failed to upload chunk ${chunkIndex}:`, error);
-      throw new Error(`Chunk upload failed: ${chunkIndex}`);
+    const MAX_RETRIES = 3;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        await axios.post(`${API_BASE_URL}/api/upload/chunk`, formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+            'X-Session-Id': apiClient.getSessionId()
+          },
+          timeout: CHUNK_TIMEOUT_MS
+        });
+        return; // success
+      } catch (error) {
+        if (attempt === MAX_RETRIES) {
+          console.error(`Failed to upload chunk ${chunkIndex} after ${MAX_RETRIES} attempts:`, error);
+          throw new Error(`Chunk upload failed: ${chunkIndex}`);
+        }
+        // Exponential back-off: 1s, 2s, 4s
+        const delay = 1000 * Math.pow(2, attempt - 1);
+        console.warn(`Chunk ${chunkIndex} attempt ${attempt} failed, retrying in ${delay}ms...`);
+        await new Promise(r => setTimeout(r, delay));
+      }
     }
   }
 
@@ -93,26 +118,24 @@ class ChunkedUploader {
     fileId: string,
     totalChunks: number,
     fileName: string,
-    fileType: 'har' | 'log'
+    fileType: 'har' | 'log',
+    fileSizeBytes: number
   ): Promise<UploadResult> {
     try {
+      const timeout = assemblyTimeout(fileSizeBytes);
+      console.log(`Assembly timeout set to ${Math.round(timeout / 1000)}s for ${(fileSizeBytes / 1024 / 1024).toFixed(0)} MB file`);
+
       const response = await axios.post(
         `${API_BASE_URL}/api/upload/complete`,
-        {
-          fileId,
-          totalChunks,
-          fileName,
-          fileType
-        },
+        { fileId, totalChunks, fileName, fileType },
         {
           headers: {
             'Content-Type': 'application/json',
             'X-Session-Id': apiClient.getSessionId()
           },
-          timeout: 120000 // 2 minute timeout for assembly
+          timeout
         }
       );
-
       return response.data;
     } catch (error) {
       console.error('Failed to complete upload:', error);
@@ -128,11 +151,7 @@ class ChunkedUploader {
     try {
       const response = await axios.get(
         `${API_BASE_URL}/api/upload/progress/${fileId}`,
-        {
-          headers: {
-            'X-Session-Id': apiClient.getSessionId()
-          }
-        }
+        { headers: { 'X-Session-Id': apiClient.getSessionId() } }
       );
       return response.data.progress;
     } catch (error) {

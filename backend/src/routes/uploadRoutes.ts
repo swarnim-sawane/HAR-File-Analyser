@@ -46,7 +46,8 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage: storage,
   limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB per chunk
+    // ✅ Must match CHUNK_SIZE in chunkedUploader.ts (10MB) + headroom for multipart envelope
+    fileSize: 12 * 1024 * 1024
   }
 });
 
@@ -154,28 +155,58 @@ router.post('/complete', async (req: Request, res: Response) => {
     const uploadFiles = await fs.readdir(UPLOAD_DIR);
     console.log('📁 Chunk files:', uploadFiles.filter(f => f.includes(fileId)));
 
-    // Assemble file from chunks
+    // ✅ FIXED: Stream-assemble chunks — never loads full file into RAM.
+    // Each chunk is piped directly to the output file. Hash computed incrementally.
+    // Memory usage = one chunk at a time (~10MB max) regardless of total file size.
     const outputPath = path.join(PROCESSED_DIR, `${fileId}_${fileName}`);
-    const chunks: Buffer[] = [];
+    const fsNative = require('fs') as typeof import('fs');
+    const hasher = crypto.createHash('sha256');
+    let assembledSize = 0;
 
-    for (let i = 0; i < totalChunks; i++) {
-      const chunkPath = path.join(UPLOAD_DIR, `${fileId}_chunk_${i}`);
-      
-      try {
-        await fs.access(chunkPath);
-        const chunkData = await fs.readFile(chunkPath);
-        chunks.push(chunkData);
-        console.log(`✓ Read chunk ${i} (${chunkData.length} bytes)`);
-      } catch (err) {
-        console.error(`❌ Failed to read chunk ${i} at ${chunkPath}:`, err);
-        throw new Error(`Missing chunk ${i}`);
-      }
-    }
+    // Open output file once, append each chunk sequentially
+    const writeStream = fsNative.createWriteStream(outputPath, { flags: 'w' });
 
-    // Write assembled file
-    const assembledBuffer = Buffer.concat(chunks);
-    await fs.writeFile(outputPath, assembledBuffer);
-    console.log(`✓ File assembled: ${outputPath} (${assembledBuffer.length} bytes)`);
+    await new Promise<void>((resolve, reject) => {
+      writeStream.on('error', reject);
+
+      (async () => {
+        try {
+          for (let i = 0; i < totalChunks; i++) {
+            const chunkPath = path.join(UPLOAD_DIR, `${fileId}_chunk_${i}`);
+            try {
+              await fs.access(chunkPath);
+            } catch {
+              throw new Error(`Missing chunk ${i}`);
+            }
+
+            // Stream this chunk into both: the output file and the hasher
+            await new Promise<void>((res2, rej2) => {
+              const readStream = fsNative.createReadStream(chunkPath);
+              readStream.on('error', rej2);
+              readStream.on('data', (data: string | Buffer) => {
+                const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+                hasher.update(buf);
+                assembledSize += buf.length;
+              });
+              readStream.on('end', () => {
+                console.log(`✓ Appended chunk ${i} (running total: ${(assembledSize / 1024 / 1024).toFixed(1)} MB)`);
+                res2();
+              });
+              // Write to output without closing it between chunks
+              readStream.pipe(writeStream, { end: false });
+            });
+          }
+
+          // All chunks written — close the write stream
+          writeStream.end(() => resolve());
+        } catch (err) {
+          writeStream.destroy();
+          reject(err);
+        }
+      })();
+    });
+
+    console.log(`✓ File assembled (streaming): ${outputPath} (${(assembledSize / 1024 / 1024).toFixed(1)} MB)`);
 
     // Delete chunks
     for (let i = 0; i < totalChunks; i++) {
@@ -183,8 +214,8 @@ router.post('/complete', async (req: Request, res: Response) => {
       await fs.unlink(chunkPath).catch(() => {});
     }
 
-    // Calculate file hash
-    const hash = crypto.createHash('sha256').update(assembledBuffer).digest('hex');
+    // Hash was computed incrementally — no need to read file again
+    const hash = hasher.digest('hex');
 
     // Get file size
     const stats = await fs.stat(outputPath);
