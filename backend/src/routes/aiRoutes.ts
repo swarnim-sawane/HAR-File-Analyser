@@ -97,7 +97,15 @@ Rules:
 - Fix must be specific — name Oracle config files, admin UI paths, or SQL. No vague "check logs".
 - srGuidance must name specific Oracle artifacts: WLS server log path, ORDS log, ADFLogger level, AWR/ASH, fmw_diag.
 - Name the Oracle product and component in every finding when products are detected.
-- Max 3 findings per section, 3 sections max. Highest severity first.`;
+- Max 3 findings per section, 3 sections max. Highest severity first.
+
+Context field guide:
+- REDIRECT CHAIN section shows sequential requests in chronological order. Report the total chain duration as user-perceived time.
+- ENDS_ON_ERROR_PAGE:true means the redirect chain terminates on a known error page. This is a CRITICAL finding even when all HTTP status codes are 2xx or 3xx — the user hit a failure state.
+- [NEW-CONN] on a request means a fresh TCP connection was established (dns= and connect= are real costs). Distinguish this from [KEEPALIVE] reuse. NEW-CONN latency is fixed by CDN pre-warming, TCP keep-alive tuning, or connection pooling — not server-side code changes.
+- wait= is pure server processing time (TTFB). High wait on a [KEEPALIVE] request points to server-side bottlenecks (session lookup, DB query, federation handshake).
+- wait_ratio= shows what fraction of total time was server wait. If >80%, the bottleneck is server processing, not network or payload transfer.
+- When a REDIRECT CHAIN exists, always include a finding that covers the full chain with total duration — do not report each redirect as a separate finding unless latency causes differ.`;
 
 function setSseHeaders(res: ExpressResponse): void {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -581,7 +589,7 @@ router.post('/insights', async (req: Request, res: ExpressResponse) => {
         messages: chatMessages,
         stream: true, // OCA requires stream=true; server accumulates chunks
         temperature: 0.15,
-        max_tokens: 2500,
+        max_tokens: 3500,
       }),
     });
 

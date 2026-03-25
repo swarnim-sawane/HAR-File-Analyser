@@ -74,27 +74,41 @@ const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData }) => {
     });
 
     // ── 2. Slow Requests ──────────────────────────────────────────────────────
-    // Threshold is relative (% of total) so a large HAR isn't unfairly penalised
-    // for having a few slow calls among hundreds of fast ones.
+    // Two-tier threshold:
+    //   WARN  : any request between 500ms–1s  (noticeable but not critical)
+    //   BAD   : >10% of all requests over 1s  (clearly impacting users)
+    // The 500ms warn tier catches sub-second but significant latency that the
+    // >1s threshold alone would silently miss (e.g. a 766ms OAM error page
+    // is a real problem even though it's technically under 1 second).
     const sorted = [...entries].sort((a, b) => b.time - a.time);
     const slowRequests = entries.filter(e => e.time > 1000);
+    const warnRequests = entries.filter(e => e.time >= 500 && e.time <= 1000);
     const slowPct = total > 0 ? slowRequests.length / total : 0;
     const slowestEntry = sorted[0];
     let slowestPath = '';
     try { slowestPath = new URL(slowestEntry?.request.url).pathname; } catch { slowestPath = slowestEntry?.request.url ?? ''; }
+    const slowStatus: 'good' | 'warn' | 'bad' =
+      slowPct > 0.10 ? 'bad'
+      : slowRequests.length > 0 ? 'warn'
+      : warnRequests.length > 0 ? 'warn'
+      : 'good';
     checks.push({
       id: 'slow',
       label: 'Slow Requests',
-      what: 'Requests that took over 1 second end-to-end (includes server wait + transfer)',
+      what: 'Requests taking over 500ms — warn at 500ms–1s, critical if >10% exceed 1s',
       impact: 'high',
       pts: 20,
-      // bad if >10% of requests are slow, warn if 1–10%
-      status: slowPct === 0 ? 'good' : slowPct < 0.10 ? 'warn' : 'bad',
-      detail: slowRequests.length === 0
-        ? `All ${total} requests completed in under 1 second. Fastest experience for users.`
-        : `${slowRequests.length} of ${total} requests (${(slowPct * 100).toFixed(1)}%) took over 1s. `
-          + `Slowest: ${slowestEntry?.time.toFixed(0)}ms on ${slowestPath}. `
-          + `Anything over 1s is noticeable to users; over 3s leads to drop-off.`,
+      status: slowStatus,
+      detail: slowRequests.length === 0 && warnRequests.length === 0
+        ? `All ${total} requests completed in under 500ms. Fastest experience for users.`
+        : slowRequests.length > 0
+          ? `${slowRequests.length} of ${total} requests (${(slowPct * 100).toFixed(1)}%) took over 1s. `
+            + `Slowest: ${slowestEntry?.time.toFixed(0)}ms on ${slowestPath}. `
+            + `Anything over 1s is noticeable to users; over 3s leads to drop-off.`
+            + (warnRequests.length > 0 ? ` Also ${warnRequests.length} request${warnRequests.length > 1 ? 's' : ''} in the 500ms–1s range.` : '')
+          : `${warnRequests.length} request${warnRequests.length > 1 ? 's' : ''} took between 500ms and 1s. `
+            + `Slowest: ${slowestEntry?.time.toFixed(0)}ms on ${slowestPath}. `
+            + `These are below the 1s critical threshold but may still be noticeable, especially in auth flows or page loads.`,
       fix: `Check the TTFB (server wait time) on the slowest requests — if TTFB is high, the bottleneck is server-side (slow DB query, missing cache, or expensive computation). If TTFB is fast but total time is slow, it's a large payload — consider pagination or compression.`,
     });
 
@@ -233,37 +247,56 @@ const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData }) => {
         + `Use a Content Security Policy (CSP) to enforce which domains are allowed.`,
     });
 
-    // ── 7. API Wait Time (TTFB) ───────────────────────────────────────────────
+    // ── 7. Server Wait Time (TTFB — all responses) ───────────────────────────
     // TTFB (timings.wait) isolates server processing time from network transfer.
-    // A high TTFB means the server is slow, not the network. Threshold is
-    // relative to how many API calls exist in the file.
-    const apiCalls = entries.filter(e => (e.response.content.mimeType ?? '').includes('json'));
-    const slowApi = apiCalls.filter(e => (e.timings?.wait ?? 0) > 500);
-    const slowApiPct = apiCalls.length > 0 ? slowApi.length / apiCalls.length : 0;
-    const worstTtfb = slowApi.length > 0 ? Math.max(...slowApi.map(e => e.timings?.wait ?? 0)) : 0;
-    let worstApiPath = '';
-    if (slowApi.length > 0) {
-      const worst = slowApi.reduce((a, b) => (a.timings?.wait ?? 0) > (b.timings?.wait ?? 0) ? a : b);
-      try { worstApiPath = new URL(worst.request.url).pathname; } catch { worstApiPath = worst.request.url; }
+    // Previously this only checked JSON responses, which caused it to score GOOD
+    // on HAR files where all the latency was in HTML page loads or auth redirects
+    // (e.g. a 732ms TTFB on an OAM error page, or 1788ms on a SAML redirect).
+    //
+    // Now covers ALL meaningful responses: JSON, HTML, and 3xx redirects.
+    // Static assets (images, CSS, fonts) are excluded — their TTFB is
+    // irrelevant since they are served from CDN/cache with near-zero processing.
+    const isStaticAsset = (e: typeof entries[0]) => {
+      const mime = e.response.content.mimeType ?? '';
+      return mime.includes('image') || mime.includes('font') || mime.includes('css');
+    };
+    const serverCalls = entries.filter(e => !isStaticAsset(e));
+    const slowServer = serverCalls.filter(e => (e.timings?.wait ?? 0) > 500);
+    const slowServerPct = serverCalls.length > 0 ? slowServer.length / serverCalls.length : 0;
+    const worstTtfb = slowServer.length > 0 ? Math.max(...slowServer.map(e => e.timings?.wait ?? 0)) : 0;
+    let worstServerPath = '';
+    if (slowServer.length > 0) {
+      const worst = slowServer.reduce((a, b) => (a.timings?.wait ?? 0) > (b.timings?.wait ?? 0) ? a : b);
+      try { worstServerPath = new URL(worst.request.url).pathname; } catch { worstServerPath = worst.request.url; }
     }
+    // Classify the slow responses by type for better detail text
+    const slowJson     = slowServer.filter(e => (e.response.content.mimeType ?? '').includes('json'));
+    const slowRedirect = slowServer.filter(e => e.response.status >= 300 && e.response.status < 400);
+    const slowHtml     = slowServer.filter(e => (e.response.content.mimeType ?? '').includes('html') && e.response.status < 300);
     checks.push({
       id: 'ttfb',
-      label: 'API Wait Time (TTFB)',
-      what: 'How long the server takes to start responding to JSON API calls (excludes network transfer time)',
+      label: 'Server Wait Time (TTFB)',
+      what: 'How long the server takes to start responding — covers API calls, page loads, and auth redirects',
       impact: 'high',
       pts: 20,
-      // bad if >20% of API calls have slow TTFB, warn if 1–20%
-      status: slowApi.length === 0 ? 'good' : slowApiPct < 0.20 ? 'warn' : 'bad',
-      detail: apiCalls.length === 0
-        ? 'No JSON API calls detected in this HAR file.'
-        : slowApi.length === 0
-          ? `All ${apiCalls.length} API call${apiCalls.length > 1 ? 's' : ''} respond within 500ms. Server processing is healthy.`
-          : `${slowApi.length} of ${apiCalls.length} API calls (${(slowApiPct * 100).toFixed(0)}%) had a server wait time over 500ms. `
-            + `Worst: ${worstTtfb.toFixed(0)}ms on ${worstApiPath}. `
-            + `TTFB measures only server processing time — high TTFB means the server itself is slow, not the network.`,
-      fix: `High TTFB almost always points to: slow database queries (add indexes, check for N+1 queries), `
-        + `missing server-side caching (Redis for repeated reads), or heavy computation in the request path. `
-        + `Add timing logs around your DB calls to find the bottleneck.`,
+      // bad if >20% of server calls have slow TTFB, warn if any have slow TTFB
+      status: slowServer.length === 0 ? 'good' : slowServerPct < 0.20 ? 'warn' : 'bad',
+      detail: serverCalls.length === 0
+        ? 'No server responses detected in this HAR file.'
+        : slowServer.length === 0
+          ? `All ${serverCalls.length} server response${serverCalls.length > 1 ? 's' : ''} have TTFB under 500ms. Server processing is healthy.`
+          : `${slowServer.length} of ${serverCalls.length} server responses (${(slowServerPct * 100).toFixed(0)}%) had a server wait time over 500ms. `
+            + `Worst: ${worstTtfb.toFixed(0)}ms on ${worstServerPath}. `
+            + (slowRedirect.length > 0 ? `${slowRedirect.length} slow redirect${slowRedirect.length > 1 ? 's' : ''} (3xx) — each redirect in an auth chain compounds total login latency. ` : '')
+            + (slowHtml.length > 0 ? `${slowHtml.length} slow HTML page load${slowHtml.length > 1 ? 's' : ''} — server-side rendering or JSP processing is slow. ` : '')
+            + (slowJson.length > 0 ? `${slowJson.length} slow API call${slowJson.length > 1 ? 's' : ''} (JSON). ` : '')
+            + `TTFB measures only server processing time — high TTFB means the server itself is slow, not the network or payload size.`,
+      fix: slowRedirect.length > 0
+        ? `Slow auth redirects usually mean session validation, token lookup, or federation handshake delays on the server. `
+          + `Check server-side session store latency and federation endpoint performance. Each redirect in a login chain adds sequentially to total login time.`
+        : `High TTFB almost always points to: slow database queries (add indexes, check for N+1 queries), `
+          + `missing server-side caching (Redis for repeated reads), or heavy computation in the request path. `
+          + `Add timing logs around your DB calls to find the bottleneck.`,
     });
 
     // ── Calculate Score ────────────────────────────────────────────────────────
@@ -367,18 +400,4 @@ const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData }) => {
               {expanded === check.id && (
                 <div className="check-detail">
                   <p>{check.detail}</p>
-                  {check.fix && check.status !== 'good' && (
-                    <div className="check-fix">
-                      <span className="check-fix-label">How to fix: </span>{check.fix}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
-      </div>
-    </div>
-  );
-};
-
-export default PerformanceScorecard;
+                  
