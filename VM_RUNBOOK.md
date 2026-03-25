@@ -7,10 +7,9 @@
 |---|---|---|---|
 | Frontend | `har-frontend` (PM2 id:7) | 3000 | Static files via python3 http.server |
 | Backend API | `har-backend` (PM2 ids:2-5) | 4000 | 4x cluster, Express + TypeScript |
-| Worker | `har-worker` (PM2 id:6) | 4001 | BullMQ job processor |
+| Worker | `har-worker` (PM2 ids:6-7) | 4001 | 2x fork mode, BullMQ, --expose-gc --max-old-space-size=4096 |
 | MongoDB | system service | 27017 | `har-analyzer` database |
 | Redis | system service | 6379 | Job queue + pub/sub |
-| Ollama | `ollama` (PM2 id:0) | 11434/11435 | Local LLM fallback |
 
 **VM:** `celvpvm05798.us.oracle.com`
 **UI URL:** `http://10.65.39.163:3000`
@@ -52,15 +51,28 @@ scp -r dist oracle@celvpvm05798.us.oracle.com:/refresh/home/Downloads/har-analyz
 
 ### Step 2 — On VM
 ```bash
-# Rebuild backend
-cd ~/Downloads/har-analyzer/backend
+# Pull latest code
+cd ~/Downloads/har-analyzer
+git pull origin main
+
+# Rebuild backend (TypeScript only — tsc works without native binaries)
+cd backend
 npm run build
 
 # Restart everything
 pm2 restart har-backend --update-env
-pm2 restart har-worker --update-env
 pm2 restart har-frontend --update-env
+
+# Workers — DO NOT use pm2 restart for workers (loses --expose-gc flag).
+# Instead, delete and re-create from the config file:
+pm2 delete har-worker
+pm2 start /tmp/worker.config.cjs
+pm2 save
 ```
+
+> **Note:** Frontend must always be built on local machine (`npm run build`) and
+> deployed via `scp`. Running `npm run build` on the VM will fail because
+> `@rollup/rollup-linux-x64-gnu` is missing (node_modules came from Windows).
 
 ***
 
@@ -97,7 +109,39 @@ grep -o "10\.65\.39\.163:4000" ~/Downloads/har-analyzer/dist/assets/*.js | wc -l
 # Must return 2 or more
 ```
 
-### 4. MongoDB duplicate key on re-upload
+### 4. Worker Node.js flags are silently ignored by `pm2 start --node-args`
+`pm2 start dist/worker.js --node-args="--expose-gc"` appears to work but
+`pm2 show har-worker` will show no interpreter args and `global.gc()` calls
+will be silent no-ops. The only reliable way is a config file.
+
+**Config file at `/tmp/worker.config.cjs` (recreate if VM reboots):**
+```js
+module.exports = {
+  apps: [{
+    name: 'har-worker',
+    script: '/home/oracle/Downloads/har-analyzer/backend/dist/worker.js',
+    instances: 2,
+    exec_mode: 'fork',
+    node_args: '--max-old-space-size=4096 --expose-gc',
+    env: {
+      NODE_ENV: 'production',
+      WORKER_CONCURRENCY: '4',
+    }
+  }]
+};
+```
+
+**Start command:**
+```bash
+pm2 delete har-worker
+pm2 start /tmp/worker.config.cjs
+pm2 save
+# Verify flags applied:
+pm2 show har-worker | grep "interpreter args"
+# Expected: --max-old-space-size=4096 | --expose-gc
+```
+
+### 5. MongoDB duplicate key on re-upload
 If you see `E11000 duplicate key error ... fileId_1`, a stale record exists.
 
 **Fix:**

@@ -400,4 +400,18 @@ const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData }) => {
               {expanded === check.id && (
                 <div className="check-detail">
                   <p>{check.detail}</p>
-                  
+                  {check.fix && check.status !== 'good' && (
+                    <div className="check-fix">
+                      <span className="check-fix-label">How to fix: </span>{check.fix}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+      </div>
+    </div>
+  );
+};
+
+export default PerformanceScorecard;
