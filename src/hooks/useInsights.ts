@@ -47,17 +47,88 @@ function buildContext(harData: HarFile): string {
   const domains = [
     ...new Set(
       entries.map((e) => {
-        try {
-          return new URL(e.request.url).hostname;
-        } catch {
-          return 'unknown';
-        }
+        try { return new URL(e.request.url).hostname; } catch { return 'unknown'; }
       })
     ),
   ];
 
-  const summary = `requests:${entries.length} errors:${errors.length} domains:${domains.length} totalms:${totalMs.toFixed(0)}`;
+  // ── Session-level metrics ──────────────────────────────────────────────────
+  // Compute wall-clock session duration (first request start → last request end)
+  let sessionMs = 0;
+  try {
+    const starts = entries.map((e) => new Date(e.startedDateTime).getTime());
+    const ends = entries.map((e, i) => starts[i] + e.time);
+    sessionMs = Math.max(...ends) - Math.min(...starts);
+  } catch { sessionMs = totalMs; }
 
+  // Identify the final non-static destination (what the user actually landed on)
+  const sortedByStart = [...entries].sort((a, b) =>
+    new Date(a.startedDateTime).getTime() - new Date(b.startedDateTime).getTime()
+  );
+  const finalEntry = [...sortedByStart].reverse().find((e) => {
+    const mime = e.response.content?.mimeType ?? '';
+    return mime.includes('html') || mime.includes('json') || e.response.status >= 400;
+  }) ?? sortedByStart[sortedByStart.length - 1];
+  let finalUrl = '';
+  try { finalUrl = new URL(finalEntry?.request.url ?? '').pathname; } catch { finalUrl = finalEntry?.request.url ?? ''; }
+  const finalStatus = finalEntry?.response.status ?? 0;
+
+  // Known error page path patterns — used to flag chains ending on error pages
+  const ERROR_PATH_PATTERNS = /servererror|errorpage|error\.jsp|\/error\b|\/oops|\/unavailable|\/fault/i;
+  const endsOnErrorPage = ERROR_PATH_PATTERNS.test(finalUrl) || finalStatus >= 400;
+
+  const summary = [
+    `requests:${entries.length}`,
+    `errors:${errors.length}`,
+    `domains:${domains.length}`,
+    `total_session:${sessionMs.toFixed(0)}ms`,
+    `final_url:${finalUrl}`,
+    `final_status:${finalStatus}`,
+    endsOnErrorPage ? `ENDS_ON_ERROR_PAGE:true` : null,
+  ].filter(Boolean).join(' ');
+
+  // ── Redirect chain detection ───────────────────────────────────────────────
+  // Group sequential redirects into chains so the AI sees the compounding flow.
+  // A redirect chain is a run of 3xx responses followed by a terminal response.
+  const redirects = sortedByStart.filter((e) => e.response.status >= 300 && e.response.status < 400);
+  let redirectChainSection = '';
+  if (redirects.length > 0) {
+    const chainLines = sortedByStart
+      .filter((e) => {
+        const mime = e.response.content?.mimeType ?? '';
+        return (
+          (e.response.status >= 300 && e.response.status < 400) ||
+          (e.response.status < 300 && (mime.includes('html') || mime.includes('json')))
+        );
+      })
+      .map((e, i) => {
+        const t = e.timings ?? {};
+        const dns     = (t.dns     ?? -1) >= 0 ? `dns=${(t.dns     ?? 0).toFixed(0)}ms ` : '';
+        const connect = (t.connect ?? -1) >= 0 ? `connect=${(t.connect ?? 0).toFixed(0)}ms ` : '';
+        const ssl     = (t.ssl     ?? -1) >= 0 ? `ssl=${(t.ssl     ?? 0).toFixed(0)}ms ` : '';
+        const wait    = (t.wait    ?? 0).toFixed(0);
+        const isNewConn = (t.dns ?? -1) >= 0 && (t.connect ?? -1) >= 0;
+        const connType = isNewConn ? '[NEW-CONN]' : '[KEEPALIVE]';
+
+        let path = '';
+        try { path = new URL(e.request.url).hostname + new URL(e.request.url).pathname; } catch { path = e.request.url; }
+
+        const loc = e.response.headers?.find((h) => h.name.toLowerCase() === 'location')?.value ?? '';
+        let locPath = '';
+        try { locPath = new URL(loc).pathname; } catch { locPath = loc; }
+
+        const isError = ERROR_PATH_PATTERNS.test(path) || e.response.status >= 400;
+        const errorFlag = isError ? ' ⚠ ERROR_DEST' : '';
+        const redirectArrow = locPath ? ` → ${locPath}` : '';
+
+        return `${i + 1}. ${e.request.method} ${path} → ${e.response.status} ${e.time.toFixed(0)}ms ${connType} ${dns}${connect}${ssl}wait=${wait}ms${redirectArrow}${errorFlag}`;
+      });
+    redirectChainSection = `REDIRECT CHAIN (sequential user-perceived ${sessionMs.toFixed(0)}ms):\n${chainLines.join('\n')}`;
+  }
+
+  // ── Per-request detail for top slow ───────────────────────────────────────
+  // Now includes full timing breakdown so AI can distinguish connection overhead
+  // from server processing time (TTFB), and network transfer time.
   const topSlow = [...entries]
     .sort((a, b) => b.time - a.time)
     .slice(0, 20)
@@ -66,31 +137,41 @@ function buildContext(harData: HarFile): string {
       try {
         const u = new URL(e.request.url);
         path = u.hostname + u.pathname;
-      } catch {
-        // Ignore URL parsing failures.
-      }
-      return `${e.request.method} ${path} status:${e.response.status} totalms:${e.time.toFixed(0)} waitms:${e.timings.wait.toFixed(0)}`;
+      } catch { /* keep raw url */ }
+
+      const t = e.timings ?? {};
+      const dns     = (t.dns     ?? -1) >= 0 ? ` dns=${(t.dns     ?? 0).toFixed(0)}ms` : '';
+      const connect = (t.connect ?? -1) >= 0 ? ` connect=${(t.connect ?? 0).toFixed(0)}ms` : '';
+      const ssl     = (t.ssl     ?? -1) >= 0 ? ` ssl=${(t.ssl     ?? 0).toFixed(0)}ms` : '';
+      const wait    = ` wait=${(t.wait ?? 0).toFixed(0)}ms`;
+      const recv    = (t.receive ?? -1) >= 0 ? ` recv=${(t.receive ?? 0).toFixed(0)}ms` : '';
+      const waitRatio = e.time > 0 ? ` wait_ratio=${((t.wait ?? 0) / e.time * 100).toFixed(0)}%` : '';
+      const mime    = e.response.content?.mimeType ? ` mime:${e.response.content.mimeType.split(';')[0]}` : '';
+      const isNewConn = (t.dns ?? -1) >= 0 && (t.connect ?? -1) >= 0;
+      const connType = isNewConn ? ' [NEW-CONN]' : '';
+
+      return `${e.request.method} ${path} status:${e.response.status} totalms:${e.time.toFixed(0)}${dns}${connect}${ssl}${wait}${recv}${waitRatio}${mime}${connType}`;
     });
 
+  // ── Failed requests ────────────────────────────────────────────────────────
   const failedLines = errors.slice(0, 10).map((e) => {
     let path = e.request.url;
     try {
       const u = new URL(e.request.url);
       path = u.hostname + u.pathname;
-    } catch {
-      // Ignore URL parsing failures.
-    }
+    } catch { /* keep raw url */ }
     return `${e.request.method} ${path} status:${e.response.status}`;
   });
 
   const parts = [
     `HAR SUMMARY: ${summary}`,
+    ...(redirectChainSection ? [redirectChainSection] : []),
     `TOP SLOW:\n${topSlow.join('\n')}`,
     ...(failedLines.length ? [`FAILED:\n${failedLines.join('\n')}`] : []),
   ];
 
   const raw = parts.join('\n\n');
-  return raw.length > 10000 ? `${raw.slice(0, 10000)}\n[TRUNCATED]` : raw;
+  return raw.length > 12000 ? `${raw.slice(0, 12000)}\n[TRUNCATED]` : raw;
 }
 
 export function useInsights(harData: HarFile, backendUrl: string): UseInsightsReturn {
