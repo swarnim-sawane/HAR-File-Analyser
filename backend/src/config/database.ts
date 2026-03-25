@@ -11,7 +11,17 @@ export async function connectDatabases() {
   try {
     // MongoDB
     const mongoUrl = process.env.MONGODB_URL || 'mongodb://localhost:27017/har-analyzer';
-    mongoClient = new MongoClient(mongoUrl);
+    mongoClient = new MongoClient(mongoUrl, {
+      // Allow up to 20 simultaneous connections.
+      // Default is 5, which causes queuing when 4 backend instances + 2 workers
+      // all fire insertMany concurrently.
+      maxPoolSize: 20,
+      // Don't wait forever if a connection can't be obtained from the pool.
+      waitQueueTimeoutMS: 10000,
+      // Keep-alive helps avoid silent TCP drops on Oracle Linux VMs.
+      socketTimeoutMS: 60000,
+      connectTimeoutMS: 10000,
+    });
     await mongoClient.connect();
     db = mongoClient.db();
     
