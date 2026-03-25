@@ -1,4 +1,4 @@
-﻿// src/components/FloatingAiChat.tsx
+// src/components/FloatingAiChat.tsx
 import React, { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -30,7 +30,7 @@ const FloatingAiChat: React.FC<FloatingAiChatProps> = ({ harData, logData }) => 
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [ocaConnected, setOcaConnected] = useState<boolean>(true); // âœ… renamed
+  const [ocaConnected, setOcaConnected] = useState<boolean>(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -41,12 +41,15 @@ const FloatingAiChat: React.FC<FloatingAiChatProps> = ({ harData, logData }) => 
 
     let normalized = text.replace(/\r\n/g, '\n');
 
-    // Convert #N â€” patterns (all dash variants, with or without preceding bullet char)
-    normalized = normalized.replace(/^[ \t]*[â€¢â—â–ªâ–¸â–¹]?\s*#(\d+)\s*[\u2014\u2013\u2012\u2015\-]\s+/gm, '$1. ');
+    // Convert "#N -" style markers into proper numbered markdown items.
+    normalized = normalized.replace(
+      /^[ \t]*(?:[\u2022\u25CF\u25AA\u25B8\u25B9]\s*)?#(\d+)\s*[\u2014\u2013\u2012\u2015\-]\s+/gm,
+      '$1. '
+    );
 
-    // Normalize remaining unicode bullets to markdown bullets
-    normalized = normalized.replace(/^[ \t]*[â€¢â—â–ªâ–¸â–¹]\s+/gm, '- ');
-    normalized = normalized.replace(/^[ \t]*[â—¦â–«â€£]\s+/gm, '  - ');
+    // Normalize remaining unicode bullets to markdown bullets.
+    normalized = normalized.replace(/^[ \t]*[\u2022\u25CF\u25AA\u25B8\u25B9]\s+/gm, '- ');
+    normalized = normalized.replace(/^[ \t]*[\u25E6\u25AB\u2023]\s+/gm, '  - ');
 
     // Trim trailing spaces and excessive blank lines
     normalized = normalized.replace(/[ \t]+\n/g, '\n');
@@ -57,7 +60,7 @@ const FloatingAiChat: React.FC<FloatingAiChatProps> = ({ harData, logData }) => 
     do {
       prev = normalized;
       normalized = normalized.replace(
-        /(\n[ \t]*(?:\d+\.|-|\*|\+|[â€¢â—â–ªâ–¸â–¹â—¦â–«â€£])\s.+)\n\n([ \t]*(?:\d+\.|-|\*|\+|[â€¢â—â–ªâ–¸â–¹â—¦â–«â€£])\s)/g,
+        /(\n[ \t]*(?:\d+\.|-|\*|\+|[\u2022\u25CF\u25AA\u25B8\u25B9\u25E6\u25AB\u2023])\s.+)\n\n([ \t]*(?:\d+\.|-|\*|\+|[\u2022\u25CF\u25AA\u25B8\u25B9\u25E6\u25AB\u2023])\s)/g,
         '$1\n$2'
       );
     } while (normalized !== prev);
@@ -77,7 +80,7 @@ const FloatingAiChat: React.FC<FloatingAiChatProps> = ({ harData, logData }) => 
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  // âœ… UPDATED: Hits backend status endpoint instead of Ollama
+  // Use backend status endpoint for connectivity checks.
   const checkOca = async () => {
     try {
       const res = await fetch(`${BACKEND_AI_URL}/status`);
@@ -172,7 +175,7 @@ ${errorCount > 0 ? `Failed Requests:\n${failedRequests}` : ''}`;
 - Unique Sources: ${sources.length}`;
   };
 
-  // âœ… UPDATED: Calls backend proxy, parses OpenAI SSE format
+  // Calls backend proxy and parses OpenAI SSE format.
   const sendMessage = async () => {
     if (!input.trim() || isLoading) return;
 
@@ -191,14 +194,14 @@ ${errorCount > 0 ? `Failed Requests:\n${failedRequests}` : ''}`;
       const contextSummary = isConsoleMode ? getLogSummary() : getHarContext();
 
       const systemPrompt = isConsoleMode
-        ? `You are an expert console log analyst. You have been given detailed console log context below. Answer questions directly using the data - never say you lack information if it is present in the context. Format responses with strict GitHub markdown. Rules: use '-' bullet lists (NO blank lines between items); indent sub-details with '   - ' (3 spaces + dash); use backtick \`code\` for values; use **bold** for key metrics. Never use unicode bullets (â€¢,â—¦).
+        ? `You are an expert console log analyst. You have been given detailed console log context below. Answer questions directly using the data - never say you lack information if it is present in the context. Format responses with strict GitHub markdown. Rules: use '-' bullet lists (NO blank lines between items); indent sub-details with '   - ' (3 spaces + dash); use backtick \`code\` for values; use **bold** for key metrics. Never use unicode bullets.
 
 ${contextSummary}`
-        : `You are an expert HAR file network analyst. You have been given detailed per-request data below. Answer questions directly using the data - never say you lack information if it is present in the context. Format responses with strict GitHub markdown. Rules: use '1.' numbered lists for request entries (NO blank lines between items); indent sub-details with '   - ' (3 spaces + dash); use backtick \`code\` for URLs and values; use **bold** for key timings. Never use unicode bullets (â€¢,â—¦) or #Nâ€” prefixes.
+        : `You are an expert HAR file network analyst. You have been given detailed per-request data below. Answer questions directly using the data - never say you lack information if it is present in the context. Format responses with strict GitHub markdown. Rules: use '1.' numbered lists for request entries (NO blank lines between items); indent sub-details with '   - ' (3 spaces + dash); use backtick \`code\` for URLs and values; use **bold** for key timings. Never use unicode bullets or #N- prefixes.
 
 ${contextSummary}`;
 
-      // âœ… OpenAI chat/completions format
+      // OpenAI chat/completions format.
       const response = await fetch(`${BACKEND_AI_URL}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -237,7 +240,7 @@ ${contextSummary}`;
             if (data === '[DONE]') break;
             try {
               const json = JSON.parse(data);
-              // âœ… OpenAI SSE format â€” NOT Ollama's json.response
+              // OpenAI SSE format, not Ollama's json.response format.
               const content = json.choices?.[0]?.delta?.content;
               if (content) {
                 assistantMessage.content += content;
@@ -255,7 +258,7 @@ ${contextSummary}`;
       setMessages(prev => [...prev, {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: 'âŒ Failed to get response. Make sure the backend is running and OCA token is valid.',
+        content: 'Failed to get response. Make sure the backend is running and the OCA token is valid.',
         timestamp: new Date(),
       }]);
     } finally {
@@ -306,10 +309,15 @@ ${contextSummary}`;
           </div>
           <div>
             <h3>AI Assistant</h3>
-            {ocaConnected && (
+            {ocaConnected ? (
               <span className="ai-chat-status">
                 <span className="ai-chat-status-indicator"></span>
-                Online Â· OCA gpt-5.4 {/* âœ… updated label */}
+                Online - OCA gpt-5.4
+              </span>
+            ) : (
+              <span className="ai-chat-status ai-chat-status-offline">
+                <span className="ai-chat-status-indicator offline"></span>
+                Connectivity check failed
               </span>
             )}
           </div>
@@ -334,110 +342,99 @@ ${contextSummary}`;
 
       {!isMinimized && (
         <>
-          {/* âœ… UPDATED: OCA-specific error message */}
-          {!ocaConnected ? (
-            <div className="ai-chat-error">
-              <div className="ai-chat-error-icon">
-                <svg width="48" height="48" viewBox="0 0 24 24" fill="none">
-                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" />
-                  <path d="M12 8V12M12 16H12.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                </svg>
-              </div>
-              <h4>AI Service Not Connected</h4>
-              <p className="ai-chat-error-help">Check that the backend is running and <code>OCA_TOKEN</code> is set in <code>backend/.env</code></p>
+          {!ocaConnected && (
+            <div className="ai-chat-connection-warning">
+              <span>AI connectivity check failed. You can still send a message.</span>
               <button className="ai-chat-retry-btn" onClick={checkOca}>
-                Retry Connection
+                Retry
               </button>
             </div>
-          ) : (
-            <>
-              <div className="ai-chat-messages">
-                {messages.length === 0 && (
-                  <div className="ai-chat-welcome">
-                    <div className="ai-chat-welcome-icon">
-                      <svg width="64" height="64" viewBox="0 0 24 24" fill="none">
-                        <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="currentColor" opacity="0.2" />
-                        <path d="M2 17L12 22L22 17M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" />
-                      </svg>
-                    </div>
-                    <h3>Welcome! ðŸ‘‹</h3>
-                    <p>I'm analyzing your {isConsoleMode ? 'console logs' : 'HAR file'} with {dataCount} {isConsoleMode ? 'entries' : 'requests'}.</p>
-                    <p>Ask me about {isConsoleMode ? 'errors, warnings, or patterns' : 'performance, errors, or any specific requests'}.</p>
-                    <div className="ai-chat-quick-questions">
-                      {quickQuestions.map((q, i) => (
-                        <button key={i} className="ai-chat-quick-question-btn" onClick={() => { setInput(q); textareaRef.current?.focus(); }}>
-                          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                            <path d="M8 3V13M13 8H3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                          </svg>
-                          {q}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {messages.map((message) => (
-                  <div key={message.id} className={`ai-chat-message ai-chat-message-${message.role}`}>
-                    <div className="ai-chat-message-avatar">
-                      {message.role === 'user' ? (
-                        <svg viewBox="0 0 24 24" fill="none">
-                          <circle cx="12" cy="8" r="4" fill="currentColor" />
-                          <path d="M6 21C6 17.6863 8.68629 15 12 15C15.3137 15 18 17.6863 18 21" stroke="currentColor" strokeWidth="2" />
-                        </svg>
-                      ) : (
-                        <svg viewBox="0 0 24 24" fill="none">
-                          <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="currentColor" opacity="0.3" />
-                          <path d="M2 17L12 22L22 17M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" />
-                        </svg>
-                      )}
-                    </div>
-                    <div className="ai-chat-message-bubble">
-                      {message.role === 'assistant' ? (
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {normalizeAssistantMarkdown(message.content)}
-                        </ReactMarkdown>
-                      ) : (
-                        message.content
-                      )}
-                    </div>
-                  </div>
-                ))}
-
-                {isLoading && (
-                  <div className="ai-chat-message ai-chat-message-assistant">
-                    <div className="ai-chat-message-avatar">
-                      <svg viewBox="0 0 24 24" fill="none">
-                        <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="currentColor" opacity="0.3" />
-                        <path d="M2 17L12 22L22 17M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" />
-                      </svg>
-                    </div>
-                    <div className="ai-chat-message-bubble">
-                      <div className="ai-chat-typing"><span></span><span></span><span></span></div>
-                    </div>
-                  </div>
-                )}
-                <div ref={messagesEndRef} />
-              </div>
-
-              <div className="ai-chat-input">
-                <textarea
-                  ref={textareaRef}
-                  className="ai-chat-textarea"
-                  placeholder={`Ask about ${isConsoleMode ? 'these logs' : 'this HAR file'}...`}
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyPress={handleKeyPress}
-                  rows={1}
-                  disabled={isLoading}
-                />
-                <button className="ai-chat-send" onClick={sendMessage} disabled={isLoading || !input.trim()}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                    <path d="M22 2L11 13M22 2L15 22L11 13L2 9L22 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </button>
-              </div>
-            </>
           )}
+          <div className="ai-chat-messages">
+            {messages.length === 0 && (
+              <div className="ai-chat-welcome">
+                <div className="ai-chat-welcome-icon">
+                  <svg width="64" height="64" viewBox="0 0 24 24" fill="none">
+                    <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="currentColor" opacity="0.2" />
+                    <path d="M2 17L12 22L22 17M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" />
+                  </svg>
+                </div>
+                <h3>Welcome!</h3>
+                <p>I'm analyzing your {isConsoleMode ? 'console logs' : 'HAR file'} with {dataCount} {isConsoleMode ? 'entries' : 'requests'}.</p>
+                <p>Ask me about {isConsoleMode ? 'errors, warnings, or patterns' : 'performance, errors, or any specific requests'}.</p>
+                <div className="ai-chat-quick-questions">
+                  {quickQuestions.map((q, i) => (
+                    <button key={i} className="ai-chat-quick-question-btn" onClick={() => { setInput(q); textareaRef.current?.focus(); }}>
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                        <path d="M8 3V13M13 8H3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                      </svg>
+                      {q}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {messages.map((message) => (
+              <div key={message.id} className={`ai-chat-message ai-chat-message-${message.role}`}>
+                <div className="ai-chat-message-avatar">
+                  {message.role === 'user' ? (
+                    <svg viewBox="0 0 24 24" fill="none">
+                      <circle cx="12" cy="8" r="4" fill="currentColor" />
+                      <path d="M6 21C6 17.6863 8.68629 15 12 15C15.3137 15 18 17.6863 18 21" stroke="currentColor" strokeWidth="2" />
+                    </svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24" fill="none">
+                      <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="currentColor" opacity="0.3" />
+                      <path d="M2 17L12 22L22 17M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" />
+                    </svg>
+                  )}
+                </div>
+                <div className="ai-chat-message-bubble">
+                  {message.role === 'assistant' ? (
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {normalizeAssistantMarkdown(message.content)}
+                    </ReactMarkdown>
+                  ) : (
+                    message.content
+                  )}
+                </div>
+              </div>
+            ))}
+
+            {isLoading && (
+              <div className="ai-chat-message ai-chat-message-assistant">
+                <div className="ai-chat-message-avatar">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="currentColor" opacity="0.3" />
+                    <path d="M2 17L12 22L22 17M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" />
+                  </svg>
+                </div>
+                <div className="ai-chat-message-bubble">
+                  <div className="ai-chat-typing"><span></span><span></span><span></span></div>
+                </div>
+              </div>
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+
+          <div className="ai-chat-input">
+            <textarea
+              ref={textareaRef}
+              className="ai-chat-textarea"
+              placeholder={`Ask about ${isConsoleMode ? 'these logs' : 'this HAR file'}...`}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyPress={handleKeyPress}
+              rows={1}
+              disabled={isLoading}
+            />
+            <button className="ai-chat-send" onClick={sendMessage} disabled={isLoading || !input.trim()}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <path d="M22 2L11 13M22 2L15 22L11 13L2 9L22 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </div>
         </>
       )}
     </div>
@@ -445,6 +442,3 @@ ${contextSummary}`;
 };
 
 export default FloatingAiChat;
-
-
-
