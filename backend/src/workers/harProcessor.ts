@@ -68,34 +68,47 @@ export async function processHarFile(data: HarJobData): Promise<void> {
     const db = getMongoDb();
     const entriesCollection = db.collection('har_entries');
     let batchBuffer: ParsedHarEntry[] = [];
-    const BATCH_SIZE = 500;
+    // Larger batches = fewer MongoDB round-trips per file.
+    // 2000 entries * ~2 KB avg = ~4 MB per insert, well within driver limits.
+    const BATCH_SIZE = 2000;
+    // Only push a progress event to Redis every N batches (= every 10 000 entries)
+    // to avoid hammering Redis with a pub/sub round-trip on every batch.
+    const PROGRESS_EMIT_EVERY = 5;
+    let batchCount = 0;
     let totalEntries = 0; // ✅ FIXED: Just track count, not store entries
+    // Pre-compiled URL host cache: avoids calling `new URL()` for the same
+    // domain string over and over (common in large HAR files).
+    const domainCache = new Map<string, string>();
 
     await streamParseHar(filePath, async (entry, index) => {
       batchBuffer.push(entry);
-      
-      // ✅ FIXED: Update stats on-the-fly
-      updateStatsWithEntry(statsAccumulator, entry);
+
+      // ✅ FIXED: Update stats on-the-fly (pass domain cache to avoid re-parsing URLs)
+      updateStatsWithEntry(statsAccumulator, entry, domainCache);
       totalEntries++;
 
-      // Batch insert every 500 entries
+      // Batch insert every BATCH_SIZE entries
       if (batchBuffer.length >= BATCH_SIZE) {
+        const createdAt = new Date();
         const toInsert = batchBuffer.map(e => ({
           ...e,
           fileId,
-          createdAt: new Date()
+          createdAt
         }));
-        
+
         await entriesCollection.insertMany(toInsert, { ordered: false });
-        
-        // Emit progress
-        const progress = Math.min((totalEntries / 15000) * 80, 80); // Max 80% during parsing
-        await emitProgress(fileId, 'parsing', progress);
-        
+        batchCount++;
+
+        // Only emit to Redis every PROGRESS_EMIT_EVERY batches to reduce round-trips
+        if (batchCount % PROGRESS_EMIT_EVERY === 0) {
+          const progress = Math.min((totalEntries / 15000) * 80, 80);
+          await emitProgress(fileId, 'parsing', progress);
+        }
+
         batchBuffer = []; // Clear buffer
-        
-        // Force GC periodically for very large files
-        if (totalEntries % 5000 === 0 && typeof global.gc === 'function') {
+
+        // Force GC every 10 000 entries when flag is available
+        if (totalEntries % 10000 === 0 && typeof global.gc === 'function') {
           global.gc();
         }
       }
@@ -159,8 +172,10 @@ export async function processHarFile(data: HarJobData): Promise<void> {
 
 /**
  * ✅ NEW: Update stats incrementally as entries are parsed
+ * domainCache avoids re-running `new URL()` for the same URL string, which is
+ * expensive and often repeated thousands of times in large HAR files.
  */
-function updateStatsWithEntry(stats: any, entry: ParsedHarEntry): void {
+function updateStatsWithEntry(stats: any, entry: ParsedHarEntry, domainCache?: Map<string, string>): void {
   // Status codes
   const status = entry.response?.status || 0;
   stats.statusCodes[status] = (stats.statusCodes[status] || 0) + 1;
@@ -170,14 +185,20 @@ function updateStatsWithEntry(stats: any, entry: ParsedHarEntry): void {
   const method = entry.request?.method || 'UNKNOWN';
   stats.methods[method] = (stats.methods[method] || 0) + 1;
 
-  // Domains
-  try {
-    const url = new URL(entry.request?.url || 'http://unknown');
-    const domain = url.hostname;
-    stats.domains[domain] = (stats.domains[domain] || 0) + 1;
-  } catch (e) {
-    stats.domains['invalid'] = (stats.domains['invalid'] || 0) + 1;
+  // Domains — use cache to avoid repeated `new URL()` parsing
+  const rawUrl = entry.request?.url || '';
+  let domain: string;
+  if (domainCache && domainCache.has(rawUrl)) {
+    domain = domainCache.get(rawUrl)!;
+  } else {
+    try {
+      domain = new URL(rawUrl).hostname || 'invalid';
+    } catch (e) {
+      domain = 'invalid';
+    }
+    if (domainCache && rawUrl) domainCache.set(rawUrl, domain);
   }
+  stats.domains[domain] = (stats.domains[domain] || 0) + 1;
 
   // Content types
   const contentType = entry.response?.content?.mimeType?.split(';')[0] || 'unknown';
