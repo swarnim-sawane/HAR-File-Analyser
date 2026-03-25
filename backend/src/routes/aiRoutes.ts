@@ -685,16 +685,65 @@ router.post('/insights', async (req: Request, res: ExpressResponse) => {
 
 // GET /api/ai/status - health check for frontend
 router.get('/status', async (_req: Request, res: ExpressResponse) => {
+  const ocaBaseUrl = process.env.OCA_BASE_URL;
+  const ocaToken = process.env.OCA_TOKEN;
+  const model = process.env.OCA_MODEL || 'oca/gpt-5.4';
+
+  if (!ocaBaseUrl || !ocaToken) {
+    return res.json({ connected: false, model: null });
+  }
+
+  const fetchWithTimeout = async (
+    url: string,
+    init: RequestInit,
+    timeoutMs = 8000
+  ): Promise<FetchResponse> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
   try {
-    const response = await fetch(
-      `${process.env.OCA_BASE_URL}/models`,
+    const modelsResponse = await fetchWithTimeout(`${ocaBaseUrl}/models`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${ocaToken}` },
+    });
+
+    if (modelsResponse.ok) {
+      return res.json({ connected: true, model });
+    }
+
+    // Fallback probe: some OCA deployments don't expose /models, but /chat/completions works.
+    const chatProbeResponse = await fetchWithTimeout(
+      `${ocaBaseUrl}/chat/completions`,
       {
-        headers: { Authorization: `Bearer ${process.env.OCA_TOKEN}` },
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${ocaToken}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: 'health-check' }],
+          stream: true,
+          max_tokens: 1,
+          temperature: 0,
+        }),
       }
     );
-    res.json({ connected: response.ok, model: process.env.OCA_MODEL });
+
+    if (chatProbeResponse.ok) {
+      await chatProbeResponse.body?.cancel();
+      return res.json({ connected: true, model });
+    }
+
+    return res.json({ connected: false, model: null });
   } catch {
-    res.json({ connected: false, model: null });
+    return res.json({ connected: false, model: null });
   }
 });
 
