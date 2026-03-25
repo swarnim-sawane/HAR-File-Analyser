@@ -457,7 +457,7 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
       </div>
 
       {/* ── Merged recent files ── */}
-      {allRecentFiles.length > 0 && !isBusy && (
+      {/* {allRecentFiles.length > 0 && !isBusy && (
         <div className="recent-files-section">
           <div className="recent-files-header">
             <h3>Recent Files</h3>
@@ -500,7 +500,7 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
             ))}
           </div>
         </div>
-      )}
+      )} */}
 
       {/* ── Info grid ── */}
       <div className="unified-info-grid">
