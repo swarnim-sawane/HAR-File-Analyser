@@ -9447,3 +9447,131 @@ html.dark-mode .har-file-tab.active {
 html.dark-mode .har-file-tab-add:hover {
   background: var(--bg-secondary, #1f2937);
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Unified Uploader
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Widen the drop zone slightly for the richer content */
+.unified-uploader .drop-zone.unified-drop-zone {
+  padding: 52px 40px;
+}
+
+/* File-type indicator badges inside the drop zone */
+.unified-type-badges {
+  display: flex;
+  gap: 8px;
+  margin: 14px 0 20px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.unified-type-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: ui-monospace, 'SFMono-Regular', monospace;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+}
+
+.unified-badge-har {
+  background: rgba(59, 130, 246, 0.1);
+  color: #3b82f6;
+  border-color: rgba(59, 130, 246, 0.25);
+}
+
+.unified-badge-log {
+  background: rgba(16, 185, 129, 0.1);
+  color: #10b981;
+  border-color: rgba(16, 185, 129, 0.25);
+}
+
+.unified-badge-json {
+  background: rgba(245, 158, 11, 0.1);
+  color: #d97706;
+  border-color: rgba(245, 158, 11, 0.25);
+}
+
+/* Right-side of each recent-file row (pill + arrow) */
+.unified-recent-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* File-type pills in the recent-files list */
+.unified-type-pill {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 10px;
+  letter-spacing: 0.05em;
+  font-family: ui-monospace, 'SFMono-Regular', monospace;
+  flex-shrink: 0;
+}
+
+.unified-pill-har {
+  background: rgba(59, 130, 246, 0.12);
+  color: #3b82f6;
+}
+
+.unified-pill-log {
+  background: rgba(16, 185, 129, 0.12);
+  color: #10b981;
+}
+
+/* Two-column info grid at the bottom */
+.unified-info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.unified-info-grid .info-section {
+  margin-top: 0;
+}
+
+@media (max-width: 640px) {
+  .unified-info-grid {
+    grid-template-columns: 1fr;
+  }
+  .unified-uploader .drop-zone.unified-drop-zone {
+    padding: 40px 24px;
+  }
+}
+
+/* Dark-mode adjustments */
+html.dark-mode .unified-badge-har {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border-color: rgba(96, 165, 250, 0.3);
+}
+
+html.dark-mode .unified-badge-log {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border-color: rgba(52, 211, 153, 0.3);
+}
+
+html.dark-mode .unified-badge-json {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.3);
+}
+
+html.dark-mode .unified-pill-har {
+  background: rgba(59, 130, 246, 0.18);
+  color: #60a5fa;
+}
+
+html.dark-mode .unified-pill-log {
+  background: rgba(16, 185, 129, 0.18);
+  color: #34d399;
+}

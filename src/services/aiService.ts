@@ -4,9 +4,11 @@ import { v4 as uuidv4 } from 'uuid';
 import { HarFile, Entry } from '../types/har';
 
 // ✅ Points to your backend proxy, not OCA directly
-const BACKEND_AI_URL = import.meta.env.VITE_BACKEND_URL
-  ? `${import.meta.env.VITE_BACKEND_URL}/api/ai`
-  : 'http://localhost:3001/api/ai';
+const BACKEND_BASE_URL =
+  import.meta.env.VITE_BACKEND_URL ||
+  import.meta.env.VITE_API_URL ||
+  'http://localhost:4000';
+const BACKEND_AI_URL = `${BACKEND_BASE_URL}/api/ai`;
 
 env.allowLocalModels = false;
 

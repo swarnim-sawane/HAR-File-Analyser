@@ -3,6 +3,7 @@
 import React, { useCallback, useRef, useState, useEffect } from 'react';
 import FileUploader from './components/FileUploader';
 import ConsoleLogUploader from './components/ConsoleLogUploader';
+import UnifiedUploader from './components/UnifiedUploader';
 import ConsoleLogFilterPanel from './components/ConsoleLogFilterPanel';
 import ConsoleLogList from './components/ConsoleLogList';
 import ConsoleLogDetails from './components/ConsoleLogDetails';
@@ -221,8 +222,9 @@ const App: React.FC = () => {
     });
   };
 
-  /** Open a new HAR tab for the given upload result */
-  const openHarTab = useCallback((result: UploadResult) => {
+  /** Open a new HAR tab for the given upload result.
+   *  Pass switchTool=true (default false) to also activate the HAR tool tab. */
+  const openHarTab = useCallback((result: UploadResult, switchTool = false) => {
     if (harTabs.length >= MAX_HAR_TABS) {
       console.warn(`Max ${MAX_HAR_TABS} HAR tabs open — close one first`);
       return;
@@ -235,6 +237,7 @@ const App: React.FC = () => {
     setHarTabs(prev => [...prev, newTab]);
     setActiveHarTabId(newTab.id);
     setHarShowUploader(false);
+    if (switchTool) setActiveTool('har');
     registerRecentHarFile(result.fileName, new File([], result.fileName));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [harTabs.length]);
@@ -242,6 +245,19 @@ const App: React.FC = () => {
   const handleHarFileUpload = useCallback(async (result: UploadResult) => {
     openHarTab(result);
   }, [openHarTab]);
+
+  // ── Unified uploader callbacks ────────────────────────────────────────────
+  /** Called by UnifiedUploader when a HAR file is ready — switches to HAR tool */
+  const handleUnifiedHarUpload = useCallback(async (result: UploadResult) => {
+    openHarTab(result, /* switchTool */ true);
+  }, [openHarTab]);
+
+  /** Called by UnifiedUploader when a console log is ready — switches to Console tool */
+  const handleUnifiedLogUpload = useCallback(async (result: UploadResult, sourceFile: File) => {
+    setActiveTool('console');
+    await handleLogUploadComplete(result, sourceFile);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleRecentHarFile = async (file: File) => {
     try {
@@ -475,6 +491,14 @@ const App: React.FC = () => {
     return ConsoleLogAnalyzer.groupBySource(logState.filteredEntries);
   }, [logState.filteredEntries, logState.filters.groupBy]);
 
+  // Show the unified uploader only when there is truly nothing loaded in either tool.
+  // Once any file is open the tool tabs take over and each tool manages its own upload.
+  const showUnifiedUploader =
+    harTabs.length === 0 &&
+    !logState.logData &&
+    !logState.isLoading &&
+    !isLogProcessing;
+
   return (
     <div className="app-container">
       <header className="app-header">
@@ -485,17 +509,50 @@ const App: React.FC = () => {
             <line x1="12" y1="22.08" x2="12" y2="12"></line>
           </svg>
           <h1>
-            {activeTool === 'har' ? 'HAR Analyzer' : activeTool === 'compare' ? 'HAR Compare' : 'Console Log Analyzer'}
+            {showUnifiedUploader
+              ? 'File Analyzer'
+              : activeTool === 'har'
+              ? 'HAR Analyzer'
+              : activeTool === 'compare'
+              ? 'HAR Compare'
+              : 'Console Log Analyzer'}
           </h1>
           <span className="header-divider">
-            {activeTool === 'har' ? 'Network Analysis Tool' : activeTool === 'compare' ? 'Side-by-side HAR comparison' : 'Console Log Analysis'}
+            {showUnifiedUploader
+              ? 'HAR & Console Log Analysis'
+              : activeTool === 'har'
+              ? 'Network Analysis Tool'
+              : activeTool === 'compare'
+              ? 'Side-by-side HAR comparison'
+              : 'Console Log Analysis'}
           </span>
         </div>
         <DarkModeToggle />
       </header>
 
       <main className="main-content">
-        {/* Tool Selector */}
+        {/* ── Unified uploader — shown when no files are open in either tool ── */}
+        {showUnifiedUploader && (
+          <div className="upload-section">
+            <UnifiedUploader
+              onHarFileUpload={handleUnifiedHarUpload}
+              harRecentFiles={harRecentFiles}
+              onClearHarRecent={() => {
+                setHarRecentFiles([]);
+                localStorage.removeItem(HAR_RECENT_FILES_KEY);
+              }}
+              onLogFileUpload={handleUnifiedLogUpload}
+              logRecentFiles={logRecentFiles}
+              onClearLogRecent={() => {
+                setLogRecentFiles([]);
+                localStorage.removeItem(LOG_RECENT_FILES_KEY);
+              }}
+            />
+          </div>
+        )}
+
+        {/* Tool Selector + all tool content — hidden while the unified home screen is shown */}
+        {!showUnifiedUploader && (<>
         <div className="tool-selector">
           <button
             className={`tool-tab ${activeTool === 'har' ? 'active' : ''}`}
@@ -724,6 +781,7 @@ const App: React.FC = () => {
             ) : null}
           </>
         )}
+        </>)}
       </main>
 
       {pendingLeaveNavigation && (
