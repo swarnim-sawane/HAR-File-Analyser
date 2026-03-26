@@ -586,8 +586,9 @@ const KpiCard: React.FC<{
   value: string;
   note: string;
   tone?: 'neutral' | 'success' | 'warning' | 'danger';
-}> = ({ icon, label, value, note, tone = 'neutral' }) => (
-  <article className={`scorecard-kpi-card tone-${tone}`}>
+  className?: string;
+}> = ({ icon, label, value, note, tone = 'neutral', className = '' }) => (
+  <article className={`scorecard-kpi-card tone-${tone} ${className}`.trim()}>
     <span className="scorecard-kpi-icon" aria-hidden="true">{icon}</span>
     <div className="scorecard-kpi-copy">
       <span className="scorecard-kpi-label">{label}</span>
@@ -644,6 +645,9 @@ const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData }) => {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const explainerRegionRef = useRef<HTMLDivElement | null>(null);
+  const criticalSectionRef = useRef<HTMLElement | null>(null);
+  const warningsSectionRef = useRef<HTMLElement | null>(null);
+  const passedSectionRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return undefined;
@@ -690,6 +694,17 @@ const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData }) => {
     setShowExplainer(false);
   }
 
+  function scrollToSection(target: 'critical' | 'warnings' | 'passed') {
+    const section =
+      target === 'critical'
+        ? criticalSectionRef.current
+        : target === 'warnings'
+          ? warningsSectionRef.current
+          : passedSectionRef.current;
+
+    section?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
   if (!data) {
     return (
       <section className="scorecard-dashboard is-empty">
@@ -733,6 +748,58 @@ const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData }) => {
     .sort((a, b) => b.count - a.count)
     .slice(0, 6);
 
+  const kpiItems = [
+    {
+      icon: <ClockIcon />,
+      label: 'Avg Response',
+      value: fmtT(data.avg),
+      note: data.avg > 1500 ? 'Needs improvement' : data.avg > 800 ? 'Moderate latency' : 'Healthy latency',
+      tone: data.avg > 1500 ? 'danger' : data.avg > 800 ? 'warning' : 'success',
+    },
+    {
+      icon: <AlertIcon />,
+      label: 'Error Rate',
+      value: `${errRate}%`,
+      note: `${data.errs.length} of ${data.total} requests`,
+      tone: data.errs.length > 0 ? 'danger' : 'success',
+    },
+    {
+      icon: <DownloadIcon />,
+      label: 'Transferred',
+      value: totalTransferred,
+      note: `${data.uniqueHosts.size} hosts involved`,
+      tone: 'neutral' as const,
+    },
+    {
+      icon: <ClockIcon />,
+      label: 'Slowest Request',
+      value: fmtT(data.max),
+      note: data.max > 5000 ? 'Critical outlier' : data.max > 2000 ? 'Within watch range' : 'Within target',
+      tone: data.max > 5000 ? 'danger' : data.max > 2000 ? 'warning' : 'success',
+    },
+  ] as const;
+
+  const heroSignals = [
+    {
+      label: 'Critical Issues',
+      value: critical.length,
+      tone: critical.length > 0 ? 'danger' : 'success',
+      target: 'critical' as const,
+    },
+    {
+      label: 'Warnings & Optimizations',
+      value: warnings.length + insights.length,
+      tone: warnings.length + insights.length > 0 ? 'warning' : 'success',
+      target: 'warnings' as const,
+    },
+    {
+      label: 'Passed Checks',
+      value: passed.length,
+      tone: 'success' as const,
+      target: 'passed' as const,
+    },
+  ] as const;
+
   const maxDomainTime = Math.max(...domains.map((domain) => domain.time), 1);
   const scoreRadius = 76;
   const scoreCircumference = 2 * Math.PI * scoreRadius;
@@ -753,6 +820,35 @@ const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData }) => {
               <span className="scorecard-pill">{data.total} requests</span>
               <span className="scorecard-pill">{data.uniqueHosts.size} hosts</span>
               <span className="scorecard-pill">Avg TTFB {fmtT(data.avgTTFB)}</span>
+            </div>
+
+            <div className="scorecard-power-card">
+              <div className="scorecard-power-glance">
+                {heroSignals.map((item) => (
+                  <button
+                    key={item.label}
+                    type="button"
+                    className={`scorecard-power-signal tone-${item.tone}`}
+                    onClick={() => scrollToSection(item.target)}
+                  >
+                    <strong>{item.value}</strong>
+                    <span>{item.label}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="scorecard-power-grid">
+                {kpiItems.map((item) => (
+                  <KpiCard
+                    key={item.label}
+                    icon={item.icon}
+                    label={item.label}
+                    value={item.value}
+                    note={item.note}
+                    tone={item.tone}
+                    className="is-embedded"
+                  />
+                ))}
+              </div>
             </div>
           </div>
 
@@ -899,38 +995,7 @@ const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData }) => {
         </div>
       </div>
 
-      <div className="scorecard-kpi-grid">
-          <KpiCard
-            icon={<ClockIcon />}
-            label="Avg Response"
-            value={fmtT(data.avg)}
-            note={data.avg > 1500 ? 'Needs improvement' : data.avg > 800 ? 'Moderate latency' : 'Healthy latency'}
-            tone={data.avg > 1500 ? 'danger' : data.avg > 800 ? 'warning' : 'success'}
-          />
-          <KpiCard
-            icon={<AlertIcon />}
-            label="Error Rate"
-            value={`${errRate}%`}
-            note={`${data.errs.length} of ${data.total} requests`}
-            tone={data.errs.length > 0 ? 'danger' : 'success'}
-          />
-          <KpiCard
-            icon={<DownloadIcon />}
-            label="Transferred"
-            value={totalTransferred}
-            note={`${data.uniqueHosts.size} hosts involved`}
-            tone="neutral"
-          />
-          <KpiCard
-            icon={<ClockIcon />}
-            label="Slowest Request"
-            value={fmtT(data.max)}
-            note={data.max > 5000 ? 'Critical outlier' : data.max > 2000 ? 'Within watch range' : 'Within target'}
-            tone={data.max > 5000 ? 'danger' : data.max > 2000 ? 'warning' : 'success'}
-          />
-      </div>
-
-      <section className="scorecard-section-card">
+      <section ref={criticalSectionRef} className="scorecard-section-card">
         <header className="scorecard-section-header is-reference">
           <div>
             <h3>Critical Issues</h3>
@@ -957,7 +1022,7 @@ const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData }) => {
         </div>
       </section>
 
-      <section className="scorecard-section-card">
+      <section ref={warningsSectionRef} className="scorecard-section-card">
         <header className="scorecard-section-header is-reference">
           <div>
             <h3>Warnings & Optimizations</h3>
@@ -987,7 +1052,7 @@ const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData }) => {
         </div>
       </section>
 
-      <section className="scorecard-section-card">
+      <section ref={passedSectionRef} className="scorecard-section-card">
         <header className="scorecard-section-header is-reference">
           <div>
             <h3>Passed Checks</h3>
