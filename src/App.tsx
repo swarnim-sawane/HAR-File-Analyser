@@ -21,6 +21,8 @@ import { apiClient } from './services/apiClient';
 import { wsClient } from './services/websocketClient';
 import { storeRecentFile, restoreRecentFile, clearRecentFiles } from './services/recentFilesStore';
 import HarCompare from './components/HarCompare';
+import SanitizeModal from './components/SanitizeModal';
+import BatchSanitizeModal from './components/BatchSanitizeModal';
 
 interface RecentFile {
   name: string;
@@ -57,6 +59,9 @@ const App: React.FC = () => {
   // Track which tab (if any) is currently generating insights — for the leave guard
   const tabInsightsRef = useRef<Record<string, boolean>>({});
   const [activeTabGeneratingInsights, setActiveTabGeneratingInsights] = useState(false);
+  // Sanitize modal state for the "+" add-tab upload flow
+  const [addTabPendingResult, setAddTabPendingResult] = useState<UploadResult | null>(null);
+  const [addTabPendingBatch, setAddTabPendingBatch] = useState<UploadResult[] | null>(null);
 
   // ── Console Log state ────────────────────────────────────────────────────────
   const logState = useConsoleLogData();
@@ -318,14 +323,28 @@ const App: React.FC = () => {
   const handleAddTabFileInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     e.target.value = '';
+    if (files.length === 0) return;
+
+    const results: UploadResult[] = [];
     for (const file of files) {
       try {
         const result = await chunkedUploader.uploadFile(file, 'har', () => {});
-        openHarTab(result);
+        // Persist to IndexedDB for cross-session Recent Files restore
+        void storeRecentFile('har', file);
         registerRecentHarFile(file.name, file);
+        results.push(result);
       } catch (err) {
         console.error('Failed to upload HAR file:', err);
       }
+    }
+
+    if (results.length === 0) return;
+
+    // Route through the sanitize modal — same flow as FileUploader
+    if (results.length === 1) {
+      setAddTabPendingResult(results[0]);
+    } else {
+      setAddTabPendingBatch(results);
     }
   };
 
@@ -537,6 +556,31 @@ const App: React.FC = () => {
 
   return (
     <div className="app-container">
+      {/* ── Sanitize modals for the "+" add-tab upload flow ── */}
+      {addTabPendingResult && (
+        <SanitizeModal
+          uploadResult={addTabPendingResult}
+          onProceed={(fileId) => {
+            openHarTab({ ...addTabPendingResult, fileId });
+            setAddTabPendingResult(null);
+          }}
+          onCancel={() => setAddTabPendingResult(null)}
+        />
+      )}
+      {addTabPendingBatch && (
+        <BatchSanitizeModal
+          uploadResults={addTabPendingBatch}
+          onProceed={(finalResults) => {
+            for (const result of finalResults) {
+              wsClient.subscribeToFile(result.fileId);
+              openHarTab(result);
+            }
+            setAddTabPendingBatch(null);
+          }}
+          onCancel={() => setAddTabPendingBatch(null)}
+        />
+      )}
+
       <header className="app-header">
         <div className="header-brand">
           <svg className="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
