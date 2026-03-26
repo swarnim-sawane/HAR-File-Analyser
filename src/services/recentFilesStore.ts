@@ -145,5 +145,6 @@ export async function clearRecentFiles(kind: 'log' | 'har'): Promise<void> {
     db.close();
   } catch (err) {
     console.warn('[recentFilesStore] Failed to clear files:', err);
+ 
   }
 }

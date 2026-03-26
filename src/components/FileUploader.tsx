@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { chunkedUploader, UploadProgress, UploadResult } from '../services/chunkedUploader';
-import { restoreRecentFile } from '../services/recentFilesStore';
+import { restoreRecentFile, storeRecentFile } from '../services/recentFilesStore';
 import { wsClient } from '../services/websocketClient';
 import SanitizeModal from './SanitizeModal';
 import BatchSanitizeModal from './BatchSanitizeModal';
@@ -96,6 +96,10 @@ const FileUploader: React.FC<FileUploaderProps> = ({
       const result = await chunkedUploader.uploadFile(file, 'har', (progress) => {
         setUploadProgress(progress);
       });
+
+      // Persist file content to IndexedDB so it can be reopened from Recent Files
+      // after a page refresh (the parent only receives UploadResult, not the File).
+      void storeRecentFile('har', file);
 
       setIsUploading(false);
       setUploadProgress(null);

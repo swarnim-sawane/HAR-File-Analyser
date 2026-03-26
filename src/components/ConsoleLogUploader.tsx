@@ -270,8 +270,8 @@ const ConsoleLogUploader: React.FC<ConsoleLogUploaderProps> = ({
         <h3>How to capture console logs</h3>
         <ol>
           <li>Open Chrome DevTools (F12)</li>
-          <li>Go to the Console tab</li>
-          <li>Right-click in the console and select "Save as..."</li>
+          <li>Go to the <strong>Console</strong> tab</li>
+          <li>Right-click in the console and select &ldquo;Save as&hellip;&rdquo;</li>
           <li>Or copy logs and paste into a .txt or .log file</li>
         </ol>
       </div>

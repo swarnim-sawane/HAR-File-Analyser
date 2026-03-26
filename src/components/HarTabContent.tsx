@@ -223,13 +223,15 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
             </div>
           )}
 
-          {activeTab === 'insights' && (
+          {/* Always mounted so useInsights auto-fires as soon as HAR data loads,
+              generating results in the background before the user visits the tab. */}
+          <div style={{ display: activeTab === 'insights' ? undefined : 'none' }}>
             <AiInsights
               harData={harState.harData}
               backendUrl={backendUrl}
               onGeneratingChange={handleInsightsGeneratingChange}
             />
-          )}
+          </div>
         </>
       )}
     </div>

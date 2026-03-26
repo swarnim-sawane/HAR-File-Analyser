@@ -6,6 +6,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { chunkedUploader, UploadProgress, UploadResult } from '../services/chunkedUploader';
+import { restoreRecentFile, storeRecentFile } from '../services/recentFilesStore';
 import { wsClient } from '../services/websocketClient';
 import SanitizeModal from './SanitizeModal';
 import BatchSanitizeModal from './BatchSanitizeModal';
@@ -164,6 +165,8 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
       setStatusMessage(`Uploading ${file.name}...`);
       try {
         const result = await chunkedUploader.uploadFile(file, 'har', (p) => setUploadProgress(p));
+        // Persist to IndexedDB for cross-session Recent Files restore
+        void storeRecentFile('har', file);
         collectedResults.push(result);
       } catch (err) {
         setError(`Failed to upload ${file.name}: ${(err as Error)?.message ?? 'Unknown error'}`);
@@ -316,12 +319,22 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
     .sort((a, b) => b.timestamp - a.timestamp)
     .slice(0, 6);
 
-  const handleRecentFileClick = async (f: { data: File; fileType: DetectedType }) => {
-    if (!(f.data instanceof File)) {
-      setError('Recent file data is unavailable. Please upload the file again.');
+  const handleRecentFileClick = async (f: { name: string; data: File; fileType: DetectedType }) => {
+    // In-session: f.data is the real File. After a page refresh localStorage only
+    // restores name/timestamp so f.data is undefined — restore from IndexedDB.
+    let file: File | null =
+      f.data instanceof File && f.data.size > 0 ? f.data : null;
+
+    if (!file) {
+      file = await restoreRecentFile(f.fileType, f.name);
+    }
+
+    if (!file) {
+      setError(`"${f.name}" is no longer available in this browser. Please upload it again.`);
       return;
     }
-    await processFiles([f.data]);
+
+    await processFiles([file]);
   };
 
   const formatDate = (ts: number) => {
@@ -539,16 +552,16 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
               height="13"
               style={{ marginRight: 6, verticalAlign: 'middle', opacity: 0.7 }}
             >
-              <polyline points="3 12 7 8 3 4" />
-              <line x1="9" y1="14" x2="14" y2="14" />
+              <polyline points="4 17 10 11 4 5" />
+              <line x1="12" y1="19" x2="20" y2="19" />
             </svg>
             Capture console logs
           </h3>
           <ol>
             <li>Open Chrome DevTools (F12)</li>
             <li>Go to the <strong>Console</strong> tab</li>
-            <li>Right-click in the console → <em>Save as...</em></li>
-            <li>Or paste logs into a <code>.txt</code> / <code>.log</code> file</li>
+            <li>Right-click &rarr; <em>Save as&hellip;</em></li>
+            <li>Or copy &amp; paste logs into a .txt or .log file</li>
           </ol>
         </div>
       </div>
