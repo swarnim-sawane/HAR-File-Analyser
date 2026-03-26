@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { chunkedUploader, UploadProgress, UploadResult } from '../services/chunkedUploader';
+import { restoreRecentFile } from '../services/recentFilesStore';
 import {
   AlertIcon,
   ChevronRightIcon,
@@ -126,12 +127,23 @@ const ConsoleLogUploader: React.FC<ConsoleLogUploaderProps> = ({
     window.setTimeout(() => setError(null), 300);
   };
 
-  const handleRecentFileClick = (file: RecentFile) => {
-    if (!(file.data instanceof File)) {
-      setError('Recent file data is unavailable. Please upload the file again.');
+  const handleRecentFileClick = async (file: RecentFile) => {
+    // In-session: file.data is the real File object.
+    // After a page refresh: file.data is undefined (localStorage only stores name/
+    // timestamp), so we fall back to IndexedDB where we persisted the content.
+    let resolvedFile: File | null =
+      file.data instanceof File && file.data.size > 0 ? file.data : null;
+
+    if (!resolvedFile) {
+      resolvedFile = await restoreRecentFile('log', file.name);
+    }
+
+    if (!resolvedFile) {
+      setError(`"${file.name}" is no longer available in this browser. Please upload the file again.`);
       return;
     }
-    void processFile(file.data);
+
+    void processFile(resolvedFile);
   };
 
   const formatDate = (timestamp: number) => {

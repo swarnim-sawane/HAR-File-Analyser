@@ -127,13 +127,69 @@ export class ConsoleLogParser {
       trimmed.startsWith('at ') ||
       trimmed.startsWith('    at ') ||
       /^\s+at\s+/.test(line) ||
-      /^\s+\w+@/.test(line) || // Firefox format
-      /^\s+.*:\d+:\d+/.test(line) // file:line:col
+      /^\s+\w+@/.test(line) || // Firefox format (indented)
+      /^\s+.*:\d+:\d+/.test(line) || // file:line:col (indented)
+      // Chrome/browser callsite lines: "functionName @ file.js:line" (no indent required)
+      /^[\w$.()\s<>]+\s*@\s*\S+\.js:\d+/.test(trimmed) ||
+      /^\(anonymous\)\s*@\s*\S+:\d+/.test(trimmed) ||
+      // Promise chain continuation frames: "Promise.then", "Promise.catch", etc.
+      /^Promise\.(then|catch|finally|all|race|allSettled|any)$/.test(trimmed)
     );
   }
 
   private static parsePlainTextLine(line: string): ConsoleLogEntry | null {
     if (!line.trim()) return null;
+
+    // Pattern 0a: Oracle Visual Builder (VB) format with optional source file prefix
+    // [VB (INFO), /vb/module/path]: Message text
+    // [VB (WARN), /vb/module/path]: Message text
+    // [VB (ERROR), /vb/module/path]: Message text
+    const vbPattern = /^\[VB \((\w+)\),\s*([^\]]+)\]:\s*(.+)$/;
+    const vbMatch = line.match(vbPattern);
+    if (vbMatch) {
+      return {
+        id: uuidv4(),
+        timestamp: new Date().toISOString(),
+        level: this.normalizeLogLevel(vbMatch[1]),
+        source: vbMatch[2].trim(),
+        message: vbMatch[3],
+      };
+    }
+
+    // Pattern 0b: Source-file-prefixed VB format
+    // actionRunner.js:59 [VB (INFO), /vb/module]: Message
+    // servicesManager.js:127 [VB (WARN), /vb/module]: Message
+    const vbSourcePattern = /^(\S+\.js:\d+)\s+\[VB \((\w+)\),\s*([^\]]+)\]:\s*(.+)$/;
+    const vbSourceMatch = line.match(vbSourcePattern);
+    if (vbSourceMatch) {
+      const [, fileLoc, levelStr, modulePath, message] = vbSourceMatch;
+      const colonIdx = fileLoc.lastIndexOf(':');
+      return {
+        id: uuidv4(),
+        timestamp: new Date().toISOString(),
+        level: this.normalizeLogLevel(levelStr),
+        source: modulePath.trim(),
+        lineNumber: parseInt(fileLoc.substring(colonIdx + 1)),
+        message,
+      };
+    }
+
+    // Pattern 0c: Generic bracketed component format
+    // [COMPONENT (LEVEL), /path/to/module]: Message
+    const genericComponentPattern = /^\[(\w[\w\s]*)\s*\((\w+)\),\s*([^\]]*)\]:\s*(.+)$/;
+    const genericComponentMatch = line.match(genericComponentPattern);
+    if (genericComponentMatch) {
+      const level = this.normalizeLogLevel(genericComponentMatch[2]);
+      if (level !== 'log' || this.isValidLogLevel(genericComponentMatch[2])) {
+        return {
+          id: uuidv4(),
+          timestamp: new Date().toISOString(),
+          level,
+          source: genericComponentMatch[3].trim() || genericComponentMatch[1],
+          message: genericComponentMatch[4],
+        };
+      }
+    }
 
     // Pattern 1: Chrome/Edge DevTools format with timestamp
     // [12:34:56.789] ERROR: Something went wrong

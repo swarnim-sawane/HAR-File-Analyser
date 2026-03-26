@@ -231,7 +231,15 @@ const Toolbar: React.FC<ToolbarProps> = ({
                       key={index}
                       className="recent-file-item"
                       onClick={() => {
-                        onLoadRecent(file.data);
+                        // file.data is a real File in-session; after a page refresh
+                        // localStorage restores only name/timestamp, so data is
+                        // undefined. Pass a named stub so the parent can fall back
+                        // to IndexedDB using the file name.
+                        const fileToPass =
+                          file.data instanceof File
+                            ? file.data
+                            : new File([], file.name);
+                        onLoadRecent(fileToPass);
                         setShowRecent(false);
                       }}
                     >

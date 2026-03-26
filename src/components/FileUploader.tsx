@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { chunkedUploader, UploadProgress, UploadResult } from '../services/chunkedUploader';
-
+import { restoreRecentFile } from '../services/recentFilesStore';
 import { wsClient } from '../services/websocketClient';
 import SanitizeModal from './SanitizeModal';
 import BatchSanitizeModal from './BatchSanitizeModal';
@@ -231,7 +231,24 @@ const FileUploader: React.FC<FileUploaderProps> = ({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleRecentFileClick = async (file: File) => {
+  const handleRecentFileClick = async (recentFile: RecentFile) => {
+    // In-session: recentFile.data is the real File.
+    // After a page refresh: recentFile.data is undefined (localStorage only
+    // persists name/timestamp), so fall back to IndexedDB content.
+    let file: File | null =
+      recentFile.data instanceof File && recentFile.data.size > 0
+        ? recentFile.data
+        : null;
+
+    if (!file) {
+      file = await restoreRecentFile('har', recentFile.name);
+    }
+
+    if (!file) {
+      setError(`"${recentFile.name}" is no longer available in this browser. Please upload the file again.`);
+      return;
+    }
+
     await processFile(file);
   };
 
@@ -381,7 +398,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({
           </div>
           <div className="recent-files-list">
             {recentFiles.map((file, index) => (
-              <button key={index} className="recent-file-card" onClick={() => handleRecentFileClick(file.data)} disabled={isValidating || isUploading}>
+              <button key={index} className="recent-file-card" onClick={() => handleRecentFileClick(file)} disabled={isValidating || isUploading}>
                 <div className="recent-file-info">
                   <span className="recent-file-icon">
                     <FileTextIcon />
