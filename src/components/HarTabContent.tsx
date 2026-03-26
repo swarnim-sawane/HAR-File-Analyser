@@ -206,7 +206,7 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
           )}
 
           {activeTab === 'flow' && (
-            <div style={{ height: 'calc(100vh - 200px)' }}>
+            <div className="flow-tab-panel">
               <RequestFlowDiagram
                 entries={harState.filteredEntries}
                 onNodeClick={(entry: any) => {
