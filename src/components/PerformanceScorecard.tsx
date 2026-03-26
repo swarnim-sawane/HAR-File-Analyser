@@ -1,416 +1,1091 @@
 // src/components/PerformanceScorecard.tsx
-import React, { useMemo, useState } from 'react';
-import { HarFile } from '../types/har';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Entry, HarFile } from '../types/har';
+import {
+  AlertIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  ClockIcon,
+  DatabaseIcon,
+  DownloadIcon,
+  FlameIcon,
+  GlobeIcon,
+  ImageIcon,
+  InfoIcon,
+  NetworkIcon,
+  RefreshIcon,
+  RouteIcon,
+  ServerIcon,
+  ShieldIcon,
+  SparklesIcon,
+} from './Icons';
 
 interface ScorecardProps {
   harData: HarFile;
 }
 
-interface Check {
-  id: string;
-  label: string;
-  what: string;          // one-liner explaining what this check measures
-  status: 'good' | 'warn' | 'bad';
-  detail: string;
-  fix?: string;
-  impact: 'high' | 'medium' | 'low';
-  pts: number;           // point weight shown in the UI
+type Level = 'err' | 'warn' | 'ok' | 'info';
+type ScorecardIconName =
+  | 'gateway'
+  | 'auth'
+  | 'server'
+  | 'client'
+  | 'security'
+  | 'latency'
+  | 'ttfb'
+  | 'compression'
+  | 'cache'
+  | 'image'
+  | 'mixed'
+  | 'duplicate'
+  | 'dns'
+  | 'redirect'
+  | 'ssl'
+  | 'pass'
+  | 'network';
+
+interface Finding {
+  level: Level;
+  icon: ScorecardIconName;
+  title: string;
+  desc: string;
+  meta?: string[];
 }
 
-const StatusIcon: React.FC<{ status: 'good' | 'warn' | 'bad' }> = ({ status }) => {
-  if (status === 'good') return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <circle cx="8" cy="8" r="7" fill="rgba(34,197,94,0.12)" />
-      <path d="M5 8.5l2 1.5 4-4" stroke="#22c55e" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-  if (status === 'warn') return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <path d="M8 2.5L14 13.5H2L8 2.5Z" fill="rgba(245,158,11,0.12)" stroke="#f59e0b" strokeWidth="1.3" strokeLinejoin="round" />
-      <path d="M8 6.5v3" stroke="#f59e0b" strokeWidth="1.5" strokeLinecap="round" />
-      <circle cx="8" cy="11.5" r="0.8" fill="#f59e0b" />
-    </svg>
-  );
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <circle cx="8" cy="8" r="7" fill="rgba(239,68,68,0.1)" />
-      <path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="#ef4444" strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-  );
-};
+interface ScoreRule {
+  id: string;
+  label: string;
+  summary: string;
+  points: number;
+  active: boolean;
+  tone: 'danger' | 'warning' | 'success';
+}
+
+function fmtT(ms: number): string {
+  if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
+  return `${Math.round(ms)}ms`;
+}
+
+function fmtB(bytes: number): string {
+  if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} kB`;
+  return `${bytes} B`;
+}
+
+function fhost(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return '';
+  }
+}
+
+function getPathLabel(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const label = parsed.pathname.split('/').pop() || parsed.pathname || parsed.hostname;
+    return label.length > 52 ? `${label.slice(0, 49)}...` : label;
+  } catch {
+    return url.length > 52 ? `${url.slice(0, 49)}...` : url;
+  }
+}
+
+function getTransferSize(entry: Entry): number {
+  const bodySize = entry.response.bodySize ?? 0;
+  const contentSize = entry.response.content?.size ?? 0;
+  return Math.max(bodySize, contentSize, 0);
+}
+
+function getType(e: Entry): string {
+  const mime = e.response.content?.mimeType ?? '';
+  if (mime.includes('html')) return 'document';
+  if (mime.includes('javascript') || mime.includes('ecmascript')) return 'script';
+  if (mime.includes('css')) return 'stylesheet';
+  if (mime.includes('image/')) return 'image';
+  if (mime.includes('font')) return 'font';
+  if (mime.includes('json') || mime.includes('xml')) return 'xhr';
+  return 'other';
+}
+
+function hasCache(e: Entry): boolean {
+  const cc = e.response.headers.find((h) => h.name.toLowerCase() === 'cache-control')?.value ?? '';
+  const exp = e.response.headers.find((h) => h.name.toLowerCase() === 'expires')?.value ?? '';
+  return !!cc.match(/max-age=[1-9]|public|immutable/) || (!!exp && exp !== '-1' && exp !== '0');
+}
+
+function hasCompression(e: Entry): boolean {
+  const ce = e.response.headers.find((h) => h.name.toLowerCase() === 'content-encoding')?.value ?? '';
+  return /gzip|br|deflate/.test(ce);
+}
+
+function scoreColor(score: number): string {
+  if (score >= 90) return '#16a34a';
+  if (score >= 70) return '#ca8a04';
+  if (score >= 50) return '#ea580c';
+  return '#dc2626';
+}
+
+function scoreLabel(score: number): string {
+  if (score >= 90) return 'Excellent';
+  if (score >= 70) return 'Needs Work';
+  if (score >= 50) return 'Poor';
+  return 'Critical';
+}
+
+function scoreSummary(score: number, data: ReturnType<typeof analyse>): string {
+  if (score >= 90) {
+    return `Healthy session with ${data.errs.length === 0 ? 'no HTTP failures' : 'limited instability'} and strong response times across the request set.`;
+  }
+  if (score >= 70) {
+    return 'The session is broadly functional, but several latency, caching, or reliability issues are still pulling the experience down.';
+  }
+  if (score >= 50) {
+    return 'Performance issues are visible in the session. Prioritize error recovery, backend latency, and oversized or inefficient assets.';
+  }
+  return 'This HAR shows critical reliability or latency problems that will materially affect user experience and should be addressed first.';
+}
+
+function scoreHeadline(score: number): string {
+  if (score >= 90) return 'Fast, stable delivery with minimal operational risk.';
+  if (score >= 70) return 'Healthy session overall, with a few clear opportunities to reduce friction.';
+  if (score >= 50) return 'Visible performance and reliability issues are affecting session quality.';
+  return 'High-impact issues are materially reducing reliability and delivery quality.';
+}
+
+function analyse(entries: Entry[]) {
+  const total = entries.length;
+  const errs = entries.filter((e) => e.response.status >= 400);
+  const gw = entries.filter((e) => [502, 503, 504].includes(e.response.status));
+  const auth = entries.filter((e) => [401, 403].includes(e.response.status));
+  const errs5xx = entries.filter((e) => e.response.status >= 500 && !gw.includes(e));
+  const errs4xx = entries.filter((e) => e.response.status >= 400 && e.response.status < 500 && !auth.includes(e));
+  const times = entries.map((e) => e.time ?? 0).filter((t) => t > 0);
+  const avg = times.length ? times.reduce((a, b) => a + b, 0) / times.length : 0;
+  const max = times.length ? Math.max(...times) : 0;
+  const totalBytes = entries.reduce((a, e) => a + getTransferSize(e), 0);
+  const verySlow = entries.filter((e) => (e.time ?? 0) > 5000);
+  const slow = entries.filter((e) => (e.time ?? 0) > 2000 && (e.time ?? 0) <= 5000);
+  const ttfbs = entries.map((e) => e.timings.wait ?? 0).filter((t) => t > 0);
+  const avgTTFB = ttfbs.length ? ttfbs.reduce((a, b) => a + b, 0) / ttfbs.length : 0;
+  const highTTFB = entries.filter((e) => (e.timings.wait ?? 0) > 600);
+  const textTypes = new Set(['script', 'stylesheet', 'xhr', 'document']);
+  const uncompressed = entries.filter((e) => {
+    const type = getType(e);
+    const size = getTransferSize(e);
+    return textTypes.has(type) && size > 50000 && !hasCompression(e);
+  });
+  const staticTypes = new Set(['script', 'stylesheet', 'image', 'font']);
+  const noCacheStatic = entries.filter((e) => staticTypes.has(getType(e)) && !hasCache(e));
+  const bigImg = entries.filter((e) => getType(e) === 'image' && getTransferSize(e) > 204800);
+  const mixed = entries.filter((e) => e.request.url.startsWith('http://'));
+  const sensitive = /token|password|passwd|secret|api[_-]?key|auth|credential|access_token|id_token/i;
+  const leakyUrls = entries.filter((e) => {
+    try {
+      return [...new URL(e.request.url).searchParams.keys()].some((k) => sensitive.test(k));
+    } catch {
+      return false;
+    }
+  });
+  const highDNS = entries.filter((e) => (e.timings.dns ?? 0) > 100);
+  const highSSL = entries.filter((e) => (e.timings.ssl ?? 0) > 200);
+  const redirChains = entries.filter((e) => e.response.status >= 300 && e.response.status < 400);
+  const urlKey = (e: Entry) => `${e.request.method}|${e.request.url.split('?')[0]}`;
+  const urlCounts = new Map<string, number>();
+  entries.forEach((e) => urlCounts.set(urlKey(e), (urlCounts.get(urlKey(e)) ?? 0) + 1));
+  const dupes = [...urlCounts.entries()].filter(([, count]) => count > 1);
+  const uniqueHosts = new Set(entries.map((e) => fhost(e.request.url)).filter(Boolean));
+
+  return {
+    total,
+    errs,
+    gw,
+    auth,
+    errs5xx,
+    errs4xx,
+    times,
+    avg,
+    max,
+    totalBytes,
+    verySlow,
+    slow,
+    avgTTFB,
+    highTTFB,
+    uncompressed,
+    noCacheStatic,
+    bigImg,
+    mixed,
+    leakyUrls,
+    highDNS,
+    highSSL,
+    redirChains,
+    dupes,
+    uniqueHosts,
+  };
+}
+
+function buildScoreRules(d: ReturnType<typeof analyse>): ScoreRule[] {
+  const errRate = d.errs.length / Math.max(1, d.total);
+  return [
+    {
+      id: 'errors',
+      label: 'HTTP errors present',
+      summary: d.errs.length > 0 ? `${d.errs.length} failing requests affected this session` : 'No 4xx/5xx requests observed',
+      points: errRate > 0 ? Math.round(errRate * 30) : 0,
+      active: errRate > 0,
+      tone: 'danger',
+    },
+    {
+      id: 'avg-latency',
+      label: 'Average response time',
+      summary: `Average response is ${fmtT(d.avg)}`,
+      points: d.avg > 3000 ? 15 : d.avg > 1500 ? 10 : d.avg > 800 ? 5 : 0,
+      active: d.avg > 800,
+      tone: d.avg > 3000 ? 'danger' : 'warning',
+    },
+    {
+      id: 'max-latency',
+      label: 'Slowest request outlier',
+      summary: `Slowest request peaks at ${fmtT(d.max)}`,
+      points: d.max > 10000 ? 10 : d.max > 5000 ? 6 : d.max > 2000 ? 3 : 0,
+      active: d.max > 2000,
+      tone: d.max > 10000 ? 'danger' : 'warning',
+    },
+    {
+      id: 'compression',
+      label: 'Missing compression',
+      summary: d.uncompressed.length > 0 ? `${d.uncompressed.length} large text assets are uncompressed` : 'Compression coverage looks healthy',
+      points: d.uncompressed.length > 3 ? 8 : d.uncompressed.length > 0 ? 4 : 0,
+      active: d.uncompressed.length > 0,
+      tone: 'warning',
+    },
+    {
+      id: 'cache',
+      label: 'Missing cache headers',
+      summary: d.noCacheStatic.length > 0 ? `${d.noCacheStatic.length} static assets miss usable cache control` : 'Static cache headers are present',
+      points: d.noCacheStatic.length > 5 ? 6 : d.noCacheStatic.length > 0 ? 3 : 0,
+      active: d.noCacheStatic.length > 0,
+      tone: 'warning',
+    },
+    {
+      id: 'mixed',
+      label: 'Insecure HTTP traffic',
+      summary: d.mixed.length > 0 ? `${d.mixed.length} requests still use plaintext HTTP` : 'All requests use HTTPS',
+      points: d.mixed.length > 0 ? 5 : 0,
+      active: d.mixed.length > 0,
+      tone: 'danger',
+    },
+    {
+      id: 'images',
+      label: 'Oversized images',
+      summary: d.bigImg.length > 0 ? `${d.bigImg.length} images exceed 200kB` : 'Image payload sizes are within target',
+      points: d.bigImg.length > 2 ? 5 : d.bigImg.length > 0 ? 2 : 0,
+      active: d.bigImg.length > 0,
+      tone: 'warning',
+    },
+    {
+      id: 'ttfb',
+      label: 'High TTFB',
+      summary: `Average TTFB is ${fmtT(d.avgTTFB)}`,
+      points: d.avgTTFB > 800 ? 8 : d.avgTTFB > 400 ? 4 : 0,
+      active: d.avgTTFB > 400,
+      tone: 'warning',
+    },
+    {
+      id: 'sensitive',
+      label: 'Sensitive query parameters',
+      summary: d.leakyUrls.length > 0 ? `${d.leakyUrls.length} URLs expose potentially sensitive params` : 'No credentials or tokens were found in URLs',
+      points: d.leakyUrls.length > 0 ? 8 : 0,
+      active: d.leakyUrls.length > 0,
+      tone: 'danger',
+    },
+    {
+      id: 'duplicates',
+      label: 'Duplicate request patterns',
+      summary: d.dupes.length > 0 ? `${d.dupes.length} duplicate request signatures were detected` : 'No duplicate request patterns detected',
+      points: d.dupes.length > 3 ? 4 : d.dupes.length > 0 ? 2 : 0,
+      active: d.dupes.length > 0,
+      tone: 'warning',
+    },
+  ];
+}
+
+function calcScore(d: ReturnType<typeof analyse>): number {
+  let s = 100;
+  const errRate = d.errs.length / Math.max(1, d.total);
+  s -= Math.round(errRate * 30);
+  if (d.avg > 3000) s -= 15;
+  else if (d.avg > 1500) s -= 10;
+  else if (d.avg > 800) s -= 5;
+  if (d.max > 10000) s -= 10;
+  else if (d.max > 5000) s -= 6;
+  else if (d.max > 2000) s -= 3;
+  if (d.uncompressed.length > 3) s -= 8;
+  else if (d.uncompressed.length > 0) s -= 4;
+  if (d.noCacheStatic.length > 5) s -= 6;
+  else if (d.noCacheStatic.length > 0) s -= 3;
+  if (d.mixed.length > 0) s -= 5;
+  if (d.bigImg.length > 2) s -= 5;
+  else if (d.bigImg.length > 0) s -= 2;
+  if (d.avgTTFB > 800) s -= 8;
+  else if (d.avgTTFB > 400) s -= 4;
+  if (d.leakyUrls.length > 0) s -= 8;
+  if (d.dupes.length > 3) s -= 4;
+  else if (d.dupes.length > 0) s -= 2;
+  return Math.max(0, Math.min(100, s));
+}
+
+function calcScoreFromRules(rules: ScoreRule[]): number {
+  return Math.max(0, Math.min(100, 100 - rules.reduce((sum, rule) => sum + rule.points, 0)));
+}
+
+function buildFindings(d: ReturnType<typeof analyse>): Finding[] {
+  const findings: Finding[] = [];
+
+  if (d.gw.length) {
+    findings.push({
+      level: 'err',
+      icon: 'gateway',
+      title: `${d.gw.length} gateway error${d.gw.length > 1 ? 's' : ''} detected`,
+      desc: 'The edge tier cannot reliably reach the upstream service. Check deployment health, reverse proxy routing, and backend availability.',
+      meta: d.gw.slice(0, 3).map((e) => `${e.request.method} ${e.request.url}`),
+    });
+  }
+
+  if (d.auth.length) {
+    findings.push({
+      level: 'err',
+      icon: 'auth',
+      title: `${d.auth.length} authentication failure${d.auth.length > 1 ? 's' : ''}`,
+      desc: 'Requests are being rejected for authorization reasons. Validate session expiry, token formatting, CORS, and header propagation.',
+      meta: d.auth.slice(0, 3).map((e) => `HTTP ${e.response.status} ${e.request.url}`),
+    });
+  }
+
+  if (d.errs5xx.length && !d.gw.length) {
+    findings.push({
+      level: 'err',
+      icon: 'server',
+      title: `${d.errs5xx.length} upstream server error${d.errs5xx.length > 1 ? 's' : ''}`,
+      desc: 'Application-level server failures are present. Inspect service logs, dependency health, and database connectivity.',
+      meta: d.errs5xx.slice(0, 3).map((e) => `HTTP ${e.response.status} ${e.request.url}`),
+    });
+  }
+
+  if (d.errs4xx.length && !d.auth.length) {
+    findings.push({
+      level: 'err',
+      icon: 'client',
+      title: `${d.errs4xx.length} client error${d.errs4xx.length > 1 ? 's' : ''}`,
+      desc: 'Some resources are missing or requested incorrectly. Verify endpoint paths, payload shape, and expected query parameters.',
+      meta: d.errs4xx.slice(0, 3).map((e) => `HTTP ${e.response.status} ${e.request.url}`),
+    });
+  }
+
+  if (d.leakyUrls.length) {
+    findings.push({
+      level: 'err',
+      icon: 'security',
+      title: `${d.leakyUrls.length} URL${d.leakyUrls.length > 1 ? 's' : ''} expose sensitive parameters`,
+      desc: 'Secrets in query strings can leak into logs, history, and referer headers. Move sensitive values into headers or the request body.',
+      meta: d.leakyUrls.slice(0, 3).map((e) => e.request.url),
+    });
+  }
+
+  if (d.verySlow.length) {
+    findings.push({
+      level: 'warn',
+      icon: 'latency',
+      title: `${d.verySlow.length} request${d.verySlow.length > 1 ? 's' : ''} exceed 5 seconds`,
+      desc: 'Very slow responses usually point to blocking backend work, missing database indexes, or heavy server-side computation.',
+      meta: [...d.verySlow].sort((a, b) => b.time - a.time).slice(0, 3).map((e) => `${fmtT(e.time)} ${e.request.url}`),
+    });
+  } else if (d.slow.length) {
+    findings.push({
+      level: 'warn',
+      icon: 'latency',
+      title: `${d.slow.length} slow request${d.slow.length > 1 ? 's' : ''} over 2 seconds`,
+      desc: 'Multiple requests are breaching a comfortable latency budget. Split backend time from payload cost to isolate the real bottleneck.',
+      meta: [...d.slow].sort((a, b) => b.time - a.time).slice(0, 4).map((e) => `${fmtT(e.time)} ${e.request.url}`),
+    });
+  }
+
+  if (d.highTTFB.length > 2) {
+    findings.push({
+      level: 'warn',
+      icon: 'ttfb',
+      title: `High TTFB on ${d.highTTFB.length} requests`,
+      desc: 'Slow first-byte times suggest backend processing overhead before the response starts streaming. Look at database caching and expensive upstream calls.',
+      meta: d.highTTFB.slice(0, 3).map((e) => `TTFB ${fmtT(e.timings.wait ?? 0)} ${e.request.url}`),
+    });
+  }
+
+  if (d.uncompressed.length) {
+    findings.push({
+      level: 'warn',
+      icon: 'compression',
+      title: `${d.uncompressed.length} large uncompressed text asset${d.uncompressed.length > 1 ? 's' : ''}`,
+      desc: `Enable gzip or Brotli for scripts, stylesheets, documents, and API payloads. Estimated transfer savings are about ${fmtB(d.uncompressed.reduce((a, e) => a + getTransferSize(e) * 0.7, 0))}.`,
+      meta: [...d.uncompressed].sort((a, b) => getTransferSize(b) - getTransferSize(a)).slice(0, 3).map((e) => `${fmtB(getTransferSize(e))} ${e.request.url}`),
+    });
+  }
+
+  if (d.noCacheStatic.length) {
+    findings.push({
+      level: 'warn',
+      icon: 'cache',
+      title: `${d.noCacheStatic.length} static resource${d.noCacheStatic.length > 1 ? 's' : ''} missing cache headers`,
+      desc: 'Immutable static assets should advertise long-lived caching to avoid unnecessary re-downloads on repeat visits.',
+      meta: d.noCacheStatic.slice(0, 3).map((e) => `${getType(e)} ${e.request.url}`),
+    });
+  }
+
+  if (d.bigImg.length) {
+    findings.push({
+      level: 'warn',
+      icon: 'image',
+      title: `${d.bigImg.length} oversized image${d.bigImg.length > 1 ? 's' : ''}`,
+      desc: 'Large images increase layout time and network cost. Prefer AVIF or WebP, responsive sizes, and more aggressive compression.',
+      meta: [...d.bigImg].sort((a, b) => getTransferSize(b) - getTransferSize(a)).slice(0, 3).map((e) => `${fmtB(getTransferSize(e))} ${e.request.url}`),
+    });
+  }
+
+  if (d.mixed.length) {
+    findings.push({
+      level: 'warn',
+      icon: 'mixed',
+      title: `${d.mixed.length} insecure HTTP request${d.mixed.length > 1 ? 's' : ''}`,
+      desc: 'Plaintext requests weaken transport security. Move all traffic to HTTPS and consider HSTS to eliminate protocol downgrade hops.',
+      meta: d.mixed.slice(0, 3).map((e) => e.request.url),
+    });
+  }
+
+  if (d.dupes.length) {
+    findings.push({
+      level: 'warn',
+      icon: 'duplicate',
+      title: `${d.dupes.length} duplicate request pattern${d.dupes.length > 1 ? 's' : ''}`,
+      desc: 'Repeated identical requests waste bandwidth and backend work. Add client-side deduplication or short-lived caching where appropriate.',
+      meta: d.dupes.slice(0, 4).map(([key, count]) => {
+        const [method, url] = key.split('|');
+        return `x${count} ${method} ${url}`;
+      }),
+    });
+  }
+
+  if (d.highDNS.length > 2) {
+    findings.push({
+      level: 'info',
+      icon: 'dns',
+      title: `${d.highDNS.length} slow DNS lookups across ${d.uniqueHosts.size} hosts`,
+      desc: 'A broad host spread adds connection setup latency. Preconnect or reduce third-party host count for critical paths.',
+      meta: [`Hosts: ${[...d.uniqueHosts].slice(0, 6).join(', ')}`],
+    });
+  }
+
+  if (d.redirChains.length > 2) {
+    findings.push({
+      level: 'info',
+      icon: 'redirect',
+      title: `${d.redirChains.length} redirects detected`,
+      desc: 'Redirects add extra round trips before useful content arrives. Point clients directly to the final destination whenever possible.',
+      meta: d.redirChains.slice(0, 3).map((e) => `HTTP ${e.response.status} ${e.request.url}`),
+    });
+  }
+
+  if (d.highSSL.length > 2) {
+    findings.push({
+      level: 'info',
+      icon: 'ssl',
+      title: `${d.highSSL.length} slow TLS handshakes`,
+      desc: 'TLS overhead may be improved through session resumption, OCSP stapling, and modern protocol support such as TLS 1.3.',
+    });
+  }
+
+  if (d.errs.length === 0) {
+    findings.push({
+      level: 'ok',
+      icon: 'pass',
+      title: 'No HTTP errors detected',
+      desc: `All ${d.total} requests completed without 4xx or 5xx failures.`,
+    });
+  }
+
+  if (d.avg < 300 && d.total > 3) {
+    findings.push({
+      level: 'ok',
+      icon: 'latency',
+      title: `Fast average response at ${fmtT(d.avg)}`,
+      desc: 'Response times are comfortably inside a healthy interactive range for a web session.',
+    });
+  }
+
+  if (d.mixed.length === 0 && d.total > 5) {
+    findings.push({
+      level: 'ok',
+      icon: 'security',
+      title: 'All requests use HTTPS',
+      desc: 'No plaintext HTTP traffic was observed in this HAR capture.',
+    });
+  }
+
+  if (d.leakyUrls.length === 0) {
+    findings.push({
+      level: 'ok',
+      icon: 'pass',
+      title: 'No credentials exposed in URLs',
+      desc: 'Sensitive values were not detected in query parameters across the request set.',
+    });
+  }
+
+  return findings;
+}
+
+function getFindingIcon(icon: ScorecardIconName): React.ReactNode {
+  switch (icon) {
+    case 'gateway':
+      return <ServerIcon />;
+    case 'auth':
+      return <ShieldIcon />;
+    case 'server':
+      return <DatabaseIcon />;
+    case 'client':
+      return <AlertIcon />;
+    case 'security':
+      return <ShieldIcon />;
+    case 'latency':
+      return <FlameIcon />;
+    case 'ttfb':
+      return <ClockIcon />;
+    case 'compression':
+      return <DownloadIcon />;
+    case 'cache':
+      return <RefreshIcon />;
+    case 'image':
+      return <ImageIcon />;
+    case 'mixed':
+      return <GlobeIcon />;
+    case 'duplicate':
+      return <RefreshIcon />;
+    case 'dns':
+      return <NetworkIcon />;
+    case 'redirect':
+      return <RouteIcon />;
+    case 'ssl':
+      return <ShieldIcon />;
+    case 'network':
+      return <NetworkIcon />;
+    case 'pass':
+    default:
+      return <CheckIcon />;
+  }
+}
+
+const KpiCard: React.FC<{
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  note: string;
+  tone?: 'neutral' | 'success' | 'warning' | 'danger';
+}> = ({ icon, label, value, note, tone = 'neutral' }) => (
+  <article className={`scorecard-kpi-card tone-${tone}`}>
+    <span className="scorecard-kpi-icon" aria-hidden="true">{icon}</span>
+    <div className="scorecard-kpi-copy">
+      <span className="scorecard-kpi-label">{label}</span>
+      <strong className="scorecard-kpi-value">{value}</strong>
+      <span className="scorecard-kpi-note">{note}</span>
+    </div>
+  </article>
+);
+
+const FindingCard: React.FC<{ finding: Finding }> = ({ finding }) => (
+  <article className={`scorecard-finding-card tone-${finding.level}`}>
+    <span className="scorecard-finding-icon" aria-hidden="true">{getFindingIcon(finding.icon)}</span>
+    <div className="scorecard-finding-copy">
+      <div className="scorecard-finding-head">
+        <strong>{finding.title}</strong>
+      </div>
+      <p>{finding.desc}</p>
+      {finding.meta && finding.meta.length > 0 && (
+        <ul className="scorecard-finding-meta">
+          {finding.meta.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  </article>
+);
 
 const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData }) => {
-  const [expanded, setExpanded] = useState<string | null>(null);
-
-  const { score, checks, totalPts } = useMemo(() => {
+  const { score, data, findings, scoreRules } = useMemo(() => {
     const entries = harData.log.entries;
-    const total = entries.length;
-    const checks: Check[] = [];
-
-    // ── 1. Failed Requests ────────────────────────────────────────────────────
-    // Threshold is percentage-based so it scales with file size.
-    const errors = entries.filter(e => e.response.status >= 400);
-    const errorPct = total > 0 ? errors.length / total : 0;
-    const clientErrors = errors.filter(e => e.response.status < 500);
-    const serverErrors = errors.filter(e => e.response.status >= 500);
-    checks.push({
-      id: 'errors',
-      label: 'Failed Requests',
-      what: 'HTTP 4xx/5xx responses that indicate broken or erroring endpoints',
-      impact: 'high',
-      pts: 20,
-      status: errorPct === 0 ? 'good' : errorPct < 0.05 ? 'warn' : 'bad',
-      detail: errors.length === 0
-        ? `All ${total} requests completed successfully (no 4xx or 5xx responses).`
-        : `${errors.length} of ${total} requests failed (${(errorPct * 100).toFixed(1)}%). `
-          + (serverErrors.length > 0 ? `${serverErrors.length} server error${serverErrors.length > 1 ? 's' : ''} (5xx) — these are bugs on the server side. ` : '')
-          + (clientErrors.length > 0 ? `${clientErrors.length} client error${clientErrors.length > 1 ? 's' : ''} (4xx) — bad URLs, auth issues, or missing resources. ` : '')
-          + `Examples: ${errors.slice(0, 3).map(e => {
-              try { return `${e.response.status} ${new URL(e.request.url).pathname}`; } catch { return `${e.response.status} ${e.request.url}`; }
-            }).join(', ')}${errors.length > 3 ? `… +${errors.length - 3} more` : ''}`,
-      fix: serverErrors.length > 0
-        ? 'Server errors (5xx) are bugs — check your server logs for stack traces on the failing endpoints.'
-        : 'Client errors (4xx) often mean bad request URLs, expired auth tokens, or missing resources. Verify each failing endpoint is reachable and authenticated.',
-    });
-
-    // ── 2. Slow Requests ──────────────────────────────────────────────────────
-    // Two-tier threshold:
-    //   WARN  : any request between 500ms–1s  (noticeable but not critical)
-    //   BAD   : >10% of all requests over 1s  (clearly impacting users)
-    // The 500ms warn tier catches sub-second but significant latency that the
-    // >1s threshold alone would silently miss (e.g. a 766ms OAM error page
-    // is a real problem even though it's technically under 1 second).
-    const sorted = [...entries].sort((a, b) => b.time - a.time);
-    const slowRequests = entries.filter(e => e.time > 1000);
-    const warnRequests = entries.filter(e => e.time >= 500 && e.time <= 1000);
-    const slowPct = total > 0 ? slowRequests.length / total : 0;
-    const slowestEntry = sorted[0];
-    let slowestPath = '';
-    try { slowestPath = new URL(slowestEntry?.request.url).pathname; } catch { slowestPath = slowestEntry?.request.url ?? ''; }
-    const slowStatus: 'good' | 'warn' | 'bad' =
-      slowPct > 0.10 ? 'bad'
-      : slowRequests.length > 0 ? 'warn'
-      : warnRequests.length > 0 ? 'warn'
-      : 'good';
-    checks.push({
-      id: 'slow',
-      label: 'Slow Requests',
-      what: 'Requests taking over 500ms — warn at 500ms–1s, critical if >10% exceed 1s',
-      impact: 'high',
-      pts: 20,
-      status: slowStatus,
-      detail: slowRequests.length === 0 && warnRequests.length === 0
-        ? `All ${total} requests completed in under 500ms. Fastest experience for users.`
-        : slowRequests.length > 0
-          ? `${slowRequests.length} of ${total} requests (${(slowPct * 100).toFixed(1)}%) took over 1s. `
-            + `Slowest: ${slowestEntry?.time.toFixed(0)}ms on ${slowestPath}. `
-            + `Anything over 1s is noticeable to users; over 3s leads to drop-off.`
-            + (warnRequests.length > 0 ? ` Also ${warnRequests.length} request${warnRequests.length > 1 ? 's' : ''} in the 500ms–1s range.` : '')
-          : `${warnRequests.length} request${warnRequests.length > 1 ? 's' : ''} took between 500ms and 1s. `
-            + `Slowest: ${slowestEntry?.time.toFixed(0)}ms on ${slowestPath}. `
-            + `These are below the 1s critical threshold but may still be noticeable, especially in auth flows or page loads.`,
-      fix: `Check the TTFB (server wait time) on the slowest requests — if TTFB is high, the bottleneck is server-side (slow DB query, missing cache, or expensive computation). If TTFB is fast but total time is slow, it's a large payload — consider pagination or compression.`,
-    });
-
-    // ── 3. Response Compression ───────────────────────────────────────────────
-    // Only checks text/JSON/JS responses >1 KB. Threshold is relative to the
-    // number of compressible responses, not the total request count.
-    const compressible = entries.filter(e => {
-      const mime = e.response.content.mimeType ?? '';
-      const size = e.response.bodySize;
-      return size > 1024 && (mime.includes('text') || mime.includes('json') || mime.includes('javascript'));
-    });
-    const uncompressed = compressible.filter(e => {
-      const encoding = e.response.headers.find(h => h.name.toLowerCase() === 'content-encoding');
-      return !encoding;
-    });
-    const uncompPct = compressible.length > 0 ? uncompressed.length / compressible.length : 0;
-    checks.push({
-      id: 'compression',
-      label: 'Response Compression',
-      what: 'Whether text, JSON, and JS responses use gzip or brotli to reduce transfer size',
-      impact: 'medium',
-      pts: 10,
-      // bad if >20% of compressible responses are uncompressed, warn if 5–20%
-      status: compressible.length === 0 || uncompPct === 0
-        ? 'good'
-        : uncompPct < 0.20 ? 'warn' : 'bad',
-      detail: compressible.length === 0
-        ? 'No large text or JSON responses detected in this HAR file.'
-        : uncompressed.length === 0
-          ? `All ${compressible.length} text/JSON responses are compressed (gzip or brotli). Payloads are as small as possible.`
-          : `${uncompressed.length} of ${compressible.length} compressible responses (${(uncompPct * 100).toFixed(0)}%) are sent without compression. `
-            + `Enabling gzip typically reduces text payload size by 60–80%, speeding up page load.`,
-      fix: `Enable gzip or brotli compression on your server for text/*, application/json, and application/javascript MIME types. `
-        + `In Express: use the "compression" middleware. In nginx: add "gzip on; gzip_types text/plain application/json application/javascript text/css;"`,
-    });
-
-    // ── 4. Repeated API Calls ─────────────────────────────────────────────────
-    // Duplicate detection uses method+URL as the key. Threshold is relative:
-    // bad if duplicate URLs make up >10% of total unique URLs.
-    const urlCounts = entries.reduce((acc, e) => {
-      const key = `${e.request.method}:${e.request.url}`;
-      acc[key] = (acc[key] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
-    const dupes = Object.entries(urlCounts).filter(([, c]) => c > 1);
-    const uniqueUrls = Object.keys(urlCounts).length;
-    const dupePct = uniqueUrls > 0 ? dupes.length / uniqueUrls : 0;
-    const extraCalls = dupes.reduce((sum, [, c]) => sum + (c - 1), 0);
-    checks.push({
-      id: 'duplicates',
-      label: 'Repeated API Calls',
-      what: 'The same URL+method being called more than once (may indicate missing caching or re-render issues)',
-      impact: 'medium',
-      pts: 10,
-      // bad if >10% of unique URLs are duplicated, warn if any duplicates exist
-      status: dupes.length === 0 ? 'good' : dupePct < 0.10 ? 'warn' : 'bad',
-      detail: dupes.length === 0
-        ? `All ${uniqueUrls} unique URLs are called exactly once — no redundant network requests.`
-        : `${dupes.length} URL${dupes.length > 1 ? 's' : ''} (${(dupePct * 100).toFixed(0)}% of ${uniqueUrls} unique) were called more than once, adding ${extraCalls} unnecessary request${extraCalls > 1 ? 's' : ''}. `
-          + `Top repeats: ${dupes.slice(0, 2).map(([url, c]) => {
-              try { return `${new URL(url.split(':').slice(1).join(':')).pathname} ×${c}`; } catch { return `${url} ×${c}`; }
-            }).join(', ')}`,
-      fix: `Repeated calls often happen when multiple components independently fetch the same data. `
-        + `Consider using a shared data-fetching layer (React Query, SWR, or a simple context/store) to deduplicate requests automatically.`,
-    });
-
-    // ── 5. Browser Cache Headers ──────────────────────────────────────────────
-    // Checks JS, CSS, and image assets for Cache-Control headers.
-    // "no-cache" alone is fine (it still caches with revalidation), but
-    // "no-store" means the browser won't cache at all.
-    const staticAssets = entries.filter(e => {
-      const mime = e.response.content.mimeType ?? '';
-      return mime.includes('javascript') || mime.includes('css') || mime.includes('image');
-    });
-    const uncached = staticAssets.filter(e => {
-      const cc = e.response.headers.find(h => h.name.toLowerCase() === 'cache-control');
-      return !cc || cc.value.includes('no-store');
-    });
-    const uncachedPct = staticAssets.length > 0 ? uncached.length / staticAssets.length : 0;
-    checks.push({
-      id: 'caching',
-      label: 'Browser Cache Headers',
-      what: 'Whether JS, CSS, and image assets have Cache-Control headers so browsers don\'t re-download them on repeat visits',
-      impact: 'medium',
-      pts: 10,
-      // bad if >50% of statics lack cache headers, warn if 1–50%
-      status: staticAssets.length === 0 || uncachedPct === 0
-        ? 'good'
-        : uncachedPct < 0.50 ? 'warn' : 'bad',
-      detail: staticAssets.length === 0
-        ? 'No static assets (JS/CSS/images) found in this HAR file.'
-        : uncached.length === 0
-          ? `All ${staticAssets.length} static assets (JS/CSS/images) have Cache-Control headers — browsers will cache them locally.`
-          : `${uncached.length} of ${staticAssets.length} static assets (${(uncachedPct * 100).toFixed(0)}%) have no Cache-Control or are set to no-store. `
-            + `Without this, browsers re-download these files on every page load even if nothing has changed.`,
-      fix: `For versioned/hashed assets (e.g. main.abc123.js), set: Cache-Control: max-age=31536000, immutable`
-        + ` — this caches them for 1 year since the hash changes on every build. `
-        + `For your HTML entry point, use: Cache-Control: no-cache, must-revalidate`,
-    });
-
-    // ── 6. Third-Party Domains ────────────────────────────────────────────────
-    // Instead of hardcoding "internal" domain patterns, we auto-detect the
-    // primary domain (most frequent hostname in the file) and treat everything
-    // else as third-party. This works correctly for any deployment.
-    const allDomains = entries.map(e => {
-      try { return new URL(e.request.url).hostname; } catch { return null; }
-    }).filter(Boolean) as string[];
-
-    const domainFreq = allDomains.reduce((acc, d) => {
-      acc[d] = (acc[d] || 0) + 1; return acc;
-    }, {} as Record<string, number>);
-    const primaryDomain = Object.entries(domainFreq).sort((a, b) => b[1] - a[1])[0]?.[0] ?? '';
-    const thirdPartyDomains = [...new Set(allDomains.filter(d =>
-      d !== primaryDomain &&
-      d !== 'localhost' &&
-      !d.startsWith('127.') &&
-      !d.startsWith('10.') &&
-      !d.startsWith('192.168.')
-    ))];
-
-    checks.push({
-      id: 'external',
-      label: 'Third-Party Domains',
-      what: `Requests going to domains other than your primary one (${primaryDomain || 'auto-detected'})`,
-      impact: 'low',
-      pts: 5,
-      // low impact — third-party calls aren't always bad, just worth knowing about
-      status: thirdPartyDomains.length === 0 ? 'good' : thirdPartyDomains.length <= 5 ? 'warn' : 'bad',
-      detail: thirdPartyDomains.length === 0
-        ? `All requests go to your primary domain (${primaryDomain}). No third-party dependencies detected.`
-        : `${thirdPartyDomains.length} third-party domain${thirdPartyDomains.length > 1 ? 's' : ''} contacted beyond your primary domain (${primaryDomain}): `
-          + `${thirdPartyDomains.slice(0, 5).join(', ')}${thirdPartyDomains.length > 5 ? `… +${thirdPartyDomains.length - 5} more` : ''}. `
-          + `Third-party calls are normal (analytics, CDNs, auth providers) but each one adds latency and is an external dependency.`,
-      fix: `Review the list above and confirm each domain is expected. Unexpected domains may be: tracking/analytics scripts loaded by a library, `
-        + `misconfigured API base URLs, or polyfill/font CDNs that could be self-hosted. `
-        + `Use a Content Security Policy (CSP) to enforce which domains are allowed.`,
-    });
-
-    // ── 7. Server Wait Time (TTFB — all responses) ───────────────────────────
-    // TTFB (timings.wait) isolates server processing time from network transfer.
-    // Previously this only checked JSON responses, which caused it to score GOOD
-    // on HAR files where all the latency was in HTML page loads or auth redirects
-    // (e.g. a 732ms TTFB on an OAM error page, or 1788ms on a SAML redirect).
-    //
-    // Now covers ALL meaningful responses: JSON, HTML, and 3xx redirects.
-    // Static assets (images, CSS, fonts) are excluded — their TTFB is
-    // irrelevant since they are served from CDN/cache with near-zero processing.
-    const isStaticAsset = (e: typeof entries[0]) => {
-      const mime = e.response.content.mimeType ?? '';
-      return mime.includes('image') || mime.includes('font') || mime.includes('css');
-    };
-    const serverCalls = entries.filter(e => !isStaticAsset(e));
-    const slowServer = serverCalls.filter(e => (e.timings?.wait ?? 0) > 500);
-    const slowServerPct = serverCalls.length > 0 ? slowServer.length / serverCalls.length : 0;
-    const worstTtfb = slowServer.length > 0 ? Math.max(...slowServer.map(e => e.timings?.wait ?? 0)) : 0;
-    let worstServerPath = '';
-    if (slowServer.length > 0) {
-      const worst = slowServer.reduce((a, b) => (a.timings?.wait ?? 0) > (b.timings?.wait ?? 0) ? a : b);
-      try { worstServerPath = new URL(worst.request.url).pathname; } catch { worstServerPath = worst.request.url; }
+    if (entries.length === 0) {
+      return {
+        score: 100,
+        data: null,
+        findings: [] as Finding[],
+        scoreRules: [] as ScoreRule[],
+      };
     }
-    // Classify the slow responses by type for better detail text
-    const slowJson     = slowServer.filter(e => (e.response.content.mimeType ?? '').includes('json'));
-    const slowRedirect = slowServer.filter(e => e.response.status >= 300 && e.response.status < 400);
-    const slowHtml     = slowServer.filter(e => (e.response.content.mimeType ?? '').includes('html') && e.response.status < 300);
-    checks.push({
-      id: 'ttfb',
-      label: 'Server Wait Time (TTFB)',
-      what: 'How long the server takes to start responding — covers API calls, page loads, and auth redirects',
-      impact: 'high',
-      pts: 20,
-      // bad if >20% of server calls have slow TTFB, warn if any have slow TTFB
-      status: slowServer.length === 0 ? 'good' : slowServerPct < 0.20 ? 'warn' : 'bad',
-      detail: serverCalls.length === 0
-        ? 'No server responses detected in this HAR file.'
-        : slowServer.length === 0
-          ? `All ${serverCalls.length} server response${serverCalls.length > 1 ? 's' : ''} have TTFB under 500ms. Server processing is healthy.`
-          : `${slowServer.length} of ${serverCalls.length} server responses (${(slowServerPct * 100).toFixed(0)}%) had a server wait time over 500ms. `
-            + `Worst: ${worstTtfb.toFixed(0)}ms on ${worstServerPath}. `
-            + (slowRedirect.length > 0 ? `${slowRedirect.length} slow redirect${slowRedirect.length > 1 ? 's' : ''} (3xx) — each redirect in an auth chain compounds total login latency. ` : '')
-            + (slowHtml.length > 0 ? `${slowHtml.length} slow HTML page load${slowHtml.length > 1 ? 's' : ''} — server-side rendering or JSP processing is slow. ` : '')
-            + (slowJson.length > 0 ? `${slowJson.length} slow API call${slowJson.length > 1 ? 's' : ''} (JSON). ` : '')
-            + `TTFB measures only server processing time — high TTFB means the server itself is slow, not the network or payload size.`,
-      fix: slowRedirect.length > 0
-        ? `Slow auth redirects usually mean session validation, token lookup, or federation handshake delays on the server. `
-          + `Check server-side session store latency and federation endpoint performance. Each redirect in a login chain adds sequentially to total login time.`
-        : `High TTFB almost always points to: slow database queries (add indexes, check for N+1 queries), `
-          + `missing server-side caching (Redis for repeated reads), or heavy computation in the request path. `
-          + `Add timing logs around your DB calls to find the bottleneck.`,
-    });
 
-    // ── Calculate Score ────────────────────────────────────────────────────────
-    // Score = (points earned / total possible points) × 100
-    // Each check is worth its .pts value if good, half if warn, zero if bad.
-    const statusScore = { good: 1, warn: 0.5, bad: 0 };
-    let totalPts = 0, earned = 0;
-    checks.forEach(c => {
-      totalPts += c.pts;
-      earned += c.pts * statusScore[c.status];
-    });
-
-    return { score: Math.round((earned / totalPts) * 100), checks, totalPts };
+    const analysis = analyse(entries);
+    const nextRules = buildScoreRules(analysis);
+    return {
+      score: calcScoreFromRules(nextRules),
+      data: analysis,
+      findings: buildFindings(analysis),
+      scoreRules: nextRules,
+    };
   }, [harData]);
 
-  const scoreColor = score >= 80 ? '#22c55e' : score >= 50 ? '#f59e0b' : '#ef4444';
-  const scoreLabel = score >= 80 ? 'Good' : score >= 50 ? 'Fair' : 'Poor';
-  const scoreDesc  = score >= 80
-    ? 'No major issues found.'
-    : score >= 50
-    ? 'A few areas need attention.'
-    : 'Several issues are affecting performance.';
+  const [showExplainer, setShowExplainer] = useState(false);
+  const [showInactiveRules, setShowInactiveRules] = useState(false);
+  const [hoverCapable, setHoverCapable] = useState(false);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const explainerRegionRef = useRef<HTMLDivElement | null>(null);
 
-  const good = checks.filter(c => c.status === 'good').length;
-  const warn = checks.filter(c => c.status === 'warn').length;
-  const bad  = checks.filter(c => c.status === 'bad').length;
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return undefined;
 
-  const domainCount = [...new Set(
-    harData.log.entries.map(e => { try { return new URL(e.request.url).hostname; } catch { return ''; } })
-  )].filter(Boolean).length;
+    const mediaQuery = window.matchMedia('(hover: hover) and (pointer: fine)');
+    const sync = () => setHoverCapable(mediaQuery.matches);
+    sync();
+
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', sync);
+      return () => mediaQuery.removeEventListener('change', sync);
+    }
+
+    mediaQuery.addListener(sync);
+    return () => mediaQuery.removeListener(sync);
+  }, []);
+
+  useEffect(() => {
+    if (!showExplainer) return undefined;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (popoverRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
+      setShowExplainer(false);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowExplainer(false);
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showExplainer]);
+
+  function openExplainer() {
+    setShowExplainer(true);
+  }
+
+  function closeExplainer() {
+    setShowExplainer(false);
+  }
+
+  if (!data) {
+    return (
+      <section className="scorecard-dashboard is-empty">
+        <div className="scorecard-empty-state">
+          <span className="scorecard-empty-icon" aria-hidden="true"><SparklesIcon /></span>
+          <strong>No data yet</strong>
+          <span>Load a HAR file to generate the executive scorecard.</span>
+        </div>
+      </section>
+    );
+  }
+
+  const color = scoreColor(score);
+  const label = scoreLabel(score);
+  const errRate = Math.round((data.errs.length / Math.max(1, data.total)) * 100);
+  const totalTransferred = data.totalBytes > 0 ? fmtB(data.totalBytes) : '0 B';
+  const activeRules = scoreRules.filter((rule) => rule.active);
+  const inactiveRules = scoreRules.filter((rule) => !rule.active);
+  const totalDeductions = activeRules.reduce((sum, rule) => sum + rule.points, 0);
+  const critical = findings.filter((f) => f.level === 'err');
+  const warnings = findings.filter((f) => f.level === 'warn');
+  const insights = findings.filter((f) => f.level === 'info');
+  const passed = findings.filter((f) => f.level === 'ok');
+  const slowTop = [...harData.log.entries].sort((a, b) => (b.time ?? 0) - (a.time ?? 0)).slice(0, 5);
+  const maxTime = Math.max(slowTop[0]?.time ?? 1, 1);
+
+  const domainMap = new Map<string, { count: number; bytes: number; time: number; errs: number }>();
+  harData.log.entries.forEach((entry) => {
+    const host = fhost(entry.request.url);
+    if (!host) return;
+    const current = domainMap.get(host) ?? { count: 0, bytes: 0, time: 0, errs: 0 };
+    current.count += 1;
+    current.bytes += getTransferSize(entry);
+    current.time += entry.time ?? 0;
+    if (entry.response.status >= 400) current.errs += 1;
+    domainMap.set(host, current);
+  });
+
+  const domains = [...domainMap.entries()]
+    .map(([host, value]) => ({ host, ...value, avg: value.time / Math.max(value.count, 1) }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 6);
+
+  const maxDomainTime = Math.max(...domains.map((domain) => domain.time), 1);
+  const scoreRadius = 76;
+  const scoreCircumference = 2 * Math.PI * scoreRadius;
+  const scoreOffset = scoreCircumference - (score / 100) * scoreCircumference;
 
   return (
-    <div className="scorecard">
-      <div className="scorecard-header">
-        {/* Score ring */}
-        <div className="score-circle">
-          <svg viewBox="0 0 100 100">
-            <circle cx="50" cy="50" r="44" fill="none" stroke="var(--border-color)" strokeWidth="7" />
-            <circle
-              cx="50" cy="50" r="44" fill="none"
-              stroke={scoreColor} strokeWidth="7"
-              strokeDasharray={`${2 * Math.PI * 44}`}
-              strokeDashoffset={`${2 * Math.PI * 44 * (1 - score / 100)}`}
-              strokeLinecap="round"
-              transform="rotate(-90 50 50)"
-              style={{ transition: 'stroke-dashoffset 1s ease' }}
-            />
-          </svg>
-          <div className="score-value">
-            <span className="score-number" style={{ color: scoreColor }}>{score}</span>
-            <span className="score-label" style={{ color: scoreColor }}>{scoreLabel}</span>
+    <section className="scorecard-dashboard">
+      <div className="scorecard-hero-card">
+        <div className="scorecard-hero-grid">
+          <div className="scorecard-hero-copy">
+            <span className="scorecard-hero-kicker">
+              <SparklesIcon />
+              <span>Performance Scorecard</span>
+            </span>
+            <h2>Executive snapshot for this HAR session</h2>
+            <p>{scoreHeadline(score)}</p>
+            <div className="scorecard-hero-tags">
+              <span className="scorecard-pill">{data.total} requests</span>
+              <span className="scorecard-pill">{data.uniqueHosts.size} hosts</span>
+              <span className="scorecard-pill">Avg TTFB {fmtT(data.avgTTFB)}</span>
+            </div>
           </div>
-        </div>
 
-        {/* Summary */}
-        <div className="score-summary">
-          <h2>Performance Scorecard</h2>
-          <p className="score-desc">{scoreDesc}</p>
-          <p className="score-meta">
-            {harData.log.entries.length} requests · {domainCount} domain{domainCount !== 1 ? 's' : ''}
-          </p>
-          <p className="score-how">
-            Score = points earned across {checks.length} checks ({totalPts} pts total).
-            Each check is full points if passed, half if warning, zero if critical.
-          </p>
-          <div className="score-badges">
-            <span className="badge badge-good"><span className="badge-dot" />{good} passed</span>
-            {warn > 0 && <span className="badge badge-warn"><span className="badge-dot" />{warn} warning{warn !== 1 ? 's' : ''}</span>}
-            {bad  > 0 && <span className="badge badge-bad"><span className="badge-dot" />{bad} critical</span>}
-          </div>
-        </div>
-      </div>
-
-      {/* Checks */}
-      <div className="scorecard-checks">
-        {checks
-          .sort((a, b) => ({ bad: 0, warn: 1, good: 2 }[a.status] - { bad: 0, warn: 1, good: 2 }[b.status]))
-          .map(check => (
-            <div
-              key={check.id}
-              className={`check-item check-${check.status}`}
-              onClick={() => setExpanded(expanded === check.id ? null : check.id)}
-            >
-              <div className="check-row">
-                <span className="check-icon"><StatusIcon status={check.status} /></span>
-                <div className="check-label-group">
-                  <span className="check-label">{check.label}</span>
-                  <span className="check-what">{check.what}</span>
-                </div>
-                <span className={`check-impact impact-${check.impact}`}>
-                  {check.impact.toUpperCase()} · {check.pts}pts
-                </span>
-                <svg
-                  className={`check-chevron${expanded === check.id ? ' expanded' : ''}`}
-                  width="12" height="12" viewBox="0 0 12 12" fill="none"
-                >
-                  <path d="M3 4.5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
+          <div className="scorecard-score-card">
+            <div className="scorecard-score-ring" style={{ ['--score-accent' as string]: color } as React.CSSProperties}>
+              <svg viewBox="0 0 200 200" aria-hidden="true">
+                <circle className="scorecard-score-track" cx="100" cy="100" r={scoreRadius} />
+                <circle
+                  className="scorecard-score-progress"
+                  cx="100"
+                  cy="100"
+                  r={scoreRadius}
+                  strokeDasharray={scoreCircumference}
+                  strokeDashoffset={scoreOffset}
+                />
+              </svg>
+              <div className="scorecard-score-copy">
+                <strong>{score}</strong>
+                <span>{label}</span>
               </div>
+            </div>
+            <p className="scorecard-score-description">
+              Score is penalty-based across latency, reliability, caching, compression, and security indicators.
+            </p>
+            <div
+              ref={explainerRegionRef}
+              className="scorecard-score-actions"
+              onMouseEnter={() => {
+                if (hoverCapable) openExplainer();
+              }}
+              onMouseLeave={() => {
+                if (hoverCapable) closeExplainer();
+              }}
+              onFocusCapture={() => openExplainer()}
+              onBlurCapture={(event) => {
+                const nextTarget = event.relatedTarget as Node | null;
+                if (!nextTarget || !explainerRegionRef.current?.contains(nextTarget)) {
+                  closeExplainer();
+                }
+              }}
+            >
+              <button
+                ref={triggerRef}
+                type="button"
+                className={`scorecard-score-button ${showExplainer ? 'is-open' : ''}`}
+                aria-expanded={showExplainer}
+                onClick={() => {
+                  if (!hoverCapable) {
+                    setShowExplainer((current) => !current);
+                  } else {
+                    openExplainer();
+                  }
+                }}
+              >
+                <InfoIcon />
+                <span>How this score is calculated</span>
+              </button>
 
-              {expanded === check.id && (
-                <div className="check-detail">
-                  <p>{check.detail}</p>
-                  {check.fix && check.status !== 'good' && (
-                    <div className="check-fix">
-                      <span className="check-fix-label">How to fix: </span>{check.fix}
+              {showExplainer && (
+                <div ref={popoverRef} className="scorecard-score-popover">
+                  <div className="scorecard-popover-head">
+                    <div className="scorecard-popover-title">
+                      <span className="scorecard-popover-icon" aria-hidden="true"><SparklesIcon /></span>
+                      <div>
+                        <strong>How this score is calculated</strong>
+                        <p>Starts at 100 and subtracts penalties based on this HAR.</p>
+                      </div>
+                    </div>
+                    <div className="scorecard-popover-base">
+                      <span>Base</span>
+                      <strong>100</strong>
+                    </div>
+                  </div>
+
+                  <div className="scorecard-popover-rule-summary">
+                    <span>Active deductions</span>
+                    <strong>{activeRules.length} rule{activeRules.length !== 1 ? 's' : ''} affected this score</strong>
+                  </div>
+
+                  <div className="scorecard-popover-rule-list">
+                    {activeRules.length === 0 ? (
+                      <div className="scorecard-popover-rule tone-success">
+                        <span className="scorecard-popover-rule-icon" aria-hidden="true"><CheckIcon /></span>
+                        <div className="scorecard-popover-rule-copy">
+                          <strong>No deductions applied</strong>
+                          <span>This HAR session did not trigger any score penalties.</span>
+                        </div>
+                        <span className="scorecard-popover-points">0</span>
+                      </div>
+                    ) : (
+                      activeRules.map((rule) => (
+                        <div key={rule.id} className={`scorecard-popover-rule tone-${rule.tone}`}>
+                          <span className="scorecard-popover-rule-icon" aria-hidden="true">
+                            {rule.tone === 'danger' ? <AlertIcon /> : <RefreshIcon />}
+                          </span>
+                          <div className="scorecard-popover-rule-copy">
+                            <strong>{rule.label}</strong>
+                            <span>{rule.summary}</span>
+                          </div>
+                          <span className="scorecard-popover-points">-{rule.points}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    className={`scorecard-popover-toggle ${showInactiveRules ? 'is-open' : ''}`}
+                    onClick={() => setShowInactiveRules((current) => !current)}
+                  >
+                    <ChevronDownIcon />
+                    <span>{showInactiveRules ? 'Hide' : 'Show'} {inactiveRules.length} rules with no deduction</span>
+                  </button>
+
+                  {showInactiveRules && (
+                    <div className="scorecard-popover-pass-list">
+                      {inactiveRules.map((rule) => (
+                        <div key={rule.id} className="scorecard-popover-pass-item">
+                          <strong>{rule.label}</strong>
+                          <span>{rule.summary}</span>
+                        </div>
+                      ))}
                     </div>
                   )}
+
+                  <div className="scorecard-popover-footer">
+                    <div className="scorecard-popover-metric">
+                      <span>Base</span>
+                      <strong>100</strong>
+                    </div>
+                    <div className="scorecard-popover-metric">
+                      <span>Deductions</span>
+                      <strong>-{totalDeductions}</strong>
+                    </div>
+                    <div className="scorecard-popover-metric is-final">
+                      <span>Final</span>
+                      <strong>{score}</strong>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
-          ))}
+          </div>
+        </div>
       </div>
-    </div>
+
+      <div className="scorecard-kpi-grid">
+          <KpiCard
+            icon={<ClockIcon />}
+            label="Avg Response"
+            value={fmtT(data.avg)}
+            note={data.avg > 1500 ? 'Needs improvement' : data.avg > 800 ? 'Moderate latency' : 'Healthy latency'}
+            tone={data.avg > 1500 ? 'danger' : data.avg > 800 ? 'warning' : 'success'}
+          />
+          <KpiCard
+            icon={<AlertIcon />}
+            label="Error Rate"
+            value={`${errRate}%`}
+            note={`${data.errs.length} of ${data.total} requests`}
+            tone={data.errs.length > 0 ? 'danger' : 'success'}
+          />
+          <KpiCard
+            icon={<DownloadIcon />}
+            label="Transferred"
+            value={totalTransferred}
+            note={`${data.uniqueHosts.size} hosts involved`}
+            tone="neutral"
+          />
+          <KpiCard
+            icon={<ClockIcon />}
+            label="Slowest Request"
+            value={fmtT(data.max)}
+            note={data.max > 5000 ? 'Critical outlier' : data.max > 2000 ? 'Within watch range' : 'Within target'}
+            tone={data.max > 5000 ? 'danger' : data.max > 2000 ? 'warning' : 'success'}
+          />
+      </div>
+
+      <section className="scorecard-section-card">
+        <header className="scorecard-section-header is-reference">
+          <div>
+            <h3>Critical Issues</h3>
+            <p>Highest-risk failures and blockers surfaced from the HAR trace.</p>
+          </div>
+          <span className={`scorecard-header-pill ${critical.length === 0 ? 'tone-success' : 'tone-danger'}`}>
+            {critical.length === 0 ? 'None' : `${critical.length} critical`}
+          </span>
+        </header>
+        <div className="scorecard-section-divider" />
+        <div className="scorecard-section-stack">
+          {critical.length > 0 ? critical.map((item) => (
+            <FindingCard key={item.title} finding={item} />
+          )) : (
+            <FindingCard
+              finding={{
+                level: 'ok',
+                icon: 'pass',
+                title: 'No critical issues found',
+                desc: 'This capture completed without any severe failures or production-blocking network issues.',
+              }}
+            />
+          )}
+        </div>
+      </section>
+
+      <section className="scorecard-section-card">
+        <header className="scorecard-section-header is-reference">
+          <div>
+            <h3>Warnings & Optimizations</h3>
+            <p>Signals that may not be critical yet, but still affect efficiency, latency, or delivery quality.</p>
+          </div>
+          <div className="scorecard-header-pill-group">
+            {warnings.length > 0 && <span className="scorecard-header-pill tone-warning">{warnings.length} warning{warnings.length !== 1 ? 's' : ''}</span>}
+            {insights.length > 0 && <span className="scorecard-header-pill tone-info">{insights.length} insight{insights.length !== 1 ? 's' : ''}</span>}
+            {warnings.length === 0 && insights.length === 0 && <span className="scorecard-header-pill tone-success">Clear</span>}
+          </div>
+        </header>
+        <div className="scorecard-section-divider" />
+        <div className="scorecard-section-stack">
+          {[...warnings, ...insights].map((item) => (
+            <FindingCard key={`${item.level}-${item.title}`} finding={item} />
+          ))}
+          {warnings.length === 0 && insights.length === 0 && (
+            <FindingCard
+              finding={{
+                level: 'ok',
+                icon: 'pass',
+                title: 'No material optimization flags',
+                desc: 'This HAR does not surface additional warning-level or insight-level optimization issues.',
+              }}
+            />
+          )}
+        </div>
+      </section>
+
+      <section className="scorecard-section-card">
+        <header className="scorecard-section-header is-reference">
+          <div>
+            <h3>Passed Checks</h3>
+            <p>Positive signals that reinforce the overall health of this session.</p>
+          </div>
+          <span className="scorecard-header-pill tone-success">{passed.length} passed</span>
+        </header>
+        <div className="scorecard-section-divider" />
+        <div className="scorecard-section-stack">
+          {passed.map((item) => (
+            <FindingCard key={item.title} finding={item} />
+          ))}
+        </div>
+      </section>
+
+      <div className="scorecard-analytics-grid is-reference">
+        <section className="scorecard-panel-card">
+          <header className="scorecard-panel-header">
+            <div>
+              <h3>Top slow requests</h3>
+              <p>The most time-consuming calls in this session, ranked by duration.</p>
+            </div>
+          </header>
+          <div className="scorecard-section-divider" />
+
+          <div className="scorecard-panel-list">
+            {slowTop.map((entry) => {
+              const time = entry.time ?? 0;
+              const badgeLabel = entry.response.status >= 400 ? 'Error' : entry.response.status >= 300 ? 'Redirect' : 'Observed';
+              const badgeTone = entry.response.status >= 400 ? 'danger' : 'info';
+              const barWidth = `${Math.max(10, Math.round((time / maxTime) * 100))}%`;
+
+              return (
+                <article key={`${entry.request.method}-${entry.request.url}-${entry.startedDateTime}`} className="scorecard-traffic-card">
+                  <div className="scorecard-traffic-head">
+                    <strong title={entry.request.url}>{getPathLabel(entry.request.url)}</strong>
+                    <div className="scorecard-traffic-metrics">
+                      <span className="scorecard-traffic-time">{fmtT(time)}</span>
+                      <span className={`scorecard-inline-pill tone-${badgeTone}`}>{badgeLabel}</span>
+                    </div>
+                  </div>
+                  <span className="scorecard-traffic-subtitle">{fhost(entry.request.url)}</span>
+                  <div className="scorecard-traffic-bar">
+                    <div
+                      className={`scorecard-traffic-bar-fill tone-${time > 1400 ? 'warning' : 'info'}`}
+                      style={{ width: barWidth } as React.CSSProperties}
+                    />
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="scorecard-panel-card">
+          <header className="scorecard-panel-header">
+            <div>
+              <h3>Domain Analysis</h3>
+              <p>Where traffic volume and latency are concentrated across hosts.</p>
+            </div>
+            <span className="scorecard-header-pill tone-info">{domains.length} hosts</span>
+          </header>
+          <div className="scorecard-section-divider" />
+
+          <div className="scorecard-panel-list">
+            {domains.map((domain) => (
+              <article key={domain.host} className="scorecard-domain-card">
+                <div className="scorecard-domain-card-head">
+                  <strong title={domain.host}>{domain.host}</strong>
+                  <span>{domain.count} req</span>
+                </div>
+                <span className="scorecard-domain-subtitle">{fmtB(domain.bytes)} transferred</span>
+                <div className="scorecard-traffic-bar">
+                  <div
+                    className="scorecard-traffic-bar-fill tone-info"
+                    style={{ width: `${Math.max(10, Math.round((domain.time / maxDomainTime) * 100))}%` } as React.CSSProperties}
+                  />
+                </div>
+                <div className="scorecard-domain-grid">
+                  <div>
+                    <span>AVG</span>
+                    <strong>{fmtT(domain.avg)}</strong>
+                  </div>
+                  <div>
+                    <span>ERRORS</span>
+                    <strong>{domain.errs}</strong>
+                  </div>
+                  <div>
+                    <span>TOTAL TIME</span>
+                    <strong>{fmtT(domain.time)}</strong>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      </div>
+    </section>
   );
 };
 
