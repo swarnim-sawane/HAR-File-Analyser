@@ -8,6 +8,7 @@ import ConsoleLogFilterPanel from './components/ConsoleLogFilterPanel';
 import ConsoleLogList from './components/ConsoleLogList';
 import ConsoleLogDetails from './components/ConsoleLogDetails';
 import ConsoleLogStatistics from './components/ConsoleLogStatistics';
+import ConsoleLogAiInsights from './components/ConsoleLogAiInsights';
 import Toolbar from './components/Toolbar';
 import HarTabContent from './components/HarTabContent';
 import { useConsoleLogData } from './hooks/useConsoleLogData';
@@ -18,6 +19,7 @@ import FloatingAiChat from './components/FloatingAiChat';
 import { UploadResult, chunkedUploader } from './services/chunkedUploader';
 import { apiClient } from './services/apiClient';
 import { wsClient } from './services/websocketClient';
+import { storeRecentFile, restoreRecentFile, clearRecentFiles } from './services/recentFilesStore';
 import HarCompare from './components/HarCompare';
 
 interface RecentFile {
@@ -65,6 +67,9 @@ const App: React.FC = () => {
   const [logLoadingMessage, setLogLoadingMessage] = useState('Loading console log file...');
   const [showLogLocalFallback, setShowLogLocalFallback] = useState(false);
   const logCancelRef = React.useRef<(() => void) | null>(null);
+  type ConsoleTab = 'analyzer' | 'insights';
+  const [logActiveTab, setLogActiveTab] = useState<ConsoleTab>('analyzer');
+  const [logInsightsGenerating, setLogInsightsGenerating] = useState(false);
 
   // ── Main navigation ──────────────────────────────────────────────────────────
   const [activeTool, setActiveTool] = useState<'har' | 'console' | 'compare'>('har');
@@ -214,6 +219,10 @@ const App: React.FC = () => {
   // ── HAR file / tab management ─────────────────────────────────────────────────
 
   const registerRecentHarFile = (fileName: string, fileObj: File) => {
+    // Persist content to IndexedDB (skip empty stub files created by openHarTab)
+    if (fileObj && fileObj.size > 0) {
+      void storeRecentFile('har', fileObj);
+    }
     setHarRecentFiles(prev => {
       const filtered = prev.filter(f => f.name !== fileName);
       const updated = [{ name: fileName, timestamp: Date.now(), data: fileObj }, ...filtered].slice(0, MAX_RECENT_FILES);
@@ -260,12 +269,26 @@ const App: React.FC = () => {
   }, []);
 
   const handleRecentHarFile = async (file: File) => {
+    // After a page refresh file.data is undefined — restore from IndexedDB by name
+    let resolvedFile: File | null =
+      file instanceof File && file.size > 0 ? file : null;
+
+    if (!resolvedFile) {
+      const name = file instanceof File ? file.name : (file as any)?.name as string | undefined;
+      if (name) resolvedFile = await restoreRecentFile('har', name);
+    }
+
+    if (!resolvedFile) {
+      console.error('Recent HAR file is no longer available. Please upload the original file again.');
+      return;
+    }
+
     try {
-      const result = await chunkedUploader.uploadFile(file, 'har', () => {});
+      const result = await chunkedUploader.uploadFile(resolvedFile, 'har', () => {});
       openHarTab(result);
-      registerRecentHarFile(file.name, file);
+      registerRecentHarFile(resolvedFile.name, resolvedFile);
     } catch (err) {
-      console.error('Failed to re-upload recent file:', err);
+      console.error('Failed to re-upload recent HAR file:', err);
     }
   };
 
@@ -307,12 +330,15 @@ const App: React.FC = () => {
   };
 
   const registerRecentLogFile = (fileName: string, fileObj: File) => {
+    // Persist actual file content to IndexedDB for cross-session restore
+    if (fileObj && fileObj.size > 0) {
+      void storeRecentFile('log', fileObj);
+    }
     const newRecentFile: RecentFile = {
       name: fileName,
       timestamp: Date.now(),
       data: fileObj,
     };
-
     setLogRecentFiles(prev => {
       const filtered = prev.filter(f => f.name !== fileName);
       const updated = [newRecentFile, ...filtered].slice(0, MAX_RECENT_FILES);
@@ -460,23 +486,33 @@ const App: React.FC = () => {
   };
 
   const handleRecentLogFile = async (file: File) => {
-    if (!(file instanceof File)) {
-      console.error('Recent log file is unavailable in memory. Please upload the original file again.');
+    // Resolve the actual file — in-session it is available directly; after a page
+    // refresh only the name is available so we restore content from IndexedDB.
+    let resolvedFile: File | null =
+      file instanceof File && file.size > 0 ? file : null;
+
+    if (!resolvedFile) {
+      const name = file instanceof File ? file.name : (file as any)?.name as string | undefined;
+      if (name) resolvedFile = await restoreRecentFile('log', name);
+    }
+
+    if (!resolvedFile) {
+      console.error('Recent log file is no longer available. Please upload the original file again.');
       return;
     }
 
     try {
-      const result = await chunkedUploader.uploadFile(file, 'log', () => {});
-      await handleLogUploadComplete(result, file);
+      const result = await chunkedUploader.uploadFile(resolvedFile, 'log', () => {});
+      await handleLogUploadComplete(result, resolvedFile);
     } catch (err) {
       console.error('Recent log re-upload failed, using local fallback:', err);
       setIsLogProcessing(true);
       setLogLoadingMessage('Re-upload failed, parsing console log locally...');
-      const loadedLocally = await logState.loadLogFile(file);
+      const loadedLocally = await logState.loadLogFile(resolvedFile);
       if (loadedLocally) {
-        setLogCurrentFileName(file.name);
+        setLogCurrentFileName(resolvedFile.name);
         setLogShowUploader(false);
-        registerRecentLogFile(file.name, file);
+        registerRecentLogFile(resolvedFile.name, resolvedFile);
       }
       setIsLogProcessing(false);
       setLogLoadingMessage('Loading console log file...');
@@ -546,6 +582,7 @@ const App: React.FC = () => {
               onClearLogRecent={() => {
                 setLogRecentFiles([]);
                 localStorage.removeItem(LOG_RECENT_FILES_KEY);
+                void clearRecentFiles('log');
               }}
             />
           </div>
@@ -651,6 +688,7 @@ const App: React.FC = () => {
                   onClearRecent={() => {
                     setHarRecentFiles([]);
                     localStorage.removeItem(HAR_RECENT_FILES_KEY);
+                    void clearRecentFiles('har');
                   }}
                 />
               </div>
@@ -715,68 +753,92 @@ const App: React.FC = () => {
                   onClearRecent={() => {
                     setLogRecentFiles([]);
                     localStorage.removeItem(LOG_RECENT_FILES_KEY);
+                    void clearRecentFiles('log');
                   }}
                 />
               </div>
             ) : logState.logData ? (
               <>
-                <Toolbar
-                  onUploadNew={() => {
-                    setLogShowUploader(true);
-                    logState.clearData();
-                    setLogCurrentFileName('');
-                    setLogLoadingMessage('Loading console log file...');
-                  }}
-                  onLoadRecent={handleRecentLogFile}
-                  recentFiles={logRecentFiles}
-                  onClearRecent={() => {
-                    setLogRecentFiles([]);
-                    localStorage.removeItem(LOG_RECENT_FILES_KEY);
-                  }}
-                  currentFileName={logCurrentFileName}
-                  filteredEntries={logState.filteredEntries}
-                  totalEntries={logState.logData?.entries.length || 0}
-                />
-
-
-                <div
-                  className={`analyzer-layout ${logState.selectedEntry ? 'with-details' : ''}`}
-                  style={logState.selectedEntry ? ({ ['--details-width' as any]: `${detailsWidth}px` }) : undefined}
-                >
-
-                  <aside className="sidebar-left console-sidebar">
-                    <div className="console-sidebar-stack">
-                      <ConsoleLogFilterPanel
-                        filters={logState.filters}
-                        onFilterChange={logState.updateFilters}
-                      />
-                      <ConsoleLogStatistics
-                        entries={logState.filteredEntries}
-                        totalEntries={logState.logData?.metadata.totalEntries}
-                        truncatedAt={logState.logData?.metadata.truncatedAt}
-                      />
-                    </div>
-                  </aside>
-                  <div className="content-area">
-                    <ConsoleLogList
-                      entries={logState.filteredEntries}
-                      groupedEntries={logGroupedEntries}
-                      selectedEntry={logState.selectedEntry}
-                      onSelectEntry={logState.setSelectedEntry}
-                    />
-                  </div>
-                  {logState.selectedEntry && (
-                    <aside className="sidebar-right">
-                      <div className="resize-handle" onMouseDown={startResize} />
-                      <ConsoleLogDetails
-                        entry={logState.selectedEntry}
-                        onClose={() => logState.setSelectedEntry(null)}
-                      />
-                    </aside>
-
-                  )}
+                {/* ── Console sub-tabs ───────────────────────────────────── */}
+                <div className="main-tabs">
+                  {(['analyzer', 'insights'] as ConsoleTab[]).map((tab) => (
+                    <button
+                      key={tab}
+                      className={`main-tab ${logActiveTab === tab ? 'active' : ''}`}
+                      onClick={() => setLogActiveTab(tab)}
+                    >
+                      {tab === 'analyzer' ? 'Analyzer' : 'AI Insights'}
+                    </button>
+                  ))}
                 </div>
-                <FloatingAiChat logData={logState.logData} />
+
+                {logActiveTab === 'analyzer' && (
+                  <>
+                    <Toolbar
+                      onUploadNew={() => {
+                        setLogShowUploader(true);
+                        logState.clearData();
+                        setLogCurrentFileName('');
+                        setLogLoadingMessage('Loading console log file...');
+                      }}
+                      onLoadRecent={handleRecentLogFile}
+                      recentFiles={logRecentFiles}
+                      onClearRecent={() => {
+                        setLogRecentFiles([]);
+                        localStorage.removeItem(LOG_RECENT_FILES_KEY);
+                        void clearRecentFiles('log');
+                      }}
+                      currentFileName={logCurrentFileName}
+                      filteredEntries={logState.filteredEntries}
+                      totalEntries={logState.logData?.entries.length || 0}
+                    />
+
+                    <div
+                      className={`analyzer-layout ${logState.selectedEntry ? 'with-details' : ''}`}
+                      style={logState.selectedEntry ? ({ ['--details-width' as any]: `${detailsWidth}px` }) : undefined}
+                    >
+                      <aside className="sidebar-left console-sidebar">
+                        <div className="console-sidebar-stack">
+                          <ConsoleLogFilterPanel
+                            filters={logState.filters}
+                            onFilterChange={logState.updateFilters}
+                          />
+                          <ConsoleLogStatistics
+                            entries={logState.filteredEntries}
+                            totalEntries={logState.logData?.metadata.totalEntries}
+                            truncatedAt={logState.logData?.metadata.truncatedAt}
+                          />
+                        </div>
+                      </aside>
+                      <div className="content-area">
+                        <ConsoleLogList
+                          entries={logState.filteredEntries}
+                          groupedEntries={logGroupedEntries}
+                          selectedEntry={logState.selectedEntry}
+                          onSelectEntry={logState.setSelectedEntry}
+                        />
+                      </div>
+                      {logState.selectedEntry && (
+                        <aside className="sidebar-right">
+                          <div className="resize-handle" onMouseDown={startResize} />
+                          <ConsoleLogDetails
+                            entry={logState.selectedEntry}
+                            onClose={() => logState.setSelectedEntry(null)}
+                          />
+                        </aside>
+                      )}
+                    </div>
+                    <FloatingAiChat logData={logState.logData} />
+                  </>
+                )}
+
+                {logActiveTab === 'insights' && (
+                  <ConsoleLogAiInsights
+                    logData={logState.logData}
+                    backendUrl={BACKEND_URL}
+                    onGeneratingChange={setLogInsightsGenerating}
+                  />
+                )}
               </>
             ) : null}
           </>
