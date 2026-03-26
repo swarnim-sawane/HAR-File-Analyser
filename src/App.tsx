@@ -761,7 +761,9 @@ const App: React.FC = () => {
         )}
 
         {/* HAR Compare Tool */}
-        {activeTool === 'compare' && <HarCompare />}
+        {activeTool === 'compare' && (
+          <HarCompare openTabs={harTabs.map(t => ({ fileId: t.fileId, fileName: t.fileName }))} />
+        )}
 
         {/* Console Log Analyzer Tool */}
         {activeTool === 'console' && (
@@ -876,13 +878,16 @@ const App: React.FC = () => {
                   </>
                 )}
 
-                {logActiveTab === 'insights' && (
+                {/* Always mounted so useConsoleLogInsights auto-fires as soon as log
+                    data loads, generating results in the background before the
+                    user visits the AI Insights tab. */}
+                <div style={{ display: logActiveTab === 'insights' ? undefined : 'none' }}>
                   <ConsoleLogAiInsights
                     logData={logState.logData}
                     backendUrl={BACKEND_URL}
                     onGeneratingChange={setLogInsightsGenerating}
                   />
-                )}
+                </div>
               </>
             ) : null}
           </>
