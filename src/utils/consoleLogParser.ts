@@ -137,8 +137,89 @@ export class ConsoleLogParser {
     );
   }
 
+  // ── Oracle ODL / ADF / WebLogic Diagnostic Logging ──────────────────────────
+  // Format: [ISO_TS_TZ] [COMPONENT] [LEVEL:CODE] [MSG_ID] [LOGGER] [key: val]... message
+  // e.g.  [2025-06-12T12:14:50.095-04:00] [DefaultServer] [NOTIFICATION:16] [] [oracle.adfdiagnostics] [APP: ebsaudit] ... MDSInstance.clearCache()
+  // The [tid: ...] attribute can contain nested brackets, so we depth-track them.
+
+  private static parseOdlLine(line: string): ConsoleLogEntry | null {
+    // The fixed header has exactly 5 bracket-enclosed fields (no nested brackets in these 5).
+    const ODL_HEADER =
+      /^\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[.\d]*[+-]\d{2}:\d{2})\]\s+\[([^\]]*)\]\s+\[(\w+(?::\d+)?)\]\s+\[([^\]]*)\]\s+\[([^\]]*)\]\s*([\s\S]*)$/;
+    const m = line.match(ODL_HEADER);
+    if (!m) return null;
+
+    const [, rawTs, component, levelRaw, msgId, logger, rest] = m;
+
+    // Level: strip optional ":CODE" numeric suffix
+    const levelStr = levelRaw.split(':')[0];
+
+    // Source: prefer Java logger path; fall back to component name
+    const source = logger.trim() || component.trim() || undefined;
+
+    // Parse remaining [key: value] attributes and the trailing message text
+    const { message, attrs } = this.extractOdlRest(rest);
+
+    // Prepend message-ID code when present and not already in the message
+    const msgIdTrimmed = msgId.trim();
+    const fullMessage = msgIdTrimmed && !message.startsWith(`[${msgIdTrimmed}]`)
+      ? `[${msgIdTrimmed}] ${message}`
+      : message;
+
+    return {
+      id: uuidv4(),
+      timestamp: this.normalizeTimestamp(rawTs),
+      level: this.normalizeLogLevel(levelStr),
+      source,
+      message: fullMessage || `[${component}] ${levelStr}`,
+      category: attrs['APP'] || attrs['app'] || undefined,
+    };
+  }
+
+  // Walk the attribute portion of an ODL line with depth-aware bracket tracking.
+  // Returns extracted key→value attributes and the final message text.
+  private static extractOdlRest(rest: string): { message: string; attrs: Record<string, string> } {
+    const attrs: Record<string, string> = {};
+    const s = rest.trimStart();
+    let i = 0;
+    let msgStart = 0;
+
+    while (i < s.length) {
+      if (s[i] !== '[') {
+        // Non-bracket text starts the message
+        msgStart = i;
+        break;
+      }
+      // Depth-track to find the matching ']' (handles nested brackets like tid)
+      let depth = 1;
+      let j = i + 1;
+      while (j < s.length && depth > 0) {
+        if (s[j] === '[') depth++;
+        else if (s[j] === ']') depth--;
+        j++;
+      }
+      // s[i+1 .. j-2] is the bracket content
+      const content = s.substring(i + 1, j - 1);
+      // Parse as "key: value"
+      const ci = content.indexOf(': ');
+      if (ci > 0) {
+        attrs[content.substring(0, ci).trim()] = content.substring(ci + 2);
+      }
+      i = j;
+      // Skip one space separator
+      while (i < s.length && s[i] === ' ') i++;
+      msgStart = i;
+    }
+
+    return { message: s.substring(msgStart).trim(), attrs };
+  }
+
   private static parsePlainTextLine(line: string): ConsoleLogEntry | null {
     if (!line.trim()) return null;
+
+    // Pattern ODL: Oracle ADF / WebLogic Diagnostic Logging
+    const odlEntry = this.parseOdlLine(line);
+    if (odlEntry) return odlEntry;
 
     // Pattern 0a: Oracle Visual Builder (VB) format with optional source file prefix
     // [VB (INFO), /vb/module/path]: Message text
@@ -367,6 +448,11 @@ export class ConsoleLogParser {
       'emergency': 'error',
       'alert': 'error',
       'crit': 'error',
+      // Oracle ODL / ADF / WebLogic levels
+      'notification': 'info',
+      'severe': 'error',
+      'incident_error': 'error',
+      'incident': 'error',
     };
 
     return levelMap[normalized] || 'log';
