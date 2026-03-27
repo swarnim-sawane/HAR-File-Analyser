@@ -40,9 +40,12 @@ interface UseInsightsReturn {
 
 const insightsCache = new Map<string, InsightsResult>();
 
-function buildContext(harData: HarFile): string {
+export function buildHarContext(harData: HarFile): string {
   const entries = harData.log.entries;
   const errors = entries.filter((e) => e.response.status >= 400);
+  // Split errors by HTTP severity tier for priority-ordered analysis
+  const serverErrors = errors.filter((e) => e.response.status >= 500);          // 5xx
+  const clientErrors = errors.filter((e) => e.response.status >= 400 && e.response.status < 500); // 4xx
   const totalMs = entries.reduce((s, e) => s + e.time, 0);
   const domains = [
     ...new Set(
@@ -77,20 +80,23 @@ function buildContext(harData: HarFile): string {
   const ERROR_PATH_PATTERNS = /servererror|errorpage|error\.jsp|\/error\b|\/oops|\/unavailable|\/fault/i;
   const endsOnErrorPage = ERROR_PATH_PATTERNS.test(finalUrl) || finalStatus >= 400;
 
+  // ── Redirect chain detection ───────────────────────────────────────────────
+  // Group sequential redirects into chains so the AI sees the compounding flow.
+  // A redirect chain is a run of 3xx responses followed by a terminal response.
+  // Declared here (before summary) so 3xx count is available in the summary line.
+  const redirects = sortedByStart.filter((e) => e.response.status >= 300 && e.response.status < 400);
+
   const summary = [
     `requests:${entries.length}`,
-    `errors:${errors.length}`,
+    serverErrors.length > 0 ? `5xx:${serverErrors.length}` : null,
+    clientErrors.length > 0 ? `4xx:${clientErrors.length}` : null,
+    redirects.length > 0 ? `3xx:${redirects.length}` : null,
     `domains:${domains.length}`,
     `total_session:${sessionMs.toFixed(0)}ms`,
     `final_url:${finalUrl}`,
     `final_status:${finalStatus}`,
     endsOnErrorPage ? `ENDS_ON_ERROR_PAGE:true` : null,
   ].filter(Boolean).join(' ');
-
-  // ── Redirect chain detection ───────────────────────────────────────────────
-  // Group sequential redirects into chains so the AI sees the compounding flow.
-  // A redirect chain is a run of 3xx responses followed by a terminal response.
-  const redirects = sortedByStart.filter((e) => e.response.status >= 300 && e.response.status < 400);
   let redirectChainSection = '';
   if (redirects.length > 0) {
     const chainLines = sortedByStart
@@ -153,21 +159,68 @@ function buildContext(harData: HarFile): string {
       return `${e.request.method} ${path} status:${e.response.status} totalms:${e.time.toFixed(0)}${dns}${connect}${ssl}${wait}${recv}${waitRatio}${mime}${connType}`;
     });
 
-  // ── Failed requests ────────────────────────────────────────────────────────
-  const failedLines = errors.slice(0, 10).map((e) => {
+  // ── 5xx Server Errors (highest priority — must be analysed first) ──────────
+  const serverErrorLines = serverErrors.slice(0, 10).map((e) => {
     let path = e.request.url;
-    try {
-      const u = new URL(e.request.url);
-      path = u.hostname + u.pathname;
-    } catch { /* keep raw url */ }
-    return `${e.request.method} ${path} status:${e.response.status}`;
+    try { const u = new URL(e.request.url); path = u.hostname + u.pathname; } catch { /* keep raw */ }
+    const t = e.timings ?? {};
+    const wait = ` wait=${(t.wait ?? 0).toFixed(0)}ms`;
+    const isNewConn = (t.dns ?? -1) >= 0 && (t.connect ?? -1) >= 0;
+    const connType = isNewConn ? ' [NEW-CONN]' : '';
+    return `${e.request.method} ${path} status:${e.response.status} totalms:${e.time.toFixed(0)}ms${wait}${connType}`;
   });
 
+  // ── 4xx Client Errors (second priority) ────────────────────────────────────
+  const clientErrorLines = clientErrors.slice(0, 10).map((e) => {
+    let path = e.request.url;
+    try { const u = new URL(e.request.url); path = u.hostname + u.pathname; } catch { /* keep raw */ }
+    return `${e.request.method} ${path} status:${e.response.status} totalms:${e.time.toFixed(0)}ms`;
+  });
+
+  // ── Error Clusters: same endpoint failing repeatedly ────────────────────────
+  const errorClusterMap = new Map<string, { count: number; statuses: number[] }>();
+  for (const e of errors) {
+    let path = e.request.url;
+    try { const u = new URL(e.request.url); path = u.hostname + u.pathname; } catch { /* keep raw */ }
+    const key = `${e.request.method} ${path}`;
+    const existing = errorClusterMap.get(key);
+    if (existing) { existing.count++; existing.statuses.push(e.response.status); }
+    else { errorClusterMap.set(key, { count: 1, statuses: [e.response.status] }); }
+  }
+  const errorClusterLines = Array.from(errorClusterMap.entries())
+    .filter(([, v]) => v.count > 1)
+    .sort(([, a], [, b]) => {
+      // Sort by highest status tier first, then by frequency
+      const aMax = Math.max(...a.statuses);
+      const bMax = Math.max(...b.statuses);
+      if (bMax !== aMax) return bMax - aMax;
+      return b.count - a.count;
+    })
+    .slice(0, 6)
+    .map(([path, v]) => {
+      const has5xx = v.statuses.some((s) => s >= 500);
+      const statusSummary = [...new Set(v.statuses)].sort().join(',');
+      return `${path} → x${v.count} failures [${statusSummary}]${has5xx ? ' ⚠ 5XX' : ''}`;
+    });
+
+  // ── Assemble context: error tiers first, then performance ─────────────────
   const parts = [
     `HAR SUMMARY: ${summary}`,
     ...(redirectChainSection ? [redirectChainSection] : []),
+    // 5xx is highest priority — placed before slow-request analysis
+    ...(serverErrorLines.length
+      ? [`5XX SERVER ERRORS (${serverErrors.length} total — analyse first, highest severity):\n${serverErrorLines.join('\n')}`]
+      : []),
+    // 4xx second
+    ...(clientErrorLines.length
+      ? [`4XX CLIENT ERRORS (${clientErrors.length} total):\n${clientErrorLines.join('\n')}`]
+      : []),
+    // Repeated failures on same endpoint
+    ...(errorClusterLines.length
+      ? [`ERROR CLUSTERS (same endpoint failing repeatedly — look for cascades):\n${errorClusterLines.join('\n')}`]
+      : []),
+    // Performance slow-path last (2xx timing analysis)
     `TOP SLOW:\n${topSlow.join('\n')}`,
-    ...(failedLines.length ? [`FAILED:\n${failedLines.join('\n')}`] : []),
   ];
 
   const raw = parts.join('\n\n');
@@ -209,7 +262,7 @@ export function useInsights(harData: HarFile, backendUrl: string): UseInsightsRe
     setIsGenerating(true);
 
     try {
-      const context = buildContext(harDataRef.current);
+      const context = buildHarContext(harDataRef.current);
 
       const res = await fetch(`${backendUrlRef.current}/api/ai/insights`, {
         method: 'POST',

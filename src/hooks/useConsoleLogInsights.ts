@@ -15,7 +15,11 @@ interface UseConsoleLogInsightsReturn {
 
 const insightsCache = new Map<string, InsightsResult>();
 
-function buildConsoleLogContext(logData: ConsoleLogFile): string {
+// Regex that matches a 3-digit HTTP status code in a log message.
+// Looks for patterns like: "500", "status: 503", "HTTP/1.1 404", "statusCode=401", etc.
+const HTTP_STATUS_RE = /\b([45]\d{2})\b/;
+
+export function buildConsoleLogContext(logData: ConsoleLogFile): string {
   const entries = logData.entries;
   const total = entries.length;
 
@@ -35,13 +39,41 @@ function buildConsoleLogContext(logData: ConsoleLogFile): string {
     .slice(0, 15)
     .map(([src, cnt]) => `${src}: ${cnt}`);
 
-  // ── All errors (most important) ─────────────────────────────────────────────
+  // ── HTTP status extraction from log messages (5xx → 4xx priority) ───────────
+  // Many Oracle products log HTTP status codes inside error/warn messages.
+  // We surface these explicitly so the AI analyses server-side failures first.
+  const errorAndWarnEntries = entries.filter((e) => e.level === 'error' || e.level === 'warn');
+
+  const http5xxEntries = errorAndWarnEntries.filter((e) => {
+    const match = HTTP_STATUS_RE.exec(e.message);
+    return match ? parseInt(match[1], 10) >= 500 : false;
+  });
+
+  const http4xxEntries = errorAndWarnEntries.filter((e) => {
+    const match = HTTP_STATUS_RE.exec(e.message);
+    if (!match) return false;
+    const code = parseInt(match[1], 10);
+    return code >= 400 && code < 500;
+  });
+
+  // ── All errors: non-HTTP errors last (after HTTP-status-bearing ones) ───────
   const errorEntries = entries.filter((e) => e.level === 'error');
-  const errorLines = errorEntries.map((e) => {
+  // Entries that don't already appear in the 5xx/4xx buckets
+  const http5xxSet = new Set(http5xxEntries.map((e) => e.message));
+  const http4xxSet = new Set(http4xxEntries.map((e) => e.message));
+  const remainingErrors = errorEntries.filter(
+    (e) => !http5xxSet.has(e.message) && !http4xxSet.has(e.message)
+  );
+
+  const formatError = (e: { level: string; source?: string; message: string; stackTrace?: string }) => {
     const src = e.source ? ` [${e.source}]` : '';
     const stack = e.stackTrace ? `\n  Stack: ${e.stackTrace.substring(0, 200)}` : '';
-    return `ERROR${src}: ${e.message}${stack}`;
-  });
+    return `${e.level.toUpperCase()}${src}: ${e.message}${stack}`;
+  };
+
+  const http5xxLines  = http5xxEntries.slice(0, 10).map(formatError);
+  const http4xxLines  = http4xxEntries.slice(0, 10).map(formatError);
+  const remainingErrorLines = remainingErrors.map(formatError);
 
   // ── Warnings (up to 30) ─────────────────────────────────────────────────────
   const warnEntries = entries.filter((e) => e.level === 'warn');
@@ -81,7 +113,7 @@ function buildConsoleLogContext(logData: ConsoleLogFile): string {
     entries.map((e) => e.source).filter(Boolean)
   )].slice(0, 30);
 
-  // ── Build context string ─────────────────────────────────────────────────────
+  // ── Build context string — ordered: 5xx → 4xx → other errors → warnings ─────
   const levelSummary = Object.entries(levelCounts)
     .map(([k, v]) => `${k}:${v}`)
     .join(' ');
@@ -99,8 +131,19 @@ function buildConsoleLogContext(logData: ConsoleLogFile): string {
     parts.push(`TOP SOURCES BY FREQUENCY:\n${topSources.join('\n')}`);
   }
 
-  if (errorLines.length > 0) {
-    parts.push(`ERRORS (${errorLines.length} total):\n${errorLines.join('\n')}`);
+  // HTTP 5xx — highest priority block
+  if (http5xxLines.length > 0) {
+    parts.push(`HTTP 5XX SERVER ERRORS IN LOGS (${http5xxEntries.length} total — analyse first):\n${http5xxLines.join('\n')}`);
+  }
+
+  // HTTP 4xx — second priority block
+  if (http4xxLines.length > 0) {
+    parts.push(`HTTP 4XX CLIENT ERRORS IN LOGS (${http4xxEntries.length} total):\n${http4xxLines.join('\n')}`);
+  }
+
+  // Remaining non-HTTP errors
+  if (remainingErrorLines.length > 0) {
+    parts.push(`ERRORS (${remainingErrors.length} total):\n${remainingErrorLines.join('\n')}`);
   }
 
   if (warnLines.length > 0) {
@@ -215,4 +258,4 @@ export function useConsoleLogInsights(
   }, []);
 
   return { insights, isGenerating, error, generate, cancel };
-}
+}

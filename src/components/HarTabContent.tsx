@@ -9,14 +9,13 @@ import RequestDetails from './RequestDetails';
 import Toolbar from './Toolbar';
 import { useHarData } from '../hooks/useHarData';
 import { HarAnalyzer } from '../utils/harAnalyzer';
-import HarSanitizer from './HarSanitizer';
 import FloatingAiChat from './FloatingAiChat';
 import RequestFlowDiagram from './RequestFlowDiagram';
 import PerformanceScorecard from './PerformanceScorecard';
 import AiInsights from './AiInsights';
 import { apiClient } from '../services/apiClient';
 
-type HarTab = 'analyzer' | 'sanitizer' | 'flow' | 'scorecard' | 'insights';
+type HarTab = 'analyzer' | 'flow' | 'scorecard' | 'insights';
 
 interface RecentFile {
   name: string;
@@ -122,7 +121,7 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
       {/* Sub-tabs: only show once data is loaded */}
       {harState.harData && (
         <div className="main-tabs">
-          {(['analyzer', 'flow', 'sanitizer', 'scorecard', 'insights'] as HarTab[]).map(tab => (
+          {(['analyzer', 'flow', 'scorecard', 'insights'] as HarTab[]).map(tab => (
             <button
               key={tab}
               className={`main-tab ${activeTab === tab ? 'active' : ''}`}
@@ -130,7 +129,6 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
             >
               {tab === 'analyzer' ? 'Analyzer'
                 : tab === 'flow' ? 'Request Flow'
-                : tab === 'sanitizer' ? 'Sanitizer'
                 : tab === 'scorecard' ? 'Scorecard'
                 : 'AI Insights'}
             </button>
@@ -195,14 +193,7 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
                   </aside>
                 )}
               </div>
-              <FloatingAiChat harData={harState.harData} />
             </>
-          )}
-
-          {activeTab === 'sanitizer' && (
-            <div className="sanitizer-wrapper">
-              <HarSanitizer />
-            </div>
           )}
 
           {activeTab === 'flow' && (
@@ -232,6 +223,8 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
               onGeneratingChange={handleInsightsGeneratingChange}
             />
           </div>
+
+          <FloatingAiChat harData={harState.harData} />
         </>
       )}
     </div>
