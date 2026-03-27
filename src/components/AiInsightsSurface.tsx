@@ -404,7 +404,7 @@ const AiInsightsSurface: React.FC<AiInsightsSurfaceProps> = ({
                                   )}
                                 </div>
                                 <strong className="ai-finding-title">{finding.title}</strong>
-                                <p className="ai-finding-preview">{finding.what}</p>
+                                {!isOpen && <p className="ai-finding-preview">{finding.what}</p>}
                               </div>
                               <span className="ai-finding-chevron" aria-hidden="true">
                                 {isOpen ? <ChevronDownIcon /> : <ChevronRightIcon />}

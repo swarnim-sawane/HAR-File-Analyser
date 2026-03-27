@@ -23,6 +23,7 @@ import { storeRecentFile, restoreRecentFile, clearRecentFiles } from './services
 import HarCompare from './components/HarCompare';
 import SanitizeModal from './components/SanitizeModal';
 import BatchSanitizeModal from './components/BatchSanitizeModal';
+import HarSanitizer from './components/HarSanitizer';
 
 interface RecentFile {
   name: string;
@@ -39,7 +40,7 @@ interface HarFileTab {
 
 interface PendingLeaveNavigation {
   destination: string;
-  nextTool?: 'har' | 'console' | 'compare';
+  nextTool?: 'har' | 'sanitizer' | 'console' | 'compare';
   nextTabId?: string; // for switching between HAR file tabs
 }
 
@@ -77,7 +78,7 @@ const App: React.FC = () => {
   const [logInsightsGenerating, setLogInsightsGenerating] = useState(false);
 
   // ── Main navigation ──────────────────────────────────────────────────────────
-  const [activeTool, setActiveTool] = useState<'har' | 'console' | 'compare'>('har');
+  const [activeTool, setActiveTool] = useState<'har' | 'sanitizer' | 'console' | 'compare'>('har');
   const [pendingLeaveNavigation, setPendingLeaveNavigation] = useState<PendingLeaveNavigation | null>(null);
 
   const MAX_HAR_TABS = 8;
@@ -176,9 +177,16 @@ const App: React.FC = () => {
     setPendingLeaveNavigation(null);
   };
 
-  const handleToolChange = (nextTool: 'har' | 'console' | 'compare') => {
+  const handleToolChange = (nextTool: 'har' | 'sanitizer' | 'console' | 'compare') => {
     if (nextTool === activeTool) return;
-    const destination = nextTool === 'har' ? 'HAR Analyzer' : nextTool === 'compare' ? 'HAR Compare' : 'Console';
+    const destination =
+      nextTool === 'har'
+        ? 'HAR Analyzer'
+        : nextTool === 'sanitizer'
+        ? 'HAR Sanitizer'
+        : nextTool === 'compare'
+        ? 'HAR Compare'
+        : 'Console';
     if (isLeaveInsightsGuardActive) {
       setPendingLeaveNavigation({ destination, nextTool });
       return;
@@ -665,6 +673,19 @@ const App: React.FC = () => {
             </svg>
             Compare
           </button>
+          <button
+            className={`tool-tab ${activeTool === 'sanitizer' ? 'active' : ''}`}
+            onClick={() => handleToolChange('sanitizer')}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 3v4" strokeLinecap="round"></path>
+              <path d="M7 10V7.5A2.5 2.5 0 0 1 9.5 5h5A2.5 2.5 0 0 1 17 7.5V10" strokeLinecap="round"></path>
+              <rect x="5" y="10" width="14" height="11" rx="2"></rect>
+              <circle cx="12" cy="15" r="1.5"></circle>
+              <path d="M12 16.5V18" strokeLinecap="round"></path>
+            </svg>
+            Sanitizer
+          </button>
         </div>
 
 
@@ -763,6 +784,13 @@ const App: React.FC = () => {
         {/* HAR Compare Tool */}
         {activeTool === 'compare' && (
           <HarCompare openTabs={harTabs.map(t => ({ fileId: t.fileId, fileName: t.fileName }))} />
+        )}
+
+        {/* HAR Sanitizer Tool */}
+        {activeTool === 'sanitizer' && (
+          <div className="sanitizer-wrapper">
+            <HarSanitizer />
+          </div>
         )}
 
         {/* Console Log Analyzer Tool */}
@@ -874,7 +902,6 @@ const App: React.FC = () => {
                         </aside>
                       )}
                     </div>
-                    <FloatingAiChat logData={logState.logData} />
                   </>
                 )}
 
@@ -888,6 +915,8 @@ const App: React.FC = () => {
                     onGeneratingChange={setLogInsightsGenerating}
                   />
                 </div>
+
+                <FloatingAiChat logData={logState.logData} />
               </>
             ) : null}
           </>

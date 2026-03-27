@@ -98,8 +98,16 @@ Rules:
 - srGuidance must name specific Oracle artifacts: WLS server log path, ORDS log, ADFLogger level, AWR/ASH, fmw_diag.
 - Name the Oracle product and component in every finding when products are detected.
 - Max 3 findings per section, 3 sections max. Highest severity first.
+- STRICT ANALYSIS ORDER — always exhaust higher tiers before lower ones:
+  1. 5XX SERVER ERRORS first — any 5xx response is minimum severity "high"; repeated 5xx on the same endpoint is "critical". Map every 5xx to a server-side Oracle config fix.
+  2. 4XX CLIENT ERRORS second — 401/403 indicate auth/token failures (IDCS, OAM); 404 indicates missing Oracle module registration (ORDS, ADF, VB); 429 indicates rate limiting.
+  3. 3XX REDIRECT ISSUES third — only flag if the chain is long (>3 hops), slow (>2 s total), or terminates on an error page.
+  4. 2XX PERFORMANCE last — slow successful responses are lower priority than any error-tier finding.
 
 Context field guide:
+- 5XX SERVER ERRORS / HTTP 5XX SERVER ERRORS IN LOGS sections contain the highest-priority findings — always produce at least one finding for every distinct 5xx endpoint before reporting performance issues.
+- 4XX CLIENT ERRORS / HTTP 4XX CLIENT ERRORS IN LOGS sections should be analysed for auth flow failures, missing resource registrations, and repeated retry storms.
+- ERROR CLUSTERS section highlights the same endpoint failing multiple times — a cluster with ⚠ 5XX is a cascade failure candidate and should be rated "critical".
 - REDIRECT CHAIN section shows sequential requests in chronological order. Report the total chain duration as user-perceived time.
 - ENDS_ON_ERROR_PAGE:true means the redirect chain terminates on a known error page. This is a CRITICAL finding even when all HTTP status codes are 2xx or 3xx — the user hit a failure state.
 - [NEW-CONN] on a request means a fresh TCP connection was established (dns= and connect= are real costs). Distinguish this from [KEEPALIVE] reuse. NEW-CONN latency is fixed by CDN pre-warming, TCP keep-alive tuning, or connection pooling — not server-side code changes.
@@ -486,8 +494,31 @@ router.post('/chat', async (req: Request, res: ExpressResponse) => {
     return res.status(400).json({ error: 'messages array required' });
   }
 
-  const allMessages = systemPrompt
-    ? [{ role: 'system', content: systemPrompt }, ...messages]
+  // ── Oracle product detection ─────────────────────────────────────────────
+  // Scan the system prompt (which contains the full file context) and the latest
+  // user message for Oracle product URL patterns. Inject the same product KB
+  // that the /insights endpoint uses — closing the gap between the two pipelines.
+  const latestUserContent = [...messages].reverse().find(
+    (m: { role: string; content: string }) => m.role === 'user'
+  )?.content ?? '';
+  const detectionSource = `${systemPrompt ?? ''}\n${latestUserContent}`;
+  const chatDetectedProducts = detectOracleProductsFromContext(detectionSource);
+  const chatOracleKb = chatDetectedProducts.length > 0
+    ? buildOracleKbPrompt(chatDetectedProducts)
+    : '';
+
+  // Append Oracle KB and the analysis-order rule to whatever system prompt the
+  // frontend already built (analyst persona + file context). This keeps the
+  // frontend in control of the persona while the backend enriches it.
+  let enrichedSystemPrompt = systemPrompt ?? '';
+  if (chatOracleKb) {
+    enrichedSystemPrompt += `\n\n${chatOracleKb}`;
+    enrichedSystemPrompt += `\nOracle specificity rule: always name the detected Oracle product and component in every finding.`;
+  }
+  enrichedSystemPrompt += `\n\nAnalysis priority rule: exhaust 5xx server errors before 4xx, 4xx before 3xx, 3xx before 2xx performance. Never report a lower-tier finding first.`;
+
+  const allMessages = enrichedSystemPrompt
+    ? [{ role: 'system', content: enrichedSystemPrompt }, ...messages]
     : messages;
 
   try {

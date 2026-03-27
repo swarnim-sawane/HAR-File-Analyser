@@ -266,21 +266,62 @@ async function buildMongoContext(fileId: string, type: 'har' | 'log'): Promise<s
         if (topTypes) context += `Content Types: ${topTypes}\n`;
       }
 
-      // Sample entries — slowest requests first to surface performance issues
-      const entries = await db.collection('har_entries')
-        .find({ fileId })
+      // Priority-ordered sample: 5xx server errors first, then 4xx client errors,
+      // then slowest successful (2xx) requests — mirrors the 5xx→4xx→2xx analysis hierarchy.
+      const serverErrorEntries = await db.collection('har_entries')
+        .find({ fileId, 'response.status': { $gte: 500 } })
         .sort({ time: -1 })
-        .limit(20)
+        .limit(10)
         .toArray();
 
-      if (entries.length > 0) {
-        context += `\nSample Requests (slowest first):\n`;
-        entries.forEach((entry, idx) => {
+      const clientErrorEntries = await db.collection('har_entries')
+        .find({ fileId, 'response.status': { $gte: 400, $lt: 500 } })
+        .sort({ time: -1 })
+        .limit(10)
+        .toArray();
+
+      // Fill remaining slots with slowest non-error requests
+      const errorIds = new Set([
+        ...serverErrorEntries.map((e) => String(e._id)),
+        ...clientErrorEntries.map((e) => String(e._id)),
+      ]);
+      const slowSuccessEntries = await db.collection('har_entries')
+        .find({ fileId, 'response.status': { $lt: 400 } })
+        .sort({ time: -1 })
+        .limit(10)
+        .toArray();
+
+      const allPrioritisedEntries = [...serverErrorEntries, ...clientErrorEntries, ...slowSuccessEntries]
+        .filter((e, i, arr) => arr.findIndex((x) => String(x._id) === String(e._id)) === i);
+
+      if (serverErrorEntries.length > 0) {
+        context += `\n5XX Server Errors (highest priority):\n`;
+        serverErrorEntries.forEach((entry, idx) => {
           const url = entry.request?.url || 'unknown';
           const shortUrl = url.length > 100 ? url.substring(0, 100) + '…' : url;
           context += `${idx + 1}. ${entry.request?.method} ${shortUrl} → ${entry.response?.status} (${Math.round(entry.time || 0)}ms)\n`;
         });
       }
+
+      if (clientErrorEntries.length > 0) {
+        context += `\n4XX Client Errors:\n`;
+        clientErrorEntries.forEach((entry, idx) => {
+          const url = entry.request?.url || 'unknown';
+          const shortUrl = url.length > 100 ? url.substring(0, 100) + '…' : url;
+          context += `${idx + 1}. ${entry.request?.method} ${shortUrl} → ${entry.response?.status} (${Math.round(entry.time || 0)}ms)\n`;
+        });
+      }
+
+      if (slowSuccessEntries.length > 0) {
+        context += `\nTop Slow Requests (2xx, performance analysis):\n`;
+        slowSuccessEntries.forEach((entry, idx) => {
+          const url = entry.request?.url || 'unknown';
+          const shortUrl = url.length > 100 ? url.substring(0, 100) + '…' : url;
+          context += `${idx + 1}. ${entry.request?.method} ${shortUrl} → ${entry.response?.status} (${Math.round(entry.time || 0)}ms)\n`;
+        });
+      }
+
+      void allPrioritisedEntries; // referenced above; suppress unused-var lint
 
     } else {
       // Console log context

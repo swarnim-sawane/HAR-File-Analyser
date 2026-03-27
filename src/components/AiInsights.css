@@ -928,6 +928,7 @@
 .ai-finding-detail-card {
   min-width: 0;
   display: grid;
+  align-content: start;
   gap: 8px;
   padding: 14px;
   border-radius: 16px;
@@ -958,9 +959,13 @@
 
 .ai-finding-value {
   margin: 0;
+  min-width: 0;
   font-size: 13px;
   line-height: 1.75;
   color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .ai-finding-evidence {

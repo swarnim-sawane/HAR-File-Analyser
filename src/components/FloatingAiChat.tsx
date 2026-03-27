@@ -5,6 +5,8 @@ import remarkGfm from 'remark-gfm';
 import { HarFile } from '../types/har';
 import './FloatingAiChat.css';
 import { ConsoleLogFile } from '../types/consolelog';
+import { buildHarContext } from '../hooks/useInsights';
+import { buildConsoleLogContext } from '../hooks/useConsoleLogInsights';
 
 const BACKEND_BASE_URL =
   import.meta.env.VITE_BACKEND_URL ||
@@ -96,84 +98,11 @@ const FloatingAiChat: React.FC<FloatingAiChatProps> = ({ harData, logData }) => 
     }
   };
 
-  // ---- Context helpers ----
-  const getHarContext = () => {
-    if (!harData) return '';
-    const entries = harData.log.entries;
-
-    // Aggregate summary
-    const totalSize = entries.reduce(
-      (sum, e) => sum + (e.response.bodySize > 0 ? e.response.bodySize : 0),
-      0
-    );
-    const totalTime = entries.reduce((sum, e) => sum + e.time, 0);
-    const domains = [
-      ...new Set(
-        entries.map((e) => {
-          try {
-            return new URL(e.request.url).hostname;
-          } catch {
-            return 'unknown';
-          }
-        })
-      ),
-    ];
-    const errorCount = entries.filter(e => e.response.status >= 400).length;
-
-    const summary = `HAR File Summary:
-- Total Requests: ${entries.length}
-- Total Size: ${(totalSize / 1024 / 1024).toFixed(2)} MB
-- Total Time: ${(totalTime / 1000).toFixed(2)}s
-- Unique Domains: ${domains.join(', ')}
-- Failed Requests: ${errorCount}`;
-
-    // Top 30 requests sorted by time descending
-    const topRequests = [...entries]
-      .sort((a, b) => b.time - a.time)
-      .slice(0, 30)
-      .map((e, i) => {
-        let domain = 'unknown';
-        try {
-          domain = new URL(e.request.url).hostname;
-        } catch {
-          // Keep unknown domain
-        }
-
-        const sizeKb = e.response.bodySize > 0 ? e.response.bodySize / 1024 : 0;
-        return `#${i + 1} [${e.request.method}] ${e.request.url}
-  Status: ${e.response.status} | Time: ${e.time.toFixed(0)}ms | Size: ${sizeKb.toFixed(1)}KB
-  DNS: ${((e.timings?.dns as number) || 0).toFixed(0)}ms | Connect: ${((e.timings?.connect as number) || 0).toFixed(0)}ms | SSL: ${((e.timings?.ssl as number) || 0).toFixed(0)}ms | Wait: ${((e.timings?.wait as number) || 0).toFixed(0)}ms | Receive: ${((e.timings?.receive as number) || 0).toFixed(0)}ms`;
-      })
-      .join('\n\n');
-
-    // All failed requests
-    const failedRequests = entries
-      .filter((e) => e.response.status >= 400)
-      .map(
-        (e) =>
-          `[${e.request.method}] ${e.request.url} -> ${e.response.status} ${e.response.statusText}`
-      )
-      .join('\n');
-
-    return `${summary}
-
-Top 30 Requests by Duration:
-${topRequests}
-
-${errorCount > 0 ? `Failed Requests:\n${failedRequests}` : ''}`;
-  };
-
-  const getLogSummary = () => {
-    if (!logData) return '';
-    const entries = logData.entries;
-    const sources = [...new Set(entries.map(e => e.source).filter(Boolean))];
-    return `Console Log Context:
-- Total Entries: ${entries.length}
-- Errors: ${entries.filter(e => e.level === 'error').length}
-- Warnings: ${entries.filter(e => e.level === 'warn').length}
-- Info Messages: ${entries.filter(e => e.level === 'info').length}
-- Unique Sources: ${sources.length}`;
-  };
+  // ---- Context helpers (reuse the same rich builders as the Insights panel) ----
+  // This ensures the chat sees exactly the same 5xx→4xx→3xx→2xx prioritised context
+  // as the structured insights endpoint, plus Oracle product detection on the backend.
+  const getHarContext = () => (harData ? buildHarContext(harData) : '');
+  const getLogContext  = () => (logData ? buildConsoleLogContext(logData) : '');
 
   // Calls backend proxy and parses OpenAI SSE format.
   const sendMessage = async () => {
@@ -186,20 +115,42 @@ ${errorCount > 0 ? `Failed Requests:\n${failedRequests}` : ''}`;
       timestamp: new Date(),
     };
 
+    // Capture current messages BEFORE the state update so we can build the history array.
+    const historySnapshot = messages;
+
     setMessages(prev => [...prev, userMessage]);
     setInput('');
     setIsLoading(true);
 
     try {
-      const contextSummary = isConsoleMode ? getLogSummary() : getHarContext();
+      const fileContext = isConsoleMode ? getLogContext() : getHarContext();
 
+      // System prompt: Oracle-aware analyst persona + 5xx→4xx priority rule + file context.
+      // The backend will additionally inject Oracle product KB detected from the context.
       const systemPrompt = isConsoleMode
-        ? `You are an expert console log analyst. You have been given detailed console log context below. Answer questions directly using the data - never say you lack information if it is present in the context. Format responses with strict GitHub markdown. Rules: use '-' bullet lists (NO blank lines between items); indent sub-details with '   - ' (3 spaces + dash); use backtick \`code\` for values; use **bold** for key metrics. Never use unicode bullets.
+        ? `You are an Oracle Support Analyst specialising in console log triage for Oracle products.
+Analyse issues in strict priority order: HTTP 5xx server errors first, then 4xx client/auth errors, then application errors, then warnings.
+For 5xx entries: name the Oracle product/component, the server-side root cause, and the exact config fix.
+For 4xx entries: identify IDCS/OAM token failures, missing Oracle module registrations, or rate limits.
+Answer questions directly using the data — never claim information is absent if it appears in the context.
+Format responses with strict GitHub markdown: use '-' bullet lists (no blank lines between items); indent sub-details with '   - '; use \`backtick\` for values; **bold** critical findings. Never use unicode bullets.
 
-${contextSummary}`
-        : `You are an expert HAR file network analyst. You have been given detailed per-request data below. Answer questions directly using the data - never say you lack information if it is present in the context. Format responses with strict GitHub markdown. Rules: use '1.' numbered lists for request entries (NO blank lines between items); indent sub-details with '   - ' (3 spaces + dash); use backtick \`code\` for URLs and values; use **bold** for key timings. Never use unicode bullets or #N- prefixes.
+${fileContext}`
+        : `You are an Oracle Support Analyst specialising in HAR trace triage for Oracle products.
+Analyse issues in strict priority order: 5xx server errors first → 4xx client/auth errors → 3xx redirect issues → 2xx performance.
+For every distinct 5xx endpoint: identify the Oracle product/component, the server-side cause, and the exact config fix.
+For 4xx: check auth flows (IDCS/OAM), missing Oracle module registrations (ORDS/ADF/VB), rate limiting (429).
+Context field guide: wait= is server processing time (TTFB); [NEW-CONN] means fresh TCP (dns+connect are real costs); wait_ratio >80% means server bottleneck; ENDS_ON_ERROR_PAGE is critical even when HTTP codes are 2xx/3xx; ERROR CLUSTERS shows the same endpoint failing repeatedly.
+Answer questions directly using the data — never claim information is absent if it appears in the context.
+Format responses with strict GitHub markdown: use numbered lists for request entries; indent sub-details with '   - '; \`backtick\` for URLs/values; **bold** critical timings. Never use unicode bullets.
 
-${contextSummary}`;
+${fileContext}`;
+
+      // Pass the full conversation history so the model maintains context across turns.
+      const conversationMessages = [
+        ...historySnapshot.map(m => ({ role: m.role, content: m.content })),
+        { role: 'user' as const, content: input },
+      ];
 
       // OpenAI chat/completions format.
       const response = await fetch(`${BACKEND_AI_URL}/chat`, {
@@ -207,7 +158,7 @@ ${contextSummary}`;
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           systemPrompt,
-          messages: [{ role: 'user', content: input }],
+          messages: conversationMessages,
         }),
       });
 
@@ -273,10 +224,20 @@ ${contextSummary}`;
     }
   };
 
-  // ---- Everything below: COMPLETELY UNCHANGED ----
+  // ---- Quick questions: Oracle-aware, error-tier-first ----
   const quickQuestions = isConsoleMode
-    ? ['Show me all errors', 'What are the most common warnings?', 'Identify any patterns']
-    : ['Show slowest requests', 'Any errors?', 'Performance issues?'];
+    ? [
+        'Show all HTTP 5xx server errors in the logs',
+        'What are the most critical errors and their root cause?',
+        'Are there any repeated error patterns or cascades?',
+        'Which Oracle product or module is generating the most errors?',
+      ]
+    : [
+        'Are there any 5xx server errors? What is the root cause?',
+        'Show all 4xx errors — any auth or missing-resource issues?',
+        'Which Oracle products are involved and are there known issues?',
+        'What is the slowest part of the session and why?',
+      ];
 
   const dataCount = isConsoleMode
     ? logData?.entries.length || 0

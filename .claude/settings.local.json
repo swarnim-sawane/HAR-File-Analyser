@@ -5,7 +5,10 @@
       "Read(//c/Users/ssawane/Documents/Work/HAR/ LATEST/Deployed/ build/HAR-File-Analyser/src/components/**)",
       "Read(//c/Users/ssawane/Documents/Work/HAR/ LATEST/Deployed/ build/HAR-File-Analyser/src/styles/**)",
       "Bash(grep -E \"\\\\.\\(ts|tsx|js|json|env\\)$\")",
-      "Bash(grep -E \"\\\\.\\(tsx|ts|json\\)$\")"
+      "Bash(grep -E \"\\\\.\\(tsx|ts|json\\)$\")",
+      "Read(//c/Users/ssawane/Documents/Work/HAR/ LATEST/Deployed/ build/HAR-File-Analyser/backend/src/routes/**)",
+      "Read(//c/Users/ssawane/Documents/Work/HAR/ LATEST/Deployed/ build/HAR-File-Analyser/backend/src/services/**)",
+      "Read(//c/Users/ssawane/Documents/Work/HAR/ LATEST/Deployed/ build/HAR-File-Analyser/backend/src/**)"
     ]
   }
 }
