@@ -26,15 +26,50 @@ interface FloatingAiChatProps {
   logData?: ConsoleLogFile;
 }
 
+// ── Module-level persistence ────────────────────────────────────────────────
+// React state is destroyed whenever the component unmounts (e.g. the user
+// switches tool tabs and comes back). These Maps live for the lifetime of the
+// browser session and restore the chat exactly as the user left it.
+interface ChatSnapshot {
+  messages: Message[];
+  isOpen: boolean;
+  isMinimized: boolean;
+}
+const chatSnapshotCache = new Map<string, ChatSnapshot>();
+
+/** Derive a stable key that uniquely identifies the currently-loaded file. */
+function buildCacheKey(harData?: HarFile, logData?: ConsoleLogFile): string {
+  if (harData) {
+    const count = harData.log.entries.length;
+    const first = harData.log.entries[0]?.startedDateTime ?? '';
+    return `har:${count}:${first}`;
+  }
+  if (logData) {
+    const count = logData.entries.length;
+    const name  = logData.metadata?.fileName ?? '';
+    return `log:${count}:${name}`;
+  }
+  return 'empty';
+}
+
 const FloatingAiChat: React.FC<FloatingAiChatProps> = ({ harData, logData }) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const [isMinimized, setIsMinimized] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const cacheKey = buildCacheKey(harData, logData);
+  const snapshot = chatSnapshotCache.get(cacheKey);
+
+  const [isOpen, setIsOpen]           = useState<boolean>(snapshot?.isOpen       ?? false);
+  const [isMinimized, setIsMinimized] = useState<boolean>(snapshot?.isMinimized  ?? false);
+  const [messages, setMessages]       = useState<Message[]>(snapshot?.messages   ?? []);
+  const [input, setInput]             = useState('');
+  const [isLoading, setIsLoading]     = useState(false);
   const [ocaConnected, setOcaConnected] = useState<boolean>(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const textareaRef    = useRef<HTMLTextAreaElement>(null);
+
+  // Persist state to the module-level cache so it survives tab switches.
+  // We write on every change so the snapshot is always up-to-date.
+  useEffect(() => {
+    chatSnapshotCache.set(cacheKey, { messages, isOpen, isMinimized });
+  }, [cacheKey, messages, isOpen, isMinimized]);
 
   const isConsoleMode = !!logData;
 

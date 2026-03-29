@@ -947,15 +947,19 @@ Formatting rules:
                 </div>
               </div>
 
-              <div className="cmp-highlight-grid">
+              <div className="cmp-highlight-table" role="table" aria-label="Stats overview">
+                <div className="cmp-highlight-table-head" role="row">
+                  <span role="columnheader">Metric</span>
+                  <span className="cmp-col-a" role="columnheader">File A</span>
+                  <span className="cmp-col-b" role="columnheader">File B</span>
+                  <span className="cmp-col-delta" role="columnheader">Delta</span>
+                </div>
                 {statHighlights.map(item => (
-                  <div key={item.label} className="cmp-highlight-card">
-                    <span className="cmp-highlight-label">{item.label}</span>
-                    <div className="cmp-highlight-values">
-                      <div><span className="cmp-highlight-side">A</span><strong>{item.valueA}</strong></div>
-                      <div><span className="cmp-highlight-side">B</span><strong>{item.valueB}</strong></div>
-                    </div>
-                    <span className="cmp-highlight-delta" style={{ color: item.tone }}>{item.delta}</span>
+                  <div key={item.label} className="cmp-highlight-row" role="row">
+                    <span className="cmp-highlight-label" role="cell">{item.label}</span>
+                    <span className="cmp-highlight-value cmp-highlight-value--a" role="cell">{item.valueA}</span>
+                    <span className="cmp-highlight-value cmp-highlight-value--b" role="cell">{item.valueB}</span>
+                    <span className="cmp-highlight-delta" style={{ color: item.tone }} role="cell">{item.delta}</span>
                   </div>
                 ))}
               </div>
@@ -1001,11 +1005,27 @@ Formatting rules:
           {activeTab === 'requests' && (
             <section className="cmp-view-shell">
               <div className="cmp-view-header"><div><span className="cmp-view-kicker">Analyst view</span><h3>Request diff</h3><p>Filter for regressions, improvements, and file-specific requests to isolate exactly what changed between the two captures.</p></div></div>
-              <div className="cmp-diff-summary">
-                <div className="cmp-diff-summary-card"><span>Regressions</span><strong>{diffSummary.regressions}</strong></div>
-                <div className="cmp-diff-summary-card"><span>Improvements</span><strong>{diffSummary.improvements}</strong></div>
-                <div className="cmp-diff-summary-card"><span>New in B</span><strong>{diffSummary.newInB}</strong></div>
-                <div className="cmp-diff-summary-card"><span>Only in A</span><strong>{diffSummary.onlyInA}</strong></div>
+              <div className="cmp-diff-summary-table" role="table" aria-label="Request diff summary">
+                <div className="cmp-diff-summary-table-head" role="row">
+                  <span role="columnheader">Category</span>
+                  <span role="columnheader">Count</span>
+                </div>
+                <div className="cmp-diff-summary-row cmp-diff-summary-row--regressions" role="row">
+                  <span className="cmp-diff-summary-label" role="cell">Regressions</span>
+                  <span className="cmp-diff-summary-value" role="cell">{diffSummary.regressions}</span>
+                </div>
+                <div className="cmp-diff-summary-row cmp-diff-summary-row--improvements" role="row">
+                  <span className="cmp-diff-summary-label" role="cell">Improvements</span>
+                  <span className="cmp-diff-summary-value" role="cell">{diffSummary.improvements}</span>
+                </div>
+                <div className="cmp-diff-summary-row cmp-diff-summary-row--new" role="row">
+                  <span className="cmp-diff-summary-label" role="cell">New in B</span>
+                  <span className="cmp-diff-summary-value" role="cell">{diffSummary.newInB}</span>
+                </div>
+                <div className="cmp-diff-summary-row cmp-diff-summary-row--fixed" role="row">
+                  <span className="cmp-diff-summary-label" role="cell">Only in A</span>
+                  <span className="cmp-diff-summary-value" role="cell">{diffSummary.onlyInA}</span>
+                </div>
               </div>
               <div className="cmp-diff-panel">
                 <div className="cmp-panel-head cmp-panel-head--toolbar">
@@ -1099,10 +1119,13 @@ Formatting rules:
                   <div className="cmp-ai-prompt">
                     <div className="cmp-ai-hero">
                       <span className="cmp-ai-icon"><SparklesIcon /></span>
-                      <div>
-                        <span className="cmp-panel-kicker">Oracle compare assist</span>
-                        <h4>Generate an AI comparison brief</h4>
-                        <p>OCA will compare both HAR files and summarize what changed, what still looks healthy, and what to investigate next.</p>
+                      <div className="cmp-ai-hero-main">
+                        <div className="cmp-ai-hero-copy">
+                          <span className="cmp-panel-kicker">Oracle compare assist</span>
+                          <h4>Generate an AI comparison brief</h4>
+                          <p>OCA will compare both HAR files and summarize what changed, what still looks healthy, and what to investigate next.</p>
+                        </div>
+                        <button className="cmp-ai-run-btn" onClick={runAiDiff}><SparklesIcon />Run AI Analysis</button>
                       </div>
                     </div>
                     <div className="cmp-ai-facts">
@@ -1110,7 +1133,6 @@ Formatting rules:
                       <div className="cmp-ai-fact"><span>Baseline errors</span><strong>{metricsA?.errors ?? 0}</strong></div>
                       <div className="cmp-ai-fact"><span>Comparison errors</span><strong>{metricsB?.errors ?? 0}</strong></div>
                     </div>
-                    <button className="cmp-ai-run-btn" onClick={runAiDiff}><SparklesIcon />Run AI Analysis</button>
                   </div>
                 )}
 
@@ -1141,18 +1163,6 @@ Formatting rules:
         </>
       )}
 
-      {!ready && !loadingA && !loadingB && (
-        <div className="cmp-placeholder">
-          <div className="cmp-placeholder-icon"><LayersIcon /></div>
-          <h3>Load two HAR files to unlock the compare workspace</h3>
-          <p>Great for before-and-after validation, incognito versus normal sessions, or comparing production with UAT in one place.</p>
-          <div className="cmp-placeholder-grid">
-            <div className="cmp-placeholder-card"><span className="cmp-placeholder-card-icon"><FileIcon /></span><strong>Baseline vs comparison</strong><span>Measure regressions and improvements side by side.</span></div>
-            <div className="cmp-placeholder-card"><span className="cmp-placeholder-card-icon"><FileTextIcon /></span><strong>Request-by-request diff</strong><span>Filter new, fixed, slower, and faster requests instantly.</span></div>
-            <div className="cmp-placeholder-card"><span className="cmp-placeholder-card-icon"><SparklesIcon /></span><strong>AI investigation summary</strong><span>Get a support-ready narrative once both captures are loaded.</span></div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
