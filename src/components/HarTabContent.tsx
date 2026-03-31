@@ -13,6 +13,7 @@ import RequestFlowDiagram from './RequestFlowDiagram';
 import PerformanceScorecard from './PerformanceScorecard';
 import AiInsights from './AiInsights';
 import { apiClient } from '../services/apiClient';
+import { ChevronDownIcon, ClockIcon, FileIcon, TrashIcon, UploadIcon } from './Icons';
 
 type HarTab = 'analyzer' | 'flow' | 'scorecard' | 'insights';
 
@@ -49,6 +50,7 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
   const [activeTab, setActiveTab] = useState<HarTab>('analyzer');
   const [detailsWidth, setDetailsWidth] = useState(450);
   const [isLoadingFile, setIsLoadingFile] = useState(true);
+  const [showStickyRecent, setShowStickyRecent] = useState(false);
   const DETAILS_MIN = 320;
   const DETAILS_MAX = 900;
 
@@ -84,25 +86,101 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
     window.addEventListener('mouseup', onUp);
   };
 
+  const formatRecentDate = (timestamp: number) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+
+    const diffDays = Math.floor(diffHours / 24);
+    return `${diffDays}d ago`;
+  };
+
   return (
     // Keep mounted but hidden — preserves hook state (filters, selected entry, etc.)
     <div style={{ display: isActive ? undefined : 'none' }}>
 
       {/* Sub-tabs: only show once data is loaded */}
       {harState.harData && (
-        <div className="main-tabs">
-          {(['analyzer', 'flow', 'scorecard', 'insights'] as HarTab[]).map(tab => (
-            <button
-              key={tab}
-              className={`main-tab ${activeTab === tab ? 'active' : ''}`}
-              onClick={() => setActiveTab(tab)}
-            >
-              {tab === 'analyzer' ? 'Analyzer'
-                : tab === 'flow' ? 'Request Flow'
-                : tab === 'scorecard' ? 'Scorecard'
-                : 'AI Insights'}
+        <div className="har-sticky-header">
+          <div className="main-tabs har-main-tabs">
+            {(['analyzer', 'flow', 'scorecard', 'insights'] as HarTab[]).map(tab => (
+              <button
+                key={tab}
+                className={`main-tab ${activeTab === tab ? 'active' : ''}`}
+                onClick={() => setActiveTab(tab)}
+              >
+                {tab === 'analyzer' ? 'Analyzer'
+                  : tab === 'flow' ? 'Request Flow'
+                  : tab === 'scorecard' ? 'Scorecard'
+                  : 'AI Insights'}
+              </button>
+            ))}
+          </div>
+          <div className="har-sticky-actions">
+            <button className="btn-toolbar btn-upload har-sticky-upload" onClick={onAddNewTab}>
+              <UploadIcon />
+              <span>Upload New</span>
             </button>
-          ))}
+            {recentFiles.length > 0 && (
+              <div className={`recent-files-dropdown ${showStickyRecent ? 'active' : ''}`}>
+                <button
+                  className="btn-toolbar btn-recent har-sticky-recent"
+                  onClick={() => setShowStickyRecent(!showStickyRecent)}
+                >
+                  <ClockIcon />
+                  <span>Recent Files</span>
+                  <ChevronDownIcon />
+                </button>
+
+                {showStickyRecent && (
+                  <div className="dropdown-menu">
+                    <div className="dropdown-header">
+                      <span>Recent Files</span>
+                      <button
+                        className="btn-clear-recent"
+                        onClick={() => {
+                          onClearRecent();
+                          setShowStickyRecent(false);
+                        }}
+                      >
+                        <TrashIcon />
+                        <span>Clear All</span>
+                      </button>
+                    </div>
+                    <div className="dropdown-content">
+                      {recentFiles.map((file, index) => (
+                        <button
+                          key={index}
+                          className="recent-file-item"
+                          onClick={() => {
+                            const fileToPass =
+                              file.data instanceof File
+                                ? file.data
+                                : new File([], file.name);
+                            onLoadRecentNewTab(fileToPass);
+                            setShowStickyRecent(false);
+                          }}
+                        >
+                          <div className="recent-file-info">
+                            <FileIcon />
+                            <span className="recent-file-name">{file.name}</span>
+                          </div>
+                          <span className="recent-file-time">{formatRecentDate(file.timestamp)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -130,6 +208,8 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
                 onLoadRecent={onLoadRecentNewTab}
                 recentFiles={recentFiles}
                 onClearRecent={onClearRecent}
+                showUploadButton={false}
+                showRecentButton={false}
                 currentFileName={fileName}
                 harEntries={harState.filteredEntries}
                 totalHarEntries={harState.harData.log.entries.length}

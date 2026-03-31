@@ -7,7 +7,7 @@ import {
   SanitizeOptions,
 } from '../utils/har_sanitize';
 
-export type ScrubType = 'cookies' | 'headers' | 'queryArgs' | 'postParams' | 'mimeTypes';
+export type ScrubType = 'cookies' | 'headers' | 'queryArgs' | 'postParams' | 'mimeTypes' | 'domains';
 export type ScrubState = Record<ScrubType, Record<string, boolean>>;
 
 const defaultScrubState: ScrubState = {
@@ -16,6 +16,7 @@ const defaultScrubState: ScrubState = {
   queryArgs: {},
   postParams: {},
   mimeTypes: {},
+  domains: {},
 };
 
 const typeMap: Record<ScrubType, string> = {
@@ -24,6 +25,7 @@ const typeMap: Record<ScrubType, string> = {
   headers: 'Headers',
   postParams: 'POST Body Params',
   queryArgs: 'Query String Parameters',
+  domains: 'Domain Names',
 };
 
 const HarSanitizer: React.FC = () => {
@@ -41,7 +43,8 @@ const HarSanitizer: React.FC = () => {
     Object.entries(rawItems).forEach(([key, items]: [string, string[]]) => {
       output[key as ScrubType] = items.reduce((acc, curr) => {
         if (!curr) return acc;
-        acc[curr] = defaultScrubItems.includes(curr);
+        // Domains are opt-in (not checked by default); everything else follows defaultScrubItems
+        acc[curr] = key === 'domains' ? false : defaultScrubItems.includes(curr);
         return acc;
       }, {} as Record<string, boolean>);
     });
@@ -70,9 +73,15 @@ const HarSanitizer: React.FC = () => {
       if (val) mimeTypes.add(key);
     });
 
+    const domains = new Set<string>();
+    Object.entries(scrubState.domains).forEach(([key, val]) => {
+      if (val) domains.add(key);
+    });
+
     const options: SanitizeOptions = {
       scrubWords: [...words],
       scrubMimetypes: [...mimeTypes],
+      scrubDomains: [...domains],
     };
 
     return sanitize(input, options);

@@ -46,7 +46,7 @@ router.get('/:fileId/scan', async (req: Request, res: Response) => {
 // Returns: { fileId: sanitizedFileId, jobId }
 router.post('/:fileId', async (req: Request, res: Response) => {
   const { fileId } = req.params;
-  const { mode, scrubWords = [], scrubMimetypes = [] } = req.body;
+  const { mode, scrubWords = [], scrubMimetypes = [], scrubDomains = [] } = req.body;
 
   try {
     const redis = getRedis();
@@ -59,6 +59,7 @@ router.post('/:fileId', async (req: Request, res: Response) => {
     const sanitized = sanitize(rawText, {
       scrubWords: mode === 'auto' ? defaultScrubItems : scrubWords,
       scrubMimetypes: mode === 'auto' ? [] : scrubMimetypes,
+      scrubDomains: mode === 'auto' ? [] : scrubDomains,
     });
 
     const sanitizedFileId = `sanitized_${fileId}`;

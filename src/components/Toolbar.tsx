@@ -27,6 +27,8 @@ interface ToolbarProps {
   onLoadRecent: (file: File) => void;
   recentFiles: RecentFile[];
   onClearRecent: () => void;
+  showUploadButton?: boolean;
+  showRecentButton?: boolean;
   filteredEntries?: ConsoleLogEntry[];
   totalEntries?: number;
   currentFileName?: string;
@@ -40,6 +42,8 @@ const Toolbar: React.FC<ToolbarProps> = ({
   onLoadRecent,
   recentFiles = [],
   onClearRecent,
+  showUploadButton = true,
+  showRecentButton = true,
   currentFileName = '',
   filteredEntries = [],
   totalEntries = 0,
@@ -53,12 +57,15 @@ const Toolbar: React.FC<ToolbarProps> = ({
   const isHarMode = harEntries !== undefined;
   const isConsoleMode = !isHarMode;
   const visibleHarCount = harEntries?.length ?? 0;
+  const visibleConsoleCount = filteredEntries.length;
   const canExport = isHarMode ? visibleHarCount > 0 : filteredEntries.length > 0;
-  const requestCountLabel = isHarMode
+  const countLabel = isHarMode
     ? visibleHarCount === totalHarEntries
       ? `${totalHarEntries} request${totalHarEntries === 1 ? '' : 's'}`
       : `${visibleHarCount} of ${totalHarEntries} requests`
-    : '';
+    : visibleConsoleCount === totalEntries
+      ? `${totalEntries} entr${totalEntries === 1 ? 'y' : 'ies'}`
+      : `${visibleConsoleCount} of ${totalEntries} entries`;
 
   const handleExportCSV = () => {
     try {
@@ -135,9 +142,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
               <FileIcon />
               <span className="file-name">{currentFileName}</span>
             </div>
-            {isHarMode && (
-              <span className="request-count-pill">{requestCountLabel}</span>
-            )}
+            <span className="request-count-pill">{countLabel}</span>
           </>
         )}
       </div>
@@ -205,12 +210,14 @@ const Toolbar: React.FC<ToolbarProps> = ({
           </div>
         )}
 
-        <button className="btn-toolbar btn-upload" onClick={onUploadNew}>
-          <UploadIcon />
-          <span>Upload New</span>
-        </button>
+        {showUploadButton && (
+          <button className="btn-toolbar btn-upload" onClick={onUploadNew}>
+            <UploadIcon />
+            <span>Upload New</span>
+          </button>
+        )}
 
-        {recentFiles.length > 0 && (
+        {showRecentButton && recentFiles.length > 0 && (
           <div className={`recent-files-dropdown ${showRecent ? 'active' : ''}`}>
             <button
               className="btn-toolbar btn-recent"

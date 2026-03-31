@@ -13,6 +13,7 @@ import ConsoleLogStatistics from './ConsoleLogStatistics';
 import ConsoleLogAiInsights from './ConsoleLogAiInsights';
 import Toolbar from './Toolbar';
 import FloatingAiChat from './FloatingAiChat';
+import { ChevronDownIcon, ClockIcon, FileIcon, TrashIcon, UploadIcon } from './Icons';
 
 interface RecentFile {
   name: string;
@@ -55,6 +56,7 @@ const ConsoleLogTabContent: React.FC<ConsoleLogTabContentProps> = ({
   const logState = useConsoleLogData();
   const [activeSubTab, setActiveSubTab] = useState<ConsoleSubTab>('analyzer');
   const [detailsWidth, setDetailsWidth] = useState(450);
+  const [showStickyRecent, setShowStickyRecent] = useState(false);
 
   // ── Load data on first mount ────────────────────────────────────────────────
   // If the file was parsed locally in App.tsx before the tab was created, we just
@@ -86,6 +88,22 @@ const ConsoleLogTabContent: React.FC<ConsoleLogTabContentProps> = ({
     window.addEventListener('mouseup', onUp);
   };
 
+  const formatRecentDate = (timestamp: number) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+
+    const diffDays = Math.floor(diffHours / 24);
+    return `${diffDays}d ago`;
+  };
+
   const logGroupedEntries = useMemo(() => {
     if (logState.filters.groupBy === 'all') return null;
     if (logState.filters.groupBy === 'level')
@@ -115,16 +133,76 @@ const ConsoleLogTabContent: React.FC<ConsoleLogTabContentProps> = ({
       {logState.logData && (
         <>
           {/* ── Console sub-tabs ─────────────────────────────────────────── */}
-          <div className="main-tabs">
-            {(['analyzer', 'insights'] as ConsoleSubTab[]).map((tab) => (
-              <button
-                key={tab}
-                className={`main-tab ${activeSubTab === tab ? 'active' : ''}`}
-                onClick={() => setActiveSubTab(tab)}
-              >
-                {tab === 'analyzer' ? 'Analyzer' : 'AI Insights'}
+          <div className="console-sticky-header">
+            <div className="main-tabs console-main-tabs">
+              {(['analyzer', 'insights'] as ConsoleSubTab[]).map((tab) => (
+                <button
+                  key={tab}
+                  className={`main-tab ${activeSubTab === tab ? 'active' : ''}`}
+                  onClick={() => setActiveSubTab(tab)}
+                >
+                  {tab === 'analyzer' ? 'Analyzer' : 'AI Insights'}
+                </button>
+              ))}
+            </div>
+            <div className="console-sticky-actions">
+              <button className="btn-toolbar btn-upload console-sticky-upload" onClick={onAddNewTab}>
+                <UploadIcon />
+                <span>Upload New</span>
               </button>
-            ))}
+              {recentFiles.length > 0 && (
+                <div className={`recent-files-dropdown ${showStickyRecent ? 'active' : ''}`}>
+                  <button
+                    className="btn-toolbar btn-recent console-sticky-recent"
+                    onClick={() => setShowStickyRecent(!showStickyRecent)}
+                  >
+                    <ClockIcon />
+                    <span>Recent Files</span>
+                    <ChevronDownIcon />
+                  </button>
+
+                  {showStickyRecent && (
+                    <div className="dropdown-menu">
+                      <div className="dropdown-header">
+                        <span>Recent Files</span>
+                        <button
+                          className="btn-clear-recent"
+                          onClick={() => {
+                            onClearRecent();
+                            setShowStickyRecent(false);
+                          }}
+                        >
+                          <TrashIcon />
+                          <span>Clear All</span>
+                        </button>
+                      </div>
+                      <div className="dropdown-content">
+                        {recentFiles.map((file, index) => (
+                          <button
+                            key={index}
+                            className="recent-file-item"
+                            onClick={() => {
+                              const fileToPass =
+                                file.data instanceof File
+                                  ? file.data
+                                  : new File([], file.name);
+                              onLoadRecentNewTab(fileToPass);
+                              setShowStickyRecent(false);
+                            }}
+                          >
+                            <div className="recent-file-info">
+                              <FileIcon />
+                              <span className="recent-file-name">{file.name}</span>
+                            </div>
+                            <span className="recent-file-time">{formatRecentDate(file.timestamp)}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
           {activeSubTab === 'analyzer' && (
@@ -134,6 +212,8 @@ const ConsoleLogTabContent: React.FC<ConsoleLogTabContentProps> = ({
                 onLoadRecent={onLoadRecentNewTab}
                 recentFiles={recentFiles}
                 onClearRecent={onClearRecent}
+                showUploadButton={false}
+                showRecentButton={false}
                 currentFileName={logState.logData.metadata.fileName}
                 filteredEntries={logState.filteredEntries}
                 totalEntries={logState.logData.entries.length}
