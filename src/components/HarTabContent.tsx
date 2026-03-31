@@ -8,7 +8,6 @@ import RequestList from './RequestList';
 import RequestDetails from './RequestDetails';
 import Toolbar from './Toolbar';
 import { useHarData } from '../hooks/useHarData';
-import { HarAnalyzer } from '../utils/harAnalyzer';
 import FloatingAiChat from './FloatingAiChat';
 import RequestFlowDiagram from './RequestFlowDiagram';
 import PerformanceScorecard from './PerformanceScorecard';
@@ -85,12 +84,6 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
     window.addEventListener('mouseup', onUp);
   };
 
-  const harGroupedEntries = React.useMemo(() => {
-    if (!harState.harData || harState.filters.groupBy === 'all') return null;
-    const pages = harState.harData.log.pages || [];
-    return HarAnalyzer.groupByPage(harState.filteredEntries, pages);
-  }, [harState.harData, harState.filteredEntries, harState.filters.groupBy]);
-
   return (
     // Keep mounted but hidden — preserves hook state (filters, selected entry, etc.)
     <div style={{ display: isActive ? undefined : 'none' }}>
@@ -154,7 +147,6 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
                 <div className="content-area">
                   <RequestList
                     entries={harState.filteredEntries}
-                    groupedEntries={harGroupedEntries}
                     selectedEntry={harState.selectedEntry}
                     onSelectEntry={harState.setSelectedEntry}
                     timingType={harState.filters.timingType}

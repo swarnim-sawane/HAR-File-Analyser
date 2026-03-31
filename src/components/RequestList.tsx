@@ -6,7 +6,6 @@ import { formatBytes, formatTime } from '../utils/formatters';
 
 interface RequestListProps {
   entries: Entry[];
-  groupedEntries: Map<string, Entry[]> | null;
   selectedEntry: Entry | null;
   onSelectEntry: (entry: Entry) => void;
   timingType: 'relative' | 'independent';
@@ -17,7 +16,6 @@ type SortDirection = 'asc' | 'desc';
 
 const RequestList: React.FC<RequestListProps> = ({
   entries,
-  groupedEntries,
   selectedEntry,
   onSelectEntry,
   timingType,
@@ -128,50 +126,6 @@ const RequestList: React.FC<RequestListProps> = ({
     );
   };
 
-  const renderGroupedEntries = () => {
-    if (!groupedEntries) {
-      return sortedEntries.map((entry, index) => renderEntry(entry, index));
-    }
-
-    return Array.from(groupedEntries.entries()).map(([pageId, pageEntries]) => {
-      // Sort entries within each group
-      const sortedPageEntries = [...pageEntries];
-      sortedPageEntries.sort((a, b) => {
-        let comparison = 0;
-        switch (sortField) {
-          case 'status':
-            comparison = a.response.status - b.response.status;
-            break;
-          case 'method':
-            comparison = a.request.method.localeCompare(b.request.method);
-            break;
-          case 'url':
-            comparison = a.request.url.localeCompare(b.request.url);
-            break;
-          case 'size':
-            comparison = a.response.bodySize - b.response.bodySize;
-            break;
-          case 'time':
-            comparison = a.time - b.time;
-            break;
-        }
-        return sortDirection === 'asc' ? comparison : -comparison;
-      });
-
-      return (
-        <div key={pageId} className="page-group">
-          <div className="page-header">
-            <span className="page-title">
-              {pageId === '_orphan' ? 'Ungrouped Requests' : `Page: ${pageId}`}
-            </span>
-            <span className="page-count">{pageEntries.length} requests</span>
-          </div>
-          {sortedPageEntries.map((entry, index) => renderEntry(entry, index))}
-        </div>
-      );
-    });
-  };
-
   return (
     <div className="request-list har-request-list">
       <div className="request-list-header">
@@ -211,7 +165,7 @@ const RequestList: React.FC<RequestListProps> = ({
         {entries.length === 0 ? (
           <div className="no-data">No requests match the current filters</div>
         ) : (
-          renderGroupedEntries()
+          sortedEntries.map((entry, index) => renderEntry(entry, index))
         )}
       </div>
     </div>

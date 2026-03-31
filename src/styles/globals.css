@@ -793,27 +793,6 @@ body {
     border-bottom: 1px solid var(--border-color);
 }
 
-
-
-.page-header {
-    padding: 12px 24px;
-    background: var(--bg-tertiary);
-    border-bottom: 1px solid var(--border-color);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-primary);
-    letter-spacing: -0.01em;
-}
-
-.page-count {
-    font-size: 12px;
-    color: var(--text-tertiary);
-    font-weight: 500;
-}
-
 .request-item-header {
     display: flex;
     align-items: center;
@@ -1466,13 +1445,17 @@ body {
 .toolbar-left {
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: 12px;
+    flex-wrap: wrap;
+    min-width: 0;
 }
 
 .toolbar-right {
     display: flex;
     align-items: center;
     gap: 12px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
 }
 
 .current-file {
@@ -1483,6 +1466,21 @@ body {
     background: var(--bg-secondary);
     border-radius: 6px;
     border: 1px solid var(--border-color);
+    min-width: 0;
+}
+
+.request-count-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
 }
 
 .file-icon {
@@ -1663,6 +1661,10 @@ body {
     }
 
     .current-file {
+        justify-content: center;
+    }
+
+    .request-count-pill {
         justify-content: center;
     }
 

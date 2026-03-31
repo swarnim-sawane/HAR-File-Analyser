@@ -50,9 +50,15 @@ const Toolbar: React.FC<ToolbarProps> = ({
   const [showExportMenu, setShowExportMenu] = useState(false);
 
   // Determine which mode we're in
-  const isHarMode = harEntries !== undefined && harEntries.length > 0;
-  const isConsoleMode = filteredEntries !== undefined && filteredEntries.length > 0;
-  const canExport = isHarMode || isConsoleMode;
+  const isHarMode = harEntries !== undefined;
+  const isConsoleMode = !isHarMode;
+  const visibleHarCount = harEntries?.length ?? 0;
+  const canExport = isHarMode ? visibleHarCount > 0 : filteredEntries.length > 0;
+  const requestCountLabel = isHarMode
+    ? visibleHarCount === totalHarEntries
+      ? `${totalHarEntries} request${totalHarEntries === 1 ? '' : 's'}`
+      : `${visibleHarCount} of ${totalHarEntries} requests`
+    : '';
 
   const handleExportCSV = () => {
     try {
@@ -118,16 +124,21 @@ const Toolbar: React.FC<ToolbarProps> = ({
     return `${diffDays}d ago`;
   };
 
-  const exportCount = isHarMode ? harEntries?.length : filteredEntries?.length;
+  const exportCount = isHarMode ? visibleHarCount : filteredEntries.length;
 
   return (
     <div className="toolbar">
       <div className="toolbar-left">
         {currentFileName && (
-          <div className="current-file">
-            <FileIcon />
-            <span className="file-name">{currentFileName}</span>
-          </div>
+          <>
+            <div className="current-file">
+              <FileIcon />
+              <span className="file-name">{currentFileName}</span>
+            </div>
+            {isHarMode && (
+              <span className="request-count-pill">{requestCountLabel}</span>
+            )}
+          </>
         )}
       </div>
 

@@ -1,5 +1,5 @@
 // src/utils/harAnalyzer.ts
-import { Entry, Page, Timings } from '../types/har';
+import { Entry, Timings } from '../types/har';
 
 export class HarAnalyzer {
   // src/utils/harAnalyzer.ts - Update this method
@@ -14,24 +14,6 @@ export class HarAnalyzer {
             });
         });
     }
-
-
-  static groupByPage(entries: Entry[], pages: Page[]): Map < string, Entry[] > {
-    const grouped = new Map<string, Entry[]>();
-
-    pages.forEach(page => {
-        const pageEntries = entries.filter(entry => entry.pageref === page.id);
-        grouped.set(page.id, pageEntries);
-    });
-
-    // Group entries without pageref
-    const orphanEntries = entries.filter(entry => !entry.pageref);
-    if(orphanEntries.length > 0) {
-    grouped.set('_orphan', orphanEntries);
-}
-
-return grouped;
-  }
 
   static searchEntries(entries: Entry[], term: string): Entry[] {
     const lowerTerm = term.toLowerCase();

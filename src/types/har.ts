@@ -158,7 +158,6 @@ export interface FilterOptions {
     '4xx': boolean;
     '5xx': boolean;
   };
-  groupBy: 'pages' | 'all';
   searchTerm: string;
   timingType: 'relative' | 'independent';
 }
