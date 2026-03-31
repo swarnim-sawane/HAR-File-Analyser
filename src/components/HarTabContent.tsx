@@ -2,7 +2,7 @@
 // Self-contained HAR analyzer instance. One is mounted per open file.
 // Hidden (display:none) when not active so state is preserved while switching tabs.
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import FilterPanel from './FilterPanel';
 import RequestList from './RequestList';
 import RequestDetails from './RequestDetails';
@@ -30,10 +30,9 @@ export interface HarTabContentProps {
   isActive: boolean;
   backendUrl: string;
   recentFiles: RecentFile[];
-  onAddNewTab: () => void;          // "Upload new" in toolbar → create new tab
+  onAddNewTab: () => void;          // "Upload new" in toolbar -> create new tab
   onLoadRecentNewTab: (file: File) => void;
   onClearRecent: () => void;
-  onInsightsGeneratingChange: (tabId: string, generating: boolean) => void;
 }
 
 const HarTabContent: React.FC<HarTabContentProps> = ({
@@ -46,17 +45,15 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
   onAddNewTab,
   onLoadRecentNewTab,
   onClearRecent,
-  onInsightsGeneratingChange,
 }) => {
   const harState = useHarData();
   const [activeTab, setActiveTab] = useState<HarTab>('analyzer');
-  const [isInsightsGenerating, setIsInsightsGenerating] = useState(false);
   const [detailsWidth, setDetailsWidth] = useState(450);
   const [isLoadingFile, setIsLoadingFile] = useState(true);
   const DETAILS_MIN = 320;
   const DETAILS_MAX = 900;
 
-  // Load file data when the tab is first created
+  // Load file data when the tab is first created.
   useEffect(() => {
     if (!fileId) return;
     setIsLoadingFile(true);
@@ -66,29 +63,9 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
         console.error(`Failed to load HAR tab ${tabId}:`, err);
       })
       .finally(() => setIsLoadingFile(false));
-  // Only run on mount — fileId is immutable per tab
+  // Only run on mount — fileId is immutable per tab.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileId]);
-
-  // Propagate insights-generating state up to App (for the leave guard)
-  useEffect(() => {
-    onInsightsGeneratingChange(tabId, isInsightsGenerating);
-  }, [tabId, isInsightsGenerating, onInsightsGeneratingChange]);
-
-  const handleInsightsGeneratingChange = useCallback((generating: boolean) => {
-    setIsInsightsGenerating(generating);
-  }, []);
-
-  const handleTabChange = (nextTab: HarTab) => {
-    if (nextTab === activeTab) return;
-    if (activeTab === 'insights' && isInsightsGenerating) {
-      // Don't switch while insights are running — guard is handled at App level via
-      // the pendingLeaveNavigation modal. Sub-tab switches within same file are allowed
-      // (the modal only guards switching to a different tool/file).
-    }
-    if (activeTab === 'insights') setIsInsightsGenerating(false);
-    setActiveTab(nextTab);
-  };
 
   const startResize = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -125,7 +102,7 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
             <button
               key={tab}
               className={`main-tab ${activeTab === tab ? 'active' : ''}`}
-              onClick={() => handleTabChange(tab)}
+              onClick={() => setActiveTab(tab)}
             >
               {tab === 'analyzer' ? 'Analyzer'
                 : tab === 'flow' ? 'Request Flow'
@@ -145,9 +122,9 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
 
       {harState.error && (
         <div className="error-banner">
-          <span className="error-icon">⚠️</span>
+          <span className="error-icon">âš ï¸</span>
           <span>{harState.error}</span>
-          <button onClick={harState.clearData} className="btn-dismiss">✕</button>
+          <button onClick={harState.clearData} className="btn-dismiss">âœ•</button>
         </div>
       )}
 
@@ -220,7 +197,6 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
             <AiInsights
               harData={harState.harData}
               backendUrl={backendUrl}
-              onGeneratingChange={handleInsightsGeneratingChange}
             />
           </div>
 

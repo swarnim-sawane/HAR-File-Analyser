@@ -38,12 +38,6 @@ interface HarFileTab {
   fileName: string; // display name
 }
 
-interface PendingLeaveNavigation {
-  destination: string;
-  nextTool?: 'har' | 'sanitizer' | 'console' | 'compare';
-  nextTabId?: string; // for switching between HAR file tabs
-}
-
 const BACKEND_URL =
   import.meta.env.VITE_BACKEND_URL ||
   import.meta.env.VITE_API_URL ||
@@ -58,8 +52,6 @@ const App: React.FC = () => {
   // Ref to hidden file-input used for the "+" add-tab button in the tab bar
   const addTabInputRef = useRef<HTMLInputElement>(null);
   // Track which tab (if any) is currently generating insights — for the leave guard
-  const tabInsightsRef = useRef<Record<string, boolean>>({});
-  const [activeTabGeneratingInsights, setActiveTabGeneratingInsights] = useState(false);
   // Sanitize modal state for the "+" add-tab upload flow
   const [addTabPendingResult, setAddTabPendingResult] = useState<UploadResult | null>(null);
   const [addTabPendingBatch, setAddTabPendingBatch] = useState<UploadResult[] | null>(null);
@@ -75,11 +67,9 @@ const App: React.FC = () => {
   const logCancelRef = React.useRef<(() => void) | null>(null);
   type ConsoleTab = 'analyzer' | 'insights';
   const [logActiveTab, setLogActiveTab] = useState<ConsoleTab>('analyzer');
-  const [logInsightsGenerating, setLogInsightsGenerating] = useState(false);
 
   // ── Main navigation ──────────────────────────────────────────────────────────
   const [activeTool, setActiveTool] = useState<'har' | 'sanitizer' | 'console' | 'compare'>('har');
-  const [pendingLeaveNavigation, setPendingLeaveNavigation] = useState<PendingLeaveNavigation | null>(null);
 
   const MAX_HAR_TABS = 8;
   const MAX_RECENT_FILES = 5;
@@ -139,22 +129,6 @@ const App: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const isLeaveInsightsGuardActive =
-    activeTool === 'har' && activeTabGeneratingInsights;
-
-  useEffect(() => {
-    if (!pendingLeaveNavigation) return;
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setPendingLeaveNavigation(null);
-      }
-    };
-    window.addEventListener('keydown', handleEscape);
-    return () => {
-      window.removeEventListener('keydown', handleEscape);
-    };
-  }, [pendingLeaveNavigation]);
-
   // Show "Parse locally instead" button after 10s of waiting for backend
   useEffect(() => {
     if (!isLogProcessing) {
@@ -165,54 +139,16 @@ const App: React.FC = () => {
     return () => clearTimeout(timer);
   }, [isLogProcessing]);
 
-  const applyPendingLeaveNavigation = () => {
-    if (!pendingLeaveNavigation) return;
-    if (pendingLeaveNavigation.nextTool) {
-      setActiveTool(pendingLeaveNavigation.nextTool);
-    }
-    if (pendingLeaveNavigation.nextTabId) {
-      setActiveHarTabId(pendingLeaveNavigation.nextTabId);
-    }
-    setActiveTabGeneratingInsights(false);
-    setPendingLeaveNavigation(null);
-  };
-
   const handleToolChange = (nextTool: 'har' | 'sanitizer' | 'console' | 'compare') => {
     if (nextTool === activeTool) return;
-    const destination =
-      nextTool === 'har'
-        ? 'HAR Analyzer'
-        : nextTool === 'sanitizer'
-        ? 'HAR Sanitizer'
-        : nextTool === 'compare'
-        ? 'HAR Compare'
-        : 'Console';
-    if (isLeaveInsightsGuardActive) {
-      setPendingLeaveNavigation({ destination, nextTool });
-      return;
-    }
     setActiveTool(nextTool);
   };
 
   /** Switch to a different open HAR file tab */
   const handleHarFileTabSwitch = (tabId: string) => {
     if (tabId === activeHarTabId) return;
-    if (isLeaveInsightsGuardActive) {
-      const tab = harTabs.find(t => t.id === tabId);
-      setPendingLeaveNavigation({ destination: tab?.fileName || 'another file', nextTabId: tabId });
-      return;
-    }
     setActiveHarTabId(tabId);
   };
-
-  /** Called by each HarTabContent to report its insights state */
-  const handleTabInsightsGeneratingChange = useCallback((tabId: string, generating: boolean) => {
-    tabInsightsRef.current[tabId] = generating;
-    // Only the active tab's state matters for the guard
-    if (tabId === activeHarTabId) {
-      setActiveTabGeneratingInsights(generating);
-    }
-  }, [activeHarTabId]);
 
 
 
@@ -317,8 +253,6 @@ const App: React.FC = () => {
         setActiveHarTabId(nextActive);
         if (next.length === 0) setHarShowUploader(true);
       }
-      // Clean up insights tracking
-      delete tabInsightsRef.current[tabId];
       return next;
     });
   };
@@ -775,15 +709,9 @@ const App: React.FC = () => {
                   setHarRecentFiles([]);
                   localStorage.removeItem(HAR_RECENT_FILES_KEY);
                 }}
-                onInsightsGeneratingChange={handleTabInsightsGeneratingChange}
               />
             ))}
           </>
-        )}
-
-        {/* HAR Compare Tool */}
-        {activeTool === 'compare' && (
-          <HarCompare openTabs={harTabs.map(t => ({ fileId: t.fileId, fileName: t.fileName }))} />
         )}
 
         {/* HAR Sanitizer Tool */}
@@ -912,7 +840,6 @@ const App: React.FC = () => {
                   <ConsoleLogAiInsights
                     logData={logState.logData}
                     backendUrl={BACKEND_URL}
-                    onGeneratingChange={setLogInsightsGenerating}
                   />
                 </div>
 
@@ -922,63 +849,15 @@ const App: React.FC = () => {
           </>
         )}
         </>)}
+
+        {/* HAR Compare Tool — mounted OUTSIDE the showUnifiedUploader conditional so it
+            is never unmounted when the user switches tabs. Hidden via display:none
+            when inactive so all loaded files and AI results survive tab switches. */}
+        <div style={{ display: activeTool === 'compare' ? 'contents' : 'none' }}>
+          <HarCompare openTabs={harTabs.map(t => ({ fileId: t.fileId, fileName: t.fileName }))} />
+        </div>
       </main>
 
-      {pendingLeaveNavigation && (
-        <div
-          className="insights-leave-modal-overlay"
-          onClick={() => setPendingLeaveNavigation(null)}
-        >
-          <div
-            className="insights-leave-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="insights-leave-title"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="insights-leave-modal-header">
-              <div className="insights-leave-modal-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                  <path d="M12 9v4" strokeLinecap="round" />
-                  <path d="M12 17h.01" strokeLinecap="round" />
-                  <path
-                    d="M10.29 3.86L1.82 18a2 2 0 0 0 1.72 3h16.92a2 2 0 0 0 1.72-3L13.71 3.86a2 2 0 0 0-3.42 0Z"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </div>
-              <div className="insights-leave-modal-copy">
-                <h3 id="insights-leave-title">Cancel AI Insights analysis?</h3>
-                <p>
-                  AI Insights generation is still running. Leaving now will cancel
-                  the current analysis.
-                </p>
-                <p className="insights-leave-modal-destination">
-                  Continue to <strong>{pendingLeaveNavigation.destination}</strong>?
-                </p>
-              </div>
-            </div>
-            <div className="insights-leave-modal-actions">
-              <button
-                type="button"
-                className="insights-leave-btn secondary"
-                onClick={() => setPendingLeaveNavigation(null)}
-                autoFocus
-              >
-                Stay on Insights
-              </button>
-              <button
-                type="button"
-                className="insights-leave-btn danger"
-                onClick={applyPendingLeaveNavigation}
-              >
-                Leave Insights
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

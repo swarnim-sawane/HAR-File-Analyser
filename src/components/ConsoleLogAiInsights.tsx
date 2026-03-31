@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { ConsoleLogFile } from '../types/consolelog';
 import { useConsoleLogInsights } from '../hooks/useConsoleLogInsights';
 import AiInsightsSurface from './AiInsightsSurface';
@@ -6,21 +6,15 @@ import AiInsightsSurface from './AiInsightsSurface';
 interface Props {
   logData: ConsoleLogFile;
   backendUrl: string;
-  onGeneratingChange?: (isGenerating: boolean) => void;
 }
 
 const ConsoleLogAiInsights: React.FC<Props> = ({
   logData,
   backendUrl,
-  onGeneratingChange,
 }) => {
   const { insights, isGenerating, error, generate, cancel } =
     useConsoleLogInsights(logData, backendUrl);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    onGeneratingChange?.(isGenerating);
-  }, [isGenerating, onGeneratingChange]);
 
   const toggleCard = (key: string) =>
     setExpanded((previous) => {

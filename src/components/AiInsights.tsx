@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { HarFile } from '../types/har';
 import { useInsights } from '../hooks/useInsights';
 import AiInsightsSurface from './AiInsightsSurface';
@@ -6,23 +6,17 @@ import AiInsightsSurface from './AiInsightsSurface';
 interface Props {
   harData: HarFile;
   backendUrl: string;
-  onGeneratingChange?: (isGenerating: boolean) => void;
 }
 
 const AiInsights: React.FC<Props> = ({
   harData,
   backendUrl,
-  onGeneratingChange,
 }) => {
   const { insights, isGenerating, error, generate, cancel } = useInsights(
     harData,
     backendUrl
   );
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    onGeneratingChange?.(isGenerating);
-  }, [isGenerating, onGeneratingChange]);
 
   const toggleCard = (key: string) =>
     setExpanded((previous) => {
