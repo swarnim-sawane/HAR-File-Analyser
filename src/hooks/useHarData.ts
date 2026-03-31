@@ -33,7 +33,6 @@ export const useHarData = (): UseHarDataReturn => {
       '4xx': true,
       '5xx': true,
     },
-    groupBy: 'pages',
     searchTerm: '',
     timingType: 'relative',
   });
@@ -81,7 +80,6 @@ export const useHarData = (): UseHarDataReturn => {
         '4xx': true,
         '5xx': true,
       },
-      groupBy: 'pages',
       searchTerm: '',
       timingType: 'relative',
     });

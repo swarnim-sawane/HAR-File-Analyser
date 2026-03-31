@@ -17,10 +17,6 @@ const FilterPanel: React.FC<FilterPanelProps> = ({ filters, onFilterChange }) =>
     });
   };
 
-  const handleGroupByChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    onFilterChange({ groupBy: e.target.value as 'pages' | 'all' });
-  };
-
   const handleTimingTypeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onFilterChange({ timingType: e.target.value as 'relative' | 'independent' });
   };
@@ -99,32 +95,6 @@ const FilterPanel: React.FC<FilterPanelProps> = ({ filters, onFilterChange }) =>
           onChange={handleSearchChange}
           className="search-input"
         />
-      </div>
-
-      <div className="filter-section">
-        <h3>Group By</h3>
-        <div className="radio-group">
-          <label className="radio-label">
-            <input
-              type="radio"
-              name="groupBy"
-              value="pages"
-              checked={filters.groupBy === 'pages'}
-              onChange={handleGroupByChange}
-            />
-            <span>Pages</span>
-          </label>
-          <label className="radio-label">
-            <input
-              type="radio"
-              name="groupBy"
-              value="all"
-              checked={filters.groupBy === 'all'}
-              onChange={handleGroupByChange}
-            />
-            <span>All Entries</span>
-          </label>
-        </div>
       </div>
 
       <div className="filter-section">
