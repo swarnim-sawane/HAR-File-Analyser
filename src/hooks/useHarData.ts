@@ -38,6 +38,10 @@ export const useHarData = (): UseHarDataReturn => {
   });
 
   const parser = useMemo(() => new HarParser(), []);
+  const searchIndex = useMemo(
+    () => (harData ? HarAnalyzer.buildSearchIndex(harData) : null),
+    [harData]
+  );
 
   const loadHarFile = useCallback(async (file: File) => {
     setIsLoading(true);
@@ -136,12 +140,12 @@ export const useHarData = (): UseHarDataReturn => {
     }
 
     // Search filter
-    if (filters.searchTerm.trim()) {
-      entries = HarAnalyzer.searchEntries(entries, filters.searchTerm);
+    if (filters.searchTerm.trim() && searchIndex) {
+      entries = HarAnalyzer.searchEntries(entries, filters.searchTerm, searchIndex);
     }
 
     return entries;
-  }, [harData, filters]);
+  }, [harData, filters, searchIndex]);
 
   return {
     harData,

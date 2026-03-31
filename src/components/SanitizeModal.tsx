@@ -37,7 +37,7 @@ const SanitizeModal: React.FC<SanitizeModalProps> = ({ uploadResult, onProceed, 
       .then(r => r.json())
       .then(data => {
         let count = 0;
-        const state: ScrubState = { cookies: {}, headers: {}, queryArgs: {}, postParams: {}, mimeTypes: {}, domains: {} };
+        const state: ScrubState = { domains: {}, cookies: {}, headers: {}, queryArgs: {}, postParams: {}, mimeTypes: {} };
         (Object.entries(data.info) as [ScrubType, string[]][]).forEach(([type, items]) => {
           items.forEach(item => {
             // Domains are opt-in (unchecked by default); everything else follows defaultScrubItems

@@ -26,7 +26,7 @@ const FilterPanel: React.FC<FilterPanelProps> = ({ filters, onFilterChange }) =>
   };
 
   return (
-    <div className="filter-panel">
+    <div className="filter-panel har-filter-panel">
       <div className="filter-section">
         <h3>Filter by HTTP Status Codes</h3>
         <div className="checkbox-group">
@@ -90,7 +90,7 @@ const FilterPanel: React.FC<FilterPanelProps> = ({ filters, onFilterChange }) =>
         <h3>Terms to Filter By</h3>
         <input
           type="text"
-          placeholder="Filter by URL, method, status..."
+          placeholder="Filter by URL, status, headers, params, cookies, body..."
           value={filters.searchTerm}
           onChange={handleSearchChange}
           className="search-input"
