@@ -283,9 +283,6 @@ ${entry.message}${
               </span>
             </label>
           </div>
-          <span className="summary-text console-summary-text">
-            <strong>{entries.length}</strong> entries
-          </span>
           {errorCount > 0 && (
             <span className="summary-badge console-summary-badge status-4xx">
               {errorCount} error{errorCount !== 1 ? 's' : ''}

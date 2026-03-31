@@ -19,12 +19,13 @@ const typeLabels: Record<ScrubType, string> = {
   queryArgs: 'Query Parameters',
   postParams: 'POST Body Params',
   mimeTypes: 'MIME Types (response bodies)',
+  domains: 'Domain Names',
 };
 
 const SanitizeModal: React.FC<SanitizeModalProps> = ({ uploadResult, onProceed, onCancel }) => {
   const [mode, setMode] = useState<'choice' | 'custom'>('choice');
   const [scrubItems, setScrubItems] = useState<ScrubState>({
-    cookies: {}, headers: {}, queryArgs: {}, postParams: {}, mimeTypes: {}
+    domains: {}, cookies: {}, headers: {}, queryArgs: {}, postParams: {}, mimeTypes: {}
   });
   const [detectedCount, setDetectedCount] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -36,10 +37,11 @@ const SanitizeModal: React.FC<SanitizeModalProps> = ({ uploadResult, onProceed, 
       .then(r => r.json())
       .then(data => {
         let count = 0;
-        const state: ScrubState = { cookies: {}, headers: {}, queryArgs: {}, postParams: {}, mimeTypes: {} };
+        const state: ScrubState = { cookies: {}, headers: {}, queryArgs: {}, postParams: {}, mimeTypes: {}, domains: {} };
         (Object.entries(data.info) as [ScrubType, string[]][]).forEach(([type, items]) => {
           items.forEach(item => {
-            const isDefault = defaultScrubItems.includes(item);
+            // Domains are opt-in (unchecked by default); everything else follows defaultScrubItems
+            const isDefault = type === 'domains' ? false : defaultScrubItems.includes(item);
             state[type][item] = isDefault;
             if (isDefault) count++;
           });
@@ -72,10 +74,12 @@ const SanitizeModal: React.FC<SanitizeModalProps> = ({ uploadResult, onProceed, 
     setIsProcessing(true);
     const words: string[] = [];
     const mimeTypes: string[] = [];
+    const domains: string[] = [];
     (Object.entries(scrubItems) as [ScrubType, Record<string, boolean>][]).forEach(([type, items]) => {
       Object.entries(items).forEach(([key, checked]) => {
         if (!checked) return;
         if (type === 'mimeTypes') mimeTypes.push(key);
+        else if (type === 'domains') domains.push(key);
         else words.push(key);
       });
     });
@@ -83,7 +87,7 @@ const SanitizeModal: React.FC<SanitizeModalProps> = ({ uploadResult, onProceed, 
       const resp = await fetch(`${API_BASE_URL}/api/sanitize/${uploadResult.fileId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: 'custom', scrubWords: words, scrubMimetypes: mimeTypes }),
+        body: JSON.stringify({ mode: 'custom', scrubWords: words, scrubMimetypes: mimeTypes, scrubDomains: domains }),
       });
       const data = await resp.json();
       onProceed(data.fileId);

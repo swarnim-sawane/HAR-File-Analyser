@@ -2110,6 +2110,25 @@ html.dark-mode .recent-file-card:hover {
 
 /* Responsive */
 @media (max-width: 768px) {
+    .har-sticky-header,
+    .console-sticky-header {
+        top: 72px;
+        gap: 8px;
+    }
+
+    .har-main-tabs,
+    .console-main-tabs {
+        flex: 1 1 100%;
+        padding-right: 24px;
+    }
+
+    .har-sticky-actions,
+    .console-sticky-actions {
+        width: 100%;
+        padding: 0 24px 12px;
+        justify-content: flex-end;
+    }
+
     .dark-mode-toggle {
         min-width: 40px;
         height: 36px;
@@ -2149,6 +2168,49 @@ html.dark-mode .recent-file-card:hover {
 .main-tab.active {
     color: var(--text-primary);
     border-bottom-color: var(--text-primary);
+}
+
+.har-sticky-header,
+.console-sticky-header {
+    position: sticky;
+    top: 72px;
+    z-index: 35;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.har-main-tabs,
+.console-main-tabs {
+    flex: 1 1 520px;
+    min-width: 0;
+    border-bottom: none;
+    padding-right: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.har-main-tabs::-webkit-scrollbar,
+.console-main-tabs::-webkit-scrollbar {
+    display: none;
+}
+
+.har-sticky-actions,
+.console-sticky-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 8px 24px 8px 0;
+}
+
+.har-sticky-upload,
+.console-sticky-upload {
+    white-space: nowrap;
 }
 
 /* Sanitizer Container */
@@ -5356,10 +5418,23 @@ html.dark-mode .summary-badge.warn-badge {
 
 html.dark-mode .sort-button {
     background: var(--bg-tertiary);
+    color: var(--text-secondary);
 }
 
 html.dark-mode .sort-button.active {
     background: var(--text-primary);
+    border-color: var(--text-primary);
+    color: var(--bg-primary);
+}
+
+html.dark-mode .sort-button:hover {
+    border-color: var(--text-secondary);
+    color: var(--text-primary);
+}
+
+html.dark-mode .sort-button .sort-icon,
+html.dark-mode .sort-button.active .sort-icon {
+    color: inherit;
 }
 
 
