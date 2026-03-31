@@ -11,21 +11,21 @@ export type ScrubType = 'cookies' | 'headers' | 'queryArgs' | 'postParams' | 'mi
 export type ScrubState = Record<ScrubType, Record<string, boolean>>;
 
 const defaultScrubState: ScrubState = {
+  domains: {},
   cookies: {},
   headers: {},
   queryArgs: {},
   postParams: {},
   mimeTypes: {},
-  domains: {},
 };
 
 const typeMap: Record<ScrubType, string> = {
-  cookies: 'Cookies',
-  mimeTypes: 'MIME Types',
-  headers: 'Headers',
-  postParams: 'POST Body Params',
-  queryArgs: 'Query String Parameters',
   domains: 'Domain Names',
+  cookies: 'Cookies',
+  headers: 'Headers',
+  queryArgs: 'Query String Parameters',
+  postParams: 'POST Body Params',
+  mimeTypes: 'MIME Types',
 };
 
 const HarSanitizer: React.FC = () => {
