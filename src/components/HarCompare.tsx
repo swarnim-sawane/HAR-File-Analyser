@@ -1,5 +1,5 @@
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -11,7 +11,6 @@ import {
   FileTextIcon,
   LayersIcon,
   NetworkIcon,
-  RefreshIcon,
   RouteIcon,
   SparklesIcon,
   UploadIcon,
@@ -459,23 +458,53 @@ const CompactFileControl: React.FC<CompactFileControlProps> = ({ side, title, fi
   );
 };
 
+// ── Module-level snapshot ────────────────────────────────────────────────────
+// HarCompare is conditionally rendered in App.tsx (`activeTool === 'compare'`),
+// so switching to any other tool tab unmounts it and React discards all state.
+// We persist the meaningful pieces here so the user returns to exactly where
+// they left off — loaded files, active sub-tab, AI result, and diff filter.
+// Loading / progress / file-error states are intentionally NOT preserved since
+// restoring a stuck progress bar or a stale parse error would be confusing.
+interface CompareSnapshot {
+  harA: HarFile | null;
+  harB: HarFile | null;
+  nameA: string | null;
+  nameB: string | null;
+  activeTab: CompareTab;
+  aiText: string;
+  aiError: string | null;
+  diffFilter: 'all' | 'regressions' | 'improvements' | 'new' | 'fixed';
+}
+let compareSnapshot: CompareSnapshot = {
+  harA: null, harB: null,
+  nameA: null, nameB: null,
+  activeTab: 'stats',
+  aiText: '', aiError: null,
+  diffFilter: 'all',
+};
+
 const HarCompare: React.FC<HarCompareProps> = ({ openTabs = [] }) => {
-  const [harA, setHarA] = useState<HarFile | null>(null);
-  const [harB, setHarB] = useState<HarFile | null>(null);
-  const [nameA, setNameA] = useState<string | null>(null);
-  const [nameB, setNameB] = useState<string | null>(null);
+  const [harA, setHarA] = useState<HarFile | null>(compareSnapshot.harA);
+  const [harB, setHarB] = useState<HarFile | null>(compareSnapshot.harB);
+  const [nameA, setNameA] = useState<string | null>(compareSnapshot.nameA);
+  const [nameB, setNameB] = useState<string | null>(compareSnapshot.nameB);
   const [loadingA, setLoadingA] = useState(false);
   const [loadingB, setLoadingB] = useState(false);
   const [progressA, setProgressA] = useState(0);
   const [progressB, setProgressB] = useState(0);
   const [errorA, setErrorA] = useState<string | null>(null);
   const [errorB, setErrorB] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<CompareTab>('stats');
-  const [aiText, setAiText] = useState('');
+  const [activeTab, setActiveTab] = useState<CompareTab>(compareSnapshot.activeTab);
+  const [aiText, setAiText] = useState(compareSnapshot.aiText);
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiError, setAiError] = useState<string | null>(null);
-  const [diffFilter, setDiffFilter] = useState<'all' | 'regressions' | 'improvements' | 'new' | 'fixed'>('all');
+  const [aiError, setAiError] = useState<string | null>(compareSnapshot.aiError);
+  const [diffFilter, setDiffFilter] = useState<'all' | 'regressions' | 'improvements' | 'new' | 'fixed'>(compareSnapshot.diffFilter);
   const aiAbortRef = useRef<AbortController | null>(null);
+
+  // Keep the snapshot in sync so a tab switch never loses work.
+  useEffect(() => {
+    compareSnapshot = { harA, harB, nameA, nameB, activeTab, aiText, aiError, diffFilter };
+  }, [harA, harB, nameA, nameB, activeTab, aiText, aiError, diffFilter]);
 
   const readHar = useCallback((file: File): Promise<HarFile> => {
     return new Promise((resolve, reject) => {
@@ -1112,57 +1141,60 @@ Formatting rules:
           )}
 
           {activeTab === 'ai' && (
-            <section className="cmp-view-shell">
-              <div className="cmp-view-header"><div><span className="cmp-view-kicker">AI assistance</span><h3>OCA summary</h3><p>Generate a guided narrative for what broke, what stayed healthy, and what the support engineer should verify next.</p></div></div>
-              <div className="cmp-ai-panel">
-                {!aiText && !aiLoading && !aiError && (
-                  <div className="cmp-ai-prompt">
-                    <div className="cmp-ai-hero">
-                      <span className="cmp-ai-icon"><SparklesIcon /></span>
-                      <div className="cmp-ai-hero-main">
-                        <div className="cmp-ai-hero-copy">
-                          <span className="cmp-panel-kicker">Oracle compare assist</span>
-                          <h4>Generate an AI comparison brief</h4>
-                          <p>OCA will compare both HAR files and summarize what changed, what still looks healthy, and what to investigate next.</p>
-                        </div>
-                        <button className="cmp-ai-run-btn" onClick={runAiDiff}><SparklesIcon />Run AI Analysis</button>
-                      </div>
-                    </div>
-                    <div className="cmp-ai-facts">
-                      <div className="cmp-ai-fact"><span>Requests reviewed</span><strong>{diff.length}</strong></div>
-                      <div className="cmp-ai-fact"><span>Baseline errors</span><strong>{metricsA?.errors ?? 0}</strong></div>
-                      <div className="cmp-ai-fact"><span>Comparison errors</span><strong>{metricsB?.errors ?? 0}</strong></div>
-                    </div>
-                  </div>
-                )}
-
-                {aiLoading && (
-                  <div className="cmp-ai-loading"><div className="cmp-ai-spinner" /><p>OCA is analyzing the differences between both captures.</p></div>
-                )}
-
-                {aiError && (
-                  <div className="cmp-ai-error">
-                    <span className="cmp-ai-error-icon"><AlertIcon /></span>
-                    <p>{aiError}</p>
-                    <button className="cmp-ai-run-btn" onClick={runAiDiff}><RefreshIcon />Retry</button>
-                  </div>
-                )}
-
-                {aiText && (
-                  <div className="cmp-ai-result">
-                    <div className="cmp-ai-result-header">
-                      <span className="cmp-ai-badge">OCA Analysis</span>
-                      <button className="cmp-ai-rerun" onClick={runAiDiff}><RefreshIcon />Re-run</button>
-                    </div>
-                    <div className="cmp-ai-text"><ReactMarkdown remarkPlugins={[remarkGfm]}>{normalizedAiText}</ReactMarkdown></div>
-                  </div>
-                )}
+            <section className="cmp-view-shell cmp-view-shell--ai">
+              <div className="cmp-view-header cmp-view-header--ai">
+                <div>
+                  <span className="cmp-view-kicker">AI assistance</span>
+                  <h3>OCA support analysis</h3>
+                  <p>Oracle-aware AI compares both HAR captures, surfaces broken services, and gives you actionable troubleshooting steps for the customer's environment.</p>
+                </div>
+                <button
+                  className="cmp-ai-run-btn"
+                  onClick={runAiDiff}
+                  disabled={aiLoading}
+                >
+                  {aiLoading ? (
+                    <><span className="cmp-ai-spinner" />Analysing…</>
+                  ) : (
+                    <><SparklesIcon />{aiText ? 'Re-run analysis' : 'Run AI analysis'}</>
+                  )}
+                </button>
               </div>
+
+              {!aiText && !aiLoading && !aiError && (
+                <div className="cmp-ai-empty">
+                  <span className="cmp-ai-empty-icon"><SparklesIcon /></span>
+                  <p>Click <strong>Run AI analysis</strong> to get an Oracle L2 engineer's assessment of what broke, what was working, and what to check at the customer's end.</p>
+                </div>
+              )}
+
+              {aiError && (
+                <div className="cmp-ai-error">
+                  <AlertIcon />
+                  <span>{aiError}</span>
+                </div>
+              )}
+
+              {aiLoading && !aiText && (
+                <div className="cmp-ai-thinking">
+                    <div className="cmp-ai-thinking-dots">
+                      <span /><span /><span />
+                    </div>
+                  <p>Comparing HAR captures and preparing Oracle-specific guidance…</p>
+                </div>
+              )}
+
+              {aiText && (
+                <div className="cmp-ai-result">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {normalizedAiText}
+                  </ReactMarkdown>
+                </div>
+              )}
             </section>
           )}
         </>
       )}
-
     </div>
   );
 };

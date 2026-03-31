@@ -1,15 +1,14 @@
 // src/components/HarSanitizer.tsx
 import React, { useState, useCallback, useEffect } from 'react';
-import { 
-  sanitize, 
-  getHarInfo, 
-  PossibleScrubItems, 
+import {
+  sanitize,
+  getHarInfo,
   defaultScrubItems,
-  SanitizeOptions 
+  SanitizeOptions,
 } from '../utils/har_sanitize';
 
-export type ScrubState = Record<ScrubType, Record<string, boolean>>;
 export type ScrubType = 'cookies' | 'headers' | 'queryArgs' | 'postParams' | 'mimeTypes';
+export type ScrubState = Record<ScrubType, Record<string, boolean>>;
 
 const defaultScrubState: ScrubState = {
   cookies: {},
@@ -40,14 +39,11 @@ const HarSanitizer: React.FC = () => {
     const output = { ...defaultScrubState };
 
     Object.entries(rawItems).forEach(([key, items]: [string, string[]]) => {
-      output[key as ScrubType] = items.reduce(
-        (acc, curr) => {
-          if (!curr) return acc;
-          acc[curr] = defaultScrubItems.includes(curr);
-          return acc;
-        },
-        {} as Record<string, boolean>
-      );
+      output[key as ScrubType] = items.reduce((acc, curr) => {
+        if (!curr) return acc;
+        acc[curr] = defaultScrubItems.includes(curr);
+        return acc;
+      }, {} as Record<string, boolean>);
     });
 
     return output;
@@ -55,7 +51,7 @@ const HarSanitizer: React.FC = () => {
 
   const sanitizeHar = useCallback((input: string, scrubState: ScrubState): string => {
     const words = new Set<string>();
-    
+
     Object.entries(scrubState.cookies).forEach(([key, val]) => {
       if (val) words.add(key);
     });
@@ -83,22 +79,20 @@ const HarSanitizer: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (originalHar) {
-      try {
-        const scrubState = getScrubableItems(originalHar);
-        setScrubItems(scrubState);
-        const sanitized = sanitizeHar(originalHar, scrubState);
-        setSanitizedHar(sanitized);
-      } catch (err) {
-        console.error('Failed to process HAR:', err);
-      }
+    if (!originalHar) return;
+    try {
+      const scrubState = getScrubableItems(originalHar);
+      setScrubItems(scrubState);
+      setSanitizedHar(sanitizeHar(originalHar, scrubState));
+    } catch (err) {
+      console.error('Failed to process HAR:', err);
     }
   }, [originalHar, sanitizeHar]);
 
   const handleFileUpload = useCallback(async (file: File) => {
     try {
       const text = await file.text();
-      JSON.parse(text); // Validate JSON
+      JSON.parse(text);
       setOriginalHar(text);
       setFileName(file.name);
       setError('');
@@ -114,39 +108,37 @@ const HarSanitizer: React.FC = () => {
     checked: boolean
   ) => {
     setScrubItems(prev => {
-      const newState = {
+      const nextState = {
         ...prev,
         [type]: {
           ...prev[type],
           [item]: checked,
         },
       };
-      
+
       if (originalHar) {
-        const sanitized = sanitizeHar(originalHar, newState);
-        setSanitizedHar(sanitized);
+        setSanitizedHar(sanitizeHar(originalHar, nextState));
       }
-      
-      return newState;
+
+      return nextState;
     });
   }, [originalHar, sanitizeHar]);
 
   const handleSelectAll = useCallback((type: ScrubType, checked: boolean) => {
     setScrubItems(prev => {
-      const newState = {
+      const nextState = {
         ...prev,
         [type]: Object.keys(prev[type]).reduce((acc, key) => {
           acc[key] = checked;
           return acc;
         }, {} as Record<string, boolean>),
       };
-      
+
       if (originalHar) {
-        const sanitized = sanitizeHar(originalHar, newState);
-        setSanitizedHar(sanitized);
+        setSanitizedHar(sanitizeHar(originalHar, nextState));
       }
-      
-      return newState;
+
+      return nextState;
     });
   }, [originalHar, sanitizeHar]);
 
@@ -165,7 +157,7 @@ const HarSanitizer: React.FC = () => {
     setIsDragging(false);
 
     const files = Array.from(e.dataTransfer.files);
-    const harFile = files.find(file => 
+    const harFile = files.find(file =>
       file.name.endsWith('.har') || file.type === 'application/json'
     );
 
@@ -185,7 +177,7 @@ const HarSanitizer: React.FC = () => {
     if (!sanitizedHar) return;
 
     try {
-      JSON.parse(sanitizedHar); // Validate before download
+      JSON.parse(sanitizedHar);
       const blob = new Blob([sanitizedHar], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -227,13 +219,14 @@ const HarSanitizer: React.FC = () => {
   return (
     <div className="har-sanitizer">
       <div className="sanitizer-header">
-        <div>
+        <div className="sanitizer-header-copy">
+          <span className="sanitizer-kicker">Privacy-first utility</span>
           <h2>HAR Sanitizer</h2>
           <p className="sanitizer-description">
             Remove sensitive data from HAR files before sharing. Based on{' '}
-            <a 
-              href="https://github.com/cloudflare/har-sanitizer" 
-              target="_blank" 
+            <a
+              href="https://github.com/cloudflare/har-sanitizer"
+              target="_blank"
               rel="noopener noreferrer"
               className="sanitizer-link"
             >
@@ -241,27 +234,42 @@ const HarSanitizer: React.FC = () => {
             </a>
           </p>
         </div>
+        <div className="sanitizer-trust-strip">
+          <span className="sanitizer-trust-pill">Local only</span>
+          <span className="sanitizer-trust-pill">Safe to share</span>
+          <span className="sanitizer-trust-pill">No server upload</span>
+        </div>
       </div>
 
       {error && (
         <div className="error-message">
-          <span className="error-icon">⚠️</span>
+          <span className="error-icon">!</span>
           <span>{error}</span>
-          <button onClick={() => setError('')} className="btn-dismiss-error">✕</button>
+          <button onClick={() => setError('')} className="btn-dismiss-error">x</button>
         </div>
       )}
 
       {!originalHar ? (
         <div className="sanitizer-upload">
           <div
-            className={`drop-zone ${isDragging ? 'dragging' : ''}`}
+            className={`drop-zone sanitizer-drop-zone ${isDragging ? 'dragging' : ''}`}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
           >
-            <div className="upload-icon">🔒</div>
-            <h3>Upload HAR File to Sanitize</h3>
-            <p>Your file is processed locally - nothing is sent to a server</p>
+            <div className="upload-icon sanitizer-upload-icon">LOCK</div>
+            <span className="sanitizer-upload-kicker">Protected workspace</span>
+            <h3>Upload a HAR file and sanitize it before sharing</h3>
+            <p>
+              Process the file locally, review detected sensitive fields, and
+              download a cleaner version for support, debugging, or handoff.
+            </p>
+            <div className="sanitizer-upload-badges">
+              <span>JWT signatures</span>
+              <span>Auth headers</span>
+              <span>Cookies</span>
+              <span>Query params</span>
+            </div>
             <input
               type="file"
               accept=".har,application/json"
@@ -269,41 +277,61 @@ const HarSanitizer: React.FC = () => {
               style={{ display: 'none' }}
               id="sanitizer-file-input"
             />
-            <label htmlFor="sanitizer-file-input" className="upload-button">
+            <label htmlFor="sanitizer-file-input" className="upload-button sanitizer-upload-button">
               Choose HAR File
             </label>
+            <span className="sanitizer-upload-hint">Drag and drop also works here.</span>
           </div>
 
-          <div className="sanitizer-info">
-            <h4>Why sanitize HAR files?</h4>
-            <ul>
-              <li>HAR files contain complete HTTP request/response data</li>
-              <li>May include sensitive information like tokens, cookies, and passwords</li>
-              <li>Should be cleaned before sharing with support teams or online</li>
-              <li>Uses Cloudflare's proven sanitization logic with regex-based scrubbing</li>
-              <li>Automatically redacts JWT signatures and sensitive parameters</li>
-            </ul>
+          <div className="sanitizer-side-column">
+            <div className="sanitizer-info">
+              <span className="sanitizer-card-kicker">Why sanitize</span>
+              <h4>Why sanitize HAR files?</h4>
+              <ul>
+                <li>HAR files include complete request and response activity</li>
+                <li>They often expose tokens, cookies, and user-specific parameters</li>
+                <li>Clean captures are safer to share with support teams or vendors</li>
+                <li>Cloudflare-based logic handles common sensitive patterns automatically</li>
+              </ul>
+            </div>
+
+            <div className="sanitizer-process-card">
+              <span className="sanitizer-card-kicker">What you get</span>
+              <h4>Review before download</h4>
+              <p>
+                Inspect detected scrub targets, adjust exactly what gets removed,
+                and export a sanitized HAR without changing the original file.
+              </p>
+              <div className="sanitizer-process-list">
+                <span>Upload locally</span>
+                <span>Review detected fields</span>
+                <span>Download sanitized HAR</span>
+              </div>
+            </div>
           </div>
         </div>
       ) : (
         <div className="sanitizer-content">
           <div className="sanitizer-controls">
             <div className="current-file-info">
-              <span className="file-icon">📄</span>
-              <span className="file-name">{fileName}</span>
+              <span className="file-icon">HAR</span>
+              <div className="current-file-copy">
+                <span className="current-file-label">Active file</span>
+                <span className="file-name">{fileName}</span>
+              </div>
               <button className="btn-clear-file" onClick={handleClear}>
-                ✕ Clear
+                Clear
               </button>
             </div>
 
             <div className="sanitizer-options">
               <h3>Select Items to Sanitize</h3>
-              <p className="options-help">Choose which elements to remove from your HAR file</p>
+              <p className="options-help">Choose which elements to remove from your HAR file.</p>
 
               {(Object.entries(scrubItems) as [ScrubType, Record<string, boolean>][]).map(
                 ([type, items], index) => {
                   const itemKeys = Object.keys(items);
-                  if (itemKeys.length === 0) return null;
+                  if (!itemKeys.length) return null;
 
                   const allChecked = Object.values(items).every(v => v);
                   const someChecked = Object.values(items).some(v => v);
@@ -311,7 +339,7 @@ const HarSanitizer: React.FC = () => {
                   return (
                     <div key={type} className="scrub-type-section">
                       {index > 0 && <div className="section-divider" />}
-                      
+
                       <div className="scrub-type-header">
                         <h4>{typeMap[type]}</h4>
                         <label className="select-all-label">
@@ -348,19 +376,22 @@ const HarSanitizer: React.FC = () => {
 
           <div className="sanitizer-preview">
             <div className="preview-header">
-              <h3>Sanitized Preview</h3>
+              <div className="preview-header-copy">
+                <span className="sanitizer-card-kicker">Output preview</span>
+                <h3>Sanitized Preview</h3>
+              </div>
               <button className="btn-download" onClick={handleDownload}>
-                ⬇ Download Sanitized HAR
+                Download Sanitized HAR
               </button>
             </div>
 
             <div className="preview-stats">
               <div className="stat">
-                <span className="stat-label">Original Entries:</span>
+                <span className="stat-label">Original Entries</span>
                 <span className="stat-value">{getOriginalCount()}</span>
               </div>
               <div className="stat">
-                <span className="stat-label">Sanitized Entries:</span>
+                <span className="stat-label">Sanitized Entries</span>
                 <span className="stat-value">{getSanitizedCount()}</span>
               </div>
             </div>
