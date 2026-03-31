@@ -34,14 +34,30 @@ const ConsoleLogList: React.FC<ConsoleLogListProps> = ({
     }
   };
 
-  const handleCopyMessage = (entry: ConsoleLogEntry, e: React.MouseEvent) => {
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+  };
+
+  const handleCopyMessage = async (entry: ConsoleLogEntry, e: React.MouseEvent) => {
     e.stopPropagation();
     const formattedText = `[${entry.level.toUpperCase()}] ${formatDate(entry.timestamp)}
 ${entry.message}${
       entry.source ? `\nSource: ${entry.source}${entry.lineNumber ? `:${entry.lineNumber}` : ''}` : ''
     }`;
 
-    navigator.clipboard.writeText(formattedText);
+    await copyToClipboard(formattedText);
     setCopiedId(entry.id);
     setTimeout(() => setCopiedId(null), 1500);
   };
@@ -65,7 +81,7 @@ ${entry.message}${
     setSelectedIds(newSelected);
   };
 
-  const handleCopySelected = () => {
+  const handleCopySelected = async () => {
     const selectedEntries = entries.filter((e) => selectedIds.has(e.id));
     const text = selectedEntries
       .map(
@@ -75,7 +91,7 @@ ${entry.message}${
           }`
       )
       .join('\n\n');
-    navigator.clipboard.writeText(text);
+    await copyToClipboard(text);
     setCopiedId('bulk-copy');
     setTimeout(() => setCopiedId(null), 1500);
   };

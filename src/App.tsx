@@ -4,18 +4,12 @@ import React, { useCallback, useRef, useState, useEffect } from 'react';
 import FileUploader from './components/FileUploader';
 import ConsoleLogUploader from './components/ConsoleLogUploader';
 import UnifiedUploader from './components/UnifiedUploader';
-import ConsoleLogFilterPanel from './components/ConsoleLogFilterPanel';
-import ConsoleLogList from './components/ConsoleLogList';
-import ConsoleLogDetails from './components/ConsoleLogDetails';
-import ConsoleLogStatistics from './components/ConsoleLogStatistics';
-import ConsoleLogAiInsights from './components/ConsoleLogAiInsights';
-import Toolbar from './components/Toolbar';
 import HarTabContent from './components/HarTabContent';
-import { useConsoleLogData } from './hooks/useConsoleLogData';
-import { ConsoleLogAnalyzer } from './utils/consoleLogAnalyzer';
+import ConsoleLogTabContent from './components/ConsoleLogTabContent';
+import { ConsoleLogFile } from './types/consolelog';
+import { ConsoleLogParser } from './utils/consoleLogParser';
 import './styles/globals.css';
 import DarkModeToggle from './components/DarkModeToggle';
-import FloatingAiChat from './components/FloatingAiChat';
 import { UploadResult, chunkedUploader } from './services/chunkedUploader';
 import { apiClient } from './services/apiClient';
 import { wsClient } from './services/websocketClient';
@@ -38,6 +32,14 @@ interface HarFileTab {
   fileName: string; // display name
 }
 
+/** A single open Console Log tab */
+interface LogFileTab {
+  id: string;
+  fileId: string | null;          // null when parsed locally (small files)
+  fileName: string;
+  localData: ConsoleLogFile | null; // pre-parsed data for small files
+}
+
 const BACKEND_URL =
   import.meta.env.VITE_BACKEND_URL ||
   import.meta.env.VITE_API_URL ||
@@ -56,17 +58,17 @@ const App: React.FC = () => {
   const [addTabPendingResult, setAddTabPendingResult] = useState<UploadResult | null>(null);
   const [addTabPendingBatch, setAddTabPendingBatch] = useState<UploadResult[] | null>(null);
 
-  // ── Console Log state ────────────────────────────────────────────────────────
-  const logState = useConsoleLogData();
-  const [logShowUploader, setLogShowUploader] = useState(false);
+  // ── Console Log multi-tab state ──────────────────────────────────────────────
+  const [logTabs, setLogTabs] = useState<LogFileTab[]>([]);
+  const [activeLogTabId, setActiveLogTabId] = useState<string | null>(null);
   const [logRecentFiles, setLogRecentFiles] = useState<RecentFile[]>([]);
-  const [logCurrentFileName, setLogCurrentFileName] = useState('');
   const [isLogProcessing, setIsLogProcessing] = useState(false);
   const [logLoadingMessage, setLogLoadingMessage] = useState('Loading console log file...');
   const [showLogLocalFallback, setShowLogLocalFallback] = useState(false);
   const logCancelRef = React.useRef<(() => void) | null>(null);
-  type ConsoleTab = 'analyzer' | 'insights';
-  const [logActiveTab, setLogActiveTab] = useState<ConsoleTab>('analyzer');
+  const addLogTabInputRef = useRef<HTMLInputElement>(null);
+
+  const MAX_LOG_TABS = 8;
 
   // ── Main navigation ──────────────────────────────────────────────────────────
   const [activeTool, setActiveTool] = useState<'har' | 'sanitizer' | 'console' | 'compare'>('har');
@@ -77,28 +79,6 @@ const App: React.FC = () => {
   const LOG_RECENT_FILES_KEY = 'console_log_recent_files';
   const LOG_STATUS_POLL_INTERVAL_MS = 2000;
   const LOG_STATUS_TIMEOUT_MS = 180000;
-
-  // ── Console log details resize ───────────────────────────────────────────────
-  const [detailsWidth, setDetailsWidth] = useState(450);
-  const DETAILS_MIN = 320;
-  const DETAILS_MAX = 900;
-
-  const startResize = (e: React.MouseEvent) => {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startWidth = detailsWidth;
-    const onMove = (ev: MouseEvent) => {
-      const delta = startX - ev.clientX;
-      const next = Math.max(DETAILS_MIN, Math.min(DETAILS_MAX, startWidth + delta));
-      setDetailsWidth(next);
-    };
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  };
 
   // ── Deep-link handler: ?fileId=<id> pre-loads a file uploaded by the MCP tool ──
   useEffect(() => {
@@ -290,6 +270,62 @@ const App: React.FC = () => {
     }
   };
 
+  // ── Console Log tab management ────────────────────────────────────────────────
+
+  const openLogTab = useCallback((
+    opts: { fileId: string | null; fileName: string; localData: ConsoleLogFile | null },
+    switchTool = false
+  ) => {
+    if (logTabs.length >= MAX_LOG_TABS) {
+      console.warn(`Max ${MAX_LOG_TABS} console log tabs open — close one first`);
+      return;
+    }
+    const newTab: LogFileTab = {
+      id: `logtab_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      fileId: opts.fileId,
+      fileName: opts.fileName,
+      localData: opts.localData,
+    };
+    setLogTabs(prev => [...prev, newTab]);
+    setActiveLogTabId(newTab.id);
+    if (switchTool) setActiveTool('console');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [logTabs.length]);
+
+  const closeLogTab = (tabId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setLogTabs(prev => {
+      const idx = prev.findIndex(t => t.id === tabId);
+      const next = prev.filter(t => t.id !== tabId);
+      if (activeLogTabId === tabId) {
+        const nextActive = next[Math.max(0, idx - 1)]?.id ?? next[0]?.id ?? null;
+        setActiveLogTabId(nextActive);
+      }
+      return next;
+    });
+  };
+
+  const handleLogTabSwitch = (tabId: string) => {
+    if (tabId === activeLogTabId) return;
+    setActiveLogTabId(tabId);
+  };
+
+  const handleAddLogTabClick = () => {
+    addLogTabInputRef.current?.click();
+  };
+
+  const handleAddLogTabFileInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const result = await chunkedUploader.uploadFile(file, 'log', () => {});
+      await handleLogUploadComplete(result, file);
+    } catch (err) {
+      console.error('Failed to upload console log file:', err);
+    }
+  };
+
   const registerRecentLogFile = (fileName: string, fileObj: File) => {
     // Persist actual file content to IndexedDB for cross-session restore
     if (fileObj && fileObj.size > 0) {
@@ -387,26 +423,24 @@ const App: React.FC = () => {
   }, []);
 
   // Files under this limit are parsed locally (instant, no backend dependency).
-  // Mirrors the HAR flow which reads from disk immediately after upload.
   const LOCAL_PARSE_THRESHOLD = 20 * 1024 * 1024; // 20 MB
 
-  // Console log file handlers
+  // Console log upload handler — creates a new tab after loading.
+  // The loading overlay lives in App.tsx (shown during the wait), then the resulting
+  // data or fileId is handed off to a new ConsoleLogTabContent that owns it permanently.
   const handleLogUploadComplete = async (result: UploadResult, sourceFile?: File) => {
-    setLogCurrentFileName(result.fileName);
     setIsLogProcessing(true);
     logCancelRef.current = null;
 
-    // Small files: parse locally in the browser — no waiting for the backend worker.
-    // The file was already uploaded so the backend can still index it for AI features.
+    // Small files: parse locally — instant, no backend wait.
     if (sourceFile && result.fileSize <= LOCAL_PARSE_THRESHOLD) {
-      setLogLoadingMessage('Parsing console log...');
+      setLogLoadingMessage('Parsing console log…');
       try {
-        const loaded = await logState.loadLogFile(sourceFile);
-        if (loaded) {
-          setLogCurrentFileName(sourceFile.name);
-          setLogShowUploader(false);
-          registerRecentLogFile(sourceFile.name, sourceFile);
-        }
+        const parsed: ConsoleLogFile = await ConsoleLogParser.parseFile(sourceFile);
+        openLogTab({ fileId: null, fileName: sourceFile.name, localData: parsed });
+        registerRecentLogFile(sourceFile.name, sourceFile);
+      } catch (err) {
+        console.error('Local parse failed:', err);
       } finally {
         setIsLogProcessing(false);
         setLogLoadingMessage('Loading console log file...');
@@ -414,30 +448,22 @@ const App: React.FC = () => {
       return;
     }
 
-    // Large files: wait for the backend worker (which handles streaming + pagination).
+    // Large files: wait for the backend worker, then open tab with fileId.
     try {
-      setLogLoadingMessage('Processing console log on server...');
+      setLogLoadingMessage('Processing console log on server…');
       await waitForLogReady(result.fileId, logCancelRef);
-
-      setLogLoadingMessage('Loading parsed console entries...');
-      const loadedFromBackend = await logState.loadLogFromBackend(result.fileId, result.fileName);
-
-      if (!loadedFromBackend) {
-        throw new Error('Processed console log could not be loaded from backend');
-      }
-
-      setLogShowUploader(false);
+      openLogTab({ fileId: result.fileId, fileName: result.fileName, localData: null });
       registerRecentLogFile(result.fileName, sourceFile || new File([], result.fileName));
     } catch (err) {
       console.error('Console backend flow failed, falling back to local parse:', err);
-
       if (sourceFile) {
-        setLogLoadingMessage('Backend unavailable, parsing console log locally...');
-        const loadedLocally = await logState.loadLogFile(sourceFile);
-        if (loadedLocally) {
-          setLogCurrentFileName(sourceFile.name);
-          setLogShowUploader(false);
+        setLogLoadingMessage('Backend unavailable, parsing console log locally…');
+        try {
+          const parsed: ConsoleLogFile = await ConsoleLogParser.parseFile(sourceFile);
+          openLogTab({ fileId: null, fileName: sourceFile.name, localData: parsed });
           registerRecentLogFile(sourceFile.name, sourceFile);
+        } catch (parseErr) {
+          console.error('Local parse fallback also failed:', parseErr);
         }
       }
     } finally {
@@ -469,31 +495,23 @@ const App: React.FC = () => {
       console.error('Recent log re-upload failed, using local fallback:', err);
       setIsLogProcessing(true);
       setLogLoadingMessage('Re-upload failed, parsing console log locally...');
-      const loadedLocally = await logState.loadLogFile(resolvedFile);
-      if (loadedLocally) {
-        setLogCurrentFileName(resolvedFile.name);
-        setLogShowUploader(false);
+      try {
+        const parsed: ConsoleLogFile = await ConsoleLogParser.parseFile(resolvedFile);
+        openLogTab({ fileId: null, fileName: resolvedFile.name, localData: parsed });
         registerRecentLogFile(resolvedFile.name, resolvedFile);
+      } catch (parseErr) {
+        console.error('Local fallback parse failed:', parseErr);
       }
       setIsLogProcessing(false);
       setLogLoadingMessage('Loading console log file...');
     }
   };
 
-  const logGroupedEntries = React.useMemo(() => {
-    if (logState.filters.groupBy === 'all') return null;
-    if (logState.filters.groupBy === 'level') {
-      return ConsoleLogAnalyzer.groupByLevel(logState.filteredEntries);
-    }
-    return ConsoleLogAnalyzer.groupBySource(logState.filteredEntries);
-  }, [logState.filteredEntries, logState.filters.groupBy]);
-
   // Show the unified uploader only when there is truly nothing loaded in either tool.
   // Once any file is open the tool tabs take over and each tool manages its own upload.
   const showUnifiedUploader =
     harTabs.length === 0 &&
-    !logState.logData &&
-    !logState.isLoading &&
+    logTabs.length === 0 &&
     !isLogProcessing;
 
   return (
@@ -724,11 +742,12 @@ const App: React.FC = () => {
         {/* Console Log Analyzer Tool */}
         {activeTool === 'console' && (
           <>
-            {(logState.isLoading || isLogProcessing) && (
+            {/* Loading overlay — shown while a new tab is being created (upload + parse) */}
+            {isLogProcessing && (
               <div className="loading-overlay">
-                <div className="spinner"></div>
+                <div className="spinner" />
                 <p>{logLoadingMessage}</p>
-                {isLogProcessing && showLogLocalFallback && (
+                {showLogLocalFallback && (
                   <button
                     className="btn-local-fallback"
                     onClick={() => logCancelRef.current?.()}
@@ -739,15 +758,57 @@ const App: React.FC = () => {
               </div>
             )}
 
-            {logState.error && (
-              <div className="error-banner">
-                <span className="error-icon">⚠️</span>
-                <span>{logState.error}</span>
-                <button onClick={logState.clearData} className="btn-dismiss">✕</button>
+            {/* ── Console file tab bar ─────────────────────────────────── */}
+            {logTabs.length > 0 && (
+              <div className="har-file-tabs">
+                {logTabs.map(tab => (
+                  <button
+                    key={tab.id}
+                    className={`har-file-tab ${tab.id === activeLogTabId ? 'active' : ''}`}
+                    onClick={() => handleLogTabSwitch(tab.id)}
+                    title={tab.fileName}
+                  >
+                    <svg className="har-file-tab-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <polyline points="4 17 10 11 4 5" />
+                      <line x1="12" y1="19" x2="20" y2="19" />
+                    </svg>
+                    <span className="har-file-tab-name">{tab.fileName}</span>
+                    <span
+                      className="har-file-tab-close"
+                      role="button"
+                      aria-label={`Close ${tab.fileName}`}
+                      onClick={(e) => closeLogTab(tab.id, e)}
+                    >
+                      ×
+                    </span>
+                  </button>
+                ))}
+
+                {logTabs.length < MAX_LOG_TABS && (
+                  <button
+                    className="har-file-tab-add"
+                    onClick={handleAddLogTabClick}
+                    title="Open another console log file"
+                  >
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M8 3v10M3 8h10" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                )}
+
+                {/* Hidden file input for the "+" button */}
+                <input
+                  ref={addLogTabInputRef}
+                  type="file"
+                  accept=".log,.txt,.json"
+                  style={{ display: 'none' }}
+                  onChange={handleAddLogTabFileInput}
+                />
               </div>
             )}
 
-            {(logShowUploader || !logState.logData) && !logState.isLoading ? (
+            {/* Upload screen when no tabs are open yet */}
+            {logTabs.length === 0 && !isLogProcessing && (
               <div className="upload-section">
                 <ConsoleLogUploader
                   onFileUpload={handleLogUploadComplete}
@@ -759,93 +820,28 @@ const App: React.FC = () => {
                   }}
                 />
               </div>
-            ) : logState.logData ? (
-              <>
-                {/* ── Console sub-tabs ───────────────────────────────────── */}
-                <div className="main-tabs">
-                  {(['analyzer', 'insights'] as ConsoleTab[]).map((tab) => (
-                    <button
-                      key={tab}
-                      className={`main-tab ${logActiveTab === tab ? 'active' : ''}`}
-                      onClick={() => setLogActiveTab(tab)}
-                    >
-                      {tab === 'analyzer' ? 'Analyzer' : 'AI Insights'}
-                    </button>
-                  ))}
-                </div>
+            )}
 
-                {logActiveTab === 'analyzer' && (
-                  <>
-                    <Toolbar
-                      onUploadNew={() => {
-                        setLogShowUploader(true);
-                        logState.clearData();
-                        setLogCurrentFileName('');
-                        setLogLoadingMessage('Loading console log file...');
-                      }}
-                      onLoadRecent={handleRecentLogFile}
-                      recentFiles={logRecentFiles}
-                      onClearRecent={() => {
-                        setLogRecentFiles([]);
-                        localStorage.removeItem(LOG_RECENT_FILES_KEY);
-                        void clearRecentFiles('log');
-                      }}
-                      currentFileName={logCurrentFileName}
-                      filteredEntries={logState.filteredEntries}
-                      totalEntries={logState.logData?.entries.length || 0}
-                    />
-
-                    <div
-                      className={`analyzer-layout ${logState.selectedEntry ? 'with-details' : ''}`}
-                      style={logState.selectedEntry ? ({ ['--details-width' as any]: `${detailsWidth}px` }) : undefined}
-                    >
-                      <aside className="sidebar-left console-sidebar">
-                        <div className="console-sidebar-stack">
-                          <ConsoleLogFilterPanel
-                            filters={logState.filters}
-                            onFilterChange={logState.updateFilters}
-                          />
-                          <ConsoleLogStatistics
-                            entries={logState.filteredEntries}
-                            totalEntries={logState.logData?.metadata.totalEntries}
-                            truncatedAt={logState.logData?.metadata.truncatedAt}
-                          />
-                        </div>
-                      </aside>
-                      <div className="content-area">
-                        <ConsoleLogList
-                          entries={logState.filteredEntries}
-                          groupedEntries={logGroupedEntries}
-                          selectedEntry={logState.selectedEntry}
-                          onSelectEntry={logState.setSelectedEntry}
-                        />
-                      </div>
-                      {logState.selectedEntry && (
-                        <aside className="sidebar-right">
-                          <div className="resize-handle" onMouseDown={startResize} />
-                          <ConsoleLogDetails
-                            entry={logState.selectedEntry}
-                            onClose={() => logState.setSelectedEntry(null)}
-                          />
-                        </aside>
-                      )}
-                    </div>
-                  </>
-                )}
-
-                {/* Always mounted so useConsoleLogInsights auto-fires as soon as log
-                    data loads, generating results in the background before the
-                    user visits the AI Insights tab. */}
-                <div style={{ display: logActiveTab === 'insights' ? undefined : 'none' }}>
-                  <ConsoleLogAiInsights
-                    logData={logState.logData}
-                    backendUrl={BACKEND_URL}
-                  />
-                </div>
-
-                <FloatingAiChat logData={logState.logData} />
-              </>
-            ) : null}
+            {/* One ConsoleLogTabContent per open file — all mounted, only active shown */}
+            {logTabs.map(tab => (
+              <ConsoleLogTabContent
+                key={tab.id}
+                tabId={tab.id}
+                fileId={tab.fileId}
+                fileName={tab.fileName}
+                initialData={tab.localData}
+                isActive={tab.id === activeLogTabId}
+                backendUrl={BACKEND_URL}
+                recentFiles={logRecentFiles}
+                onAddNewTab={handleAddLogTabClick}
+                onLoadRecentNewTab={handleRecentLogFile}
+                onClearRecent={() => {
+                  setLogRecentFiles([]);
+                  localStorage.removeItem(LOG_RECENT_FILES_KEY);
+                  void clearRecentFiles('log');
+                }}
+              />
+            ))}
           </>
         )}
         </>)}

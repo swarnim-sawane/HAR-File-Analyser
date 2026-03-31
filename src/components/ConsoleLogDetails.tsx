@@ -26,8 +26,21 @@ const ConsoleLogDetails: React.FC<ConsoleLogDetailsProps> = ({ entry, onClose })
     return colors[level] || '#6b7280';
   };
 
-  const handleCopy = (text: string, section: string) => {
-    navigator.clipboard.writeText(text);
+  const handleCopy = async (text: string, section: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Fallback for non-secure contexts or browsers that deny clipboard permission
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
     setCopiedSection(section);
     setTimeout(() => setCopiedSection(null), 2000);
   };

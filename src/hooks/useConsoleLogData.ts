@@ -168,6 +168,14 @@ export const useConsoleLogData = () => {
     setFilters(prev => ({ ...prev, ...newFilters }));
   }, []);
 
+  /** Directly hydrate the hook with pre-parsed data (used by ConsoleLogTabContent
+   *  when the file was already parsed in App.tsx before the tab was created). */
+  const loadFromData = useCallback((data: ConsoleLogFile) => {
+    setLogData(data);
+    setSelectedEntry(null);
+    setError(null);
+  }, []);
+
   const clearData = useCallback(() => {
     setLogData(null);
     setSelectedEntry(null);
@@ -210,6 +218,7 @@ export const useConsoleLogData = () => {
     error,
     loadLogFile,
     loadLogFromBackend,
+    loadFromData,
     setSelectedEntry,
     updateFilters,
     clearData,
