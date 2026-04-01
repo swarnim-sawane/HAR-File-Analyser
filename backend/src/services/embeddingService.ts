@@ -2,7 +2,7 @@ import axios from 'axios';
 import { ollamaPool } from './ollamaPool';
 import { getQdrant, getMongoDb, getRedis } from '../config/database';
 import { harEntryToText, logEntryToText, ParsedHarEntry, ParsedLogEntry } from './streamingParser';
-import { emitGlobal, emitToFile } from '../utils/socketHelper'; // NEW
+import { publishGlobal, publishToFile } from '../utils/socketHelper';
 
 const EMBEDDING_MODEL = process.env.OLLAMA_EMBEDDING_MODEL || 'nomic-embed-text';
 
@@ -67,7 +67,7 @@ export async function generateEmbeddingsBatch(
     }
     
     // Emit WebSocket progress - FIXED
-    emitGlobal('embedding:progress', {
+    await publishGlobal('embedding:progress', {
       processed: embeddings.length,
       total: texts.length,
       progress: Math.round(progress)
@@ -126,8 +126,7 @@ export async function indexHarEntries(
     });
     
     // Emit progress - FIXED
-    emitToFile(fileId, 'indexing:progress', {
-      fileId,
+    await publishToFile(fileId, 'indexing:progress', {
       processed: i + batch.length,
       total: entries.length
     });
@@ -174,8 +173,7 @@ export async function indexLogEntries(
     });
     
     // Emit progress - FIXED
-    emitToFile(fileId, 'indexing:progress', {
-      fileId,
+    await publishToFile(fileId, 'indexing:progress', {
       processed: i + batch.length,
       total: entries.length
     });

@@ -1,7 +1,8 @@
 import { Queue } from 'bullmq';
 import { getRedis, getMongoDb } from '../config/database';
+import { LOG_QUEUE_NAME } from '../config/queueNames';
 import { streamParseConsoleLog, ParsedLogEntry } from '../services/streamingParser';
-import { emitToFile } from '../utils/socketHelper';
+import { publishToFile } from '../utils/socketHelper';
 
 // FIXED: Don't call getRedis() at module load time
 let redis: any = null;
@@ -11,7 +12,7 @@ let logQueue: Queue | null = null;
 export function initLogQueue(): Queue {
   if (!logQueue) {
     redis = getRedis();
-    logQueue = new Queue('log-processing', { connection: redis });
+    logQueue = new Queue(LOG_QUEUE_NAME, { connection: redis });
   }
   return logQueue;
 }
@@ -90,7 +91,7 @@ export async function processConsoleLog(data: LogJobData): Promise<void> {
           const estimatedBytesRead = totalEntries * 150;
           const rawPct = fileSize > 0 ? (estimatedBytesRead / fileSize) * 85 : 50;
           const progress = Math.min(rawPct, 85);
-          emitProgress(fileId, 'parsing', progress);
+          await emitProgress(fileId, 'parsing', progress);
           console.log(`  ↳ ${totalEntries.toLocaleString()} entries parsed (~${progress.toFixed(0)}%)`);
         }
 
@@ -113,7 +114,7 @@ export async function processConsoleLog(data: LogJobData): Promise<void> {
     }
 
     console.log(`✓ Parsed ${totalEntries} log entries`);
-    emitProgress(fileId, 'parsing', 80);
+    await emitProgress(fileId, 'parsing', 80);
 
     // ✅ FIXED: Embeddings are SKIPPED for now (add back later as optional background job)
     console.log(`⚡ Skipping embeddings for faster processing (can be added later)`);
@@ -122,7 +123,7 @@ export async function processConsoleLog(data: LogJobData): Promise<void> {
     await updateFileStatus(fileId, 'analyzing');
     const stats = finalizeStats(statsAccumulator, totalEntries);
     await redis.setex(`log_stats:${fileId}`, 86400, JSON.stringify(stats));
-    emitProgress(fileId, 'analyzing', 90);
+    await emitProgress(fileId, 'analyzing', 90);
 
     // Step 3: Store file metadata in MongoDB
     await db.collection('console_log_files').insertOne({
@@ -144,7 +145,7 @@ export async function processConsoleLog(data: LogJobData): Promise<void> {
       stats
     });
 
-    emitProgress(fileId, 'complete', 100);
+    await emitProgress(fileId, 'complete', 100);
     console.log(`✅ Console log processing complete: ${fileId} (${totalEntries} entries)`);
 
   } catch (error) {
@@ -199,19 +200,14 @@ async function updateFileStatus(fileId: string, status: string, extra?: any): Pr
     await redis.setex(`file:${fileId}:metadata`, 86400, JSON.stringify(data));
   }
 
-  // Emit WebSocket event using helper
-  await redis.publish('socket:events', JSON.stringify({
-    type: 'file:status',
-    data: { fileId, status, ...extra }
-  }));
+  await publishToFile(fileId, 'file:status', { status, ...extra });
 }
 
 /**
  * Emit progress via WebSocket
  */
-function emitProgress(fileId: string, stage: string, progress: number): void {
-  emitToFile(fileId, 'processing:progress', {
-    fileId,
+async function emitProgress(fileId: string, stage: string, progress: number): Promise<void> {
+  await publishToFile(fileId, 'processing:progress', {
     stage,
     progress: Math.round(progress)
   });
