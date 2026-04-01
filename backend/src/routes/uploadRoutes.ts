@@ -5,6 +5,8 @@ import path from 'path';
 import crypto from 'crypto';
 import { getRedis } from '../config/database';
 import { Queue } from 'bullmq';
+import { HAR_QUEUE_NAME, LOG_QUEUE_NAME } from '../config/queueNames';
+import { publishGlobal } from '../utils/socketHelper';
 
 const router = express.Router();
 const redis = getRedis();
@@ -28,8 +30,8 @@ if (!fsSync.existsSync(PROCESSED_DIR)) {
 }
 
 // Create queues
-const harQueue = new Queue('har-processing', { connection: redis });
-const logQueue = new Queue('log-processing', { connection: redis });
+const harQueue = new Queue(HAR_QUEUE_NAME, { connection: redis });
+const logQueue = new Queue(LOG_QUEUE_NAME, { connection: redis });
 
 // FIXED: Use a temporary name first, then rename
 const storage = multer.diskStorage({
@@ -96,16 +98,12 @@ router.post('/chunk', upload.single('chunk'), async (req: Request, res: Response
     await redis.set(`upload:${fileId}:progress`, progress.toString());
     await redis.expire(`upload:${fileId}:progress`, 3600);
 
-    // Emit progress via WebSocket
-    const io = (global as any).io;
-    if (io) {
-      io.emit('upload:progress', {
-        fileId,
-        progress: Math.round(progress),
-        receivedChunks,
-        totalChunks: parseInt(totalChunks)
-      });
-    }
+    await publishGlobal('upload:progress', {
+      fileId,
+      progress: Math.round(progress),
+      receivedChunks,
+      totalChunks: parseInt(totalChunks)
+    });
 
     res.json({
       success: true,

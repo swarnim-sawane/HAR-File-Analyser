@@ -1,7 +1,9 @@
 import { Queue } from 'bullmq';
 import { getRedis, getMongoDb } from '../config/database';
+import { HAR_QUEUE_NAME } from '../config/queueNames';
 import { streamParseHar, ParsedHarEntry } from '../services/streamingParser';
 import { promises as fs } from 'fs';
+import { publishToFile } from '../utils/socketHelper';
 
 // ✅ REMOVED: import { emitToFile } from '../utils/socketHelper';
 // Now using Redis pub/sub instead
@@ -14,7 +16,7 @@ let harQueue: Queue | null = null;
 export function initHarQueue(): Queue {
   if (!harQueue) {
     redis = getRedis();
-    harQueue = new Queue('har-processing', { connection: redis });
+    harQueue = new Queue(HAR_QUEUE_NAME, { connection: redis });
   }
   return harQueue;
 }
@@ -248,17 +250,10 @@ async function updateFileStatus(fileId: string, status: string, extra?: any): Pr
     await redis.setex(`file:${fileId}:metadata`, 86400, JSON.stringify(data));
   }
   
-  // ✅ FIXED: Publish to Redis channel instead of direct Socket.IO emit
-  const eventData = {
-    fileId,
+  await publishToFile(fileId, 'file:status', {
     status,
     ...extra
-  };
-
-  await redis.publish('socket:events', JSON.stringify({
-    type: 'file:status',
-    data: eventData
-  }));
+  });
 
   console.log(`📡 Published file:status event for ${fileId}: ${status}`);
 }
@@ -268,14 +263,8 @@ async function updateFileStatus(fileId: string, status: string, extra?: any): Pr
  * ✅ FIXED: Now uses Redis pub/sub instead of direct Socket.IO
  */
 async function emitProgress(fileId: string, stage: string, progress: number): Promise<void> {
-  const eventData = {
-    fileId,
+  await publishToFile(fileId, 'processing:progress', {
     stage,
     progress: Math.round(progress)
-  };
-
-  await redis.publish('socket:events', JSON.stringify({
-    type: 'processing:progress',
-    data: eventData
-  }));
+  });
 }
