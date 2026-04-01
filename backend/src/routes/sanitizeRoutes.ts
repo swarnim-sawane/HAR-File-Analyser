@@ -4,6 +4,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { getRedis } from '../config/database';
 import { Queue } from 'bullmq';
+import { HAR_QUEUE_NAME } from '../config/queueNames';
 import { sanitize, getHarInfo, defaultScrubItems } from '../utils/har_sanitize';
 
 const router = Router();
@@ -73,7 +74,7 @@ router.post('/:fileId', async (req: Request, res: Response) => {
     const hash = crypto.createHash('sha256').update(sanitized).digest('hex');
 
     // Enqueue BullMQ job for sanitized file (same pattern as uploadRoutes)
-    const harQueue = new Queue('har-processing', { connection: redis });
+    const harQueue = new Queue(HAR_QUEUE_NAME, { connection: redis });
     const job = await harQueue.add('process_file', {
       fileId: sanitizedFileId,
       fileName: sanitizedFileName,

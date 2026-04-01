@@ -167,21 +167,35 @@ router.get('/:fileId/status', async (req: Request, res: Response) => {
   try {
     const { fileId } = req.params;
     const db = getMongoDb();
+    const redis = getRedis();
 
     const file = await db.collection('har_files').findOne({ fileId });
-    
-    if (!file) {
-      return res.status(404).json({ error: 'File not found' });
+
+    if (file) {
+      return res.json({
+        fileId: file.fileId,
+        fileName: file.fileName,
+        status: file.status,
+        totalEntries: file.totalEntries,
+        uploadedAt: file.uploadedAt,
+        processedAt: file.processedAt
+      });
     }
 
-    res.json({
-      fileId: file.fileId,
-      fileName: file.fileName,
-      status: file.status,
-      totalEntries: file.totalEntries,
-      uploadedAt: file.uploadedAt,
-      processedAt: file.processedAt
-    });
+    const metadata = await redis.get(`file:${fileId}:metadata`);
+    if (metadata) {
+      const data = JSON.parse(metadata);
+      return res.json({
+        fileId,
+        fileName: data.fileName,
+        status: data.status,
+        totalEntries: data.totalEntries ?? null,
+        uploadedAt: data.uploadedAt ?? null,
+        processedAt: null
+      });
+    }
+
+    return res.status(404).json({ error: 'File not found' });
   } catch (error) {
     console.error('Failed to fetch HAR status:', error);
     res.status(500).json({ error: 'Failed to fetch status' });
