@@ -11,12 +11,16 @@ dotenv.config();
 const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 4000;
+const configuredOrigins = (process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean);
 
 const ALLOWED_ORIGINS: string[] = [
   'http://localhost:3000',
   'http://localhost:5173',
   'http://localhost:4000',
-  ...(process.env.CORS_ORIGIN ? [process.env.CORS_ORIGIN] : [])
+  ...configuredOrigins
 ];
 
 app.use(cors({
@@ -131,18 +135,32 @@ function setupRedisSubscriber(io: SocketIOServer) {
   const subscriber = redis.duplicate();
 
   // ✅ OLD CLIENT: Use 'message' event listener
-  subscriber.on('message', (channel: string, message: string) => {
+  subscriber.on('message', (_channel: string, message: string) => {
     try {
-      const { type, data } = JSON.parse(message);
+      const {
+        type,
+        data,
+        scope,
+        room,
+      } = JSON.parse(message) as {
+        type: string;
+        data: any;
+        scope?: 'file' | 'global';
+        room?: string;
+      };
 
       console.log(`📨 Redis event received: ${type}`, data);
 
-      // Emit to specific file room
-      if (data.fileId) {
+      if (scope === 'global') {
+        io.emit(type, data);
+        console.log(`✅ Broadcasted ${type} to all clients`);
+      } else if (scope === 'file' && room) {
+        io.to(room).emit(type, data);
+        console.log(`✅ Emitted ${type} to room ${room}`);
+      } else if (data?.fileId) {
         io.to(`file:${data.fileId}`).emit(type, data);
         console.log(`✅ Emitted ${type} to room file:${data.fileId}`);
       } else {
-        // Broadcast to all clients if no fileId
         io.emit(type, data);
         console.log(`✅ Broadcasted ${type} to all clients`);
       }
