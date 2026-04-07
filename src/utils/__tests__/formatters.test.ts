@@ -56,14 +56,11 @@ describe('formatDate', () => {
     expect(result).toMatch(/Jan/);
     expect(result).toMatch(/2024/);
   });
-  it('returns the original string on invalid input', () => {
-    // formatDate wraps in try/catch and falls back to the raw string
+  it('returns "Invalid Date" for unparseable input', () => {
+    // new Date('not-a-date') doesn't throw — it produces an Invalid Date object
+    // whose toLocaleString() returns the string "Invalid Date"
     const result = formatDate('not-a-date');
-    // The implementation returns dateString on catch — but new Date('not-a-date')
-    // doesn't throw, it returns Invalid Date. The toLocaleString() of Invalid Date
-    // returns "Invalid Date" string. Accept either the original or "Invalid Date".
-    expect(typeof result).toBe('string');
-    expect(result.length).toBeGreaterThan(0);
+    expect(result).toBe('Invalid Date');
   });
 });
 
@@ -91,14 +88,16 @@ describe('formatUrl', () => {
     const url = 'https://example.com/short';
     expect(formatUrl(url, 80)).toBe(url);
   });
-  it('truncates long urls with ellipsis', () => {
+  it('truncates long urls with ellipsis and respects maxLength', () => {
     const url = 'https://example.com/' + 'a'.repeat(100);
     const result = formatUrl(url, 40);
     expect(result).toContain('...');
+    expect(result.length).toBeLessThanOrEqual(43); // maxLength + up to 3 chars for ellipsis
   });
-  it('handles malformed URLs gracefully', () => {
+  it('handles malformed URLs gracefully with truncation', () => {
     const result = formatUrl('not-a-url-' + 'x'.repeat(100), 20);
     expect(result).toContain('...');
+    expect(result.length).toBeLessThanOrEqual(23);
   });
 });
 
