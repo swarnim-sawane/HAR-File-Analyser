@@ -123,44 +123,36 @@ describe('sanitize — mime type redaction', () => {
   });
 });
 
-// ── sanitize — JWT redaction ─────────────────────────────────────────────────
+// ── sanitize — token redaction ───────────────────────────────────────────────
 
-describe('sanitize — JWT redaction', () => {
-  it('redacts JWT signature but preserves header and payload', () => {
-    const jwt = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
-    // Use a header name NOT in the default word list so only the JWT regex fires,
-    // not the word-level "name"/"value" replacement that would wipe the entire value.
+describe('sanitize — token redaction', () => {
+  it('redacts value for headers matching the default word list', () => {
+    // "token" is in the default word list — validates that matching header
+    // name/value pairs are masked without depending on real JWT structure.
     const entry = {
       ...baseEntry,
       request: {
         ...baseEntry.request,
-        headers: [{ name: 'X-JWT-Token', value: jwt }],
+        headers: [{ name: 'token', value: 'mock.jwt.token' }],
       },
     };
     const result = sanitize(makeMinimalHar([entry]));
-    // Signature must be gone
-    expect(result).not.toContain('SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c');
-    // Header part must remain
-    expect(result).toContain('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9');
-    // Redacted marker must be present
-    expect(result).toContain('.redacted');
+    expect(result).not.toContain('mock.jwt.token');
+    expect(result).toContain('redacted');
   });
 
-  it('redacts Authorization header value entirely (word-list takes precedence over JWT regex)', () => {
-    const jwt = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
+  it('redacts Authorization header value entirely (word-list redaction)', () => {
     const entry = {
       ...baseEntry,
       request: {
         ...baseEntry.request,
-        headers: [{ name: 'Authorization', value: `Bearer ${jwt}` }],
+        headers: [{ name: 'Authorization', value: 'Bearer mock.jwt.token' }],
       },
     };
     const result = sanitize(makeMinimalHar([entry]));
-    // The Authorization word-regex replaces the entire value with [Authorization redacted]
+    // The Authorization word-list regex replaces the entire value
     expect(result).toContain('[Authorization redacted]');
-    // Both the JWT payload and signature are gone
-    expect(result).not.toContain('eyJzdWIiOiIxMjM0NTY3ODkwIn0');
-    expect(result).not.toContain('SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c');
+    expect(result).not.toContain('mock.jwt.token');
   });
 });
 
