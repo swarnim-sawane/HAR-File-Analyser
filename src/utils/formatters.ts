@@ -48,6 +48,29 @@ export const formatDate = (dateString: string): string => {
   }
 };
 
+export const formatCapturedDate = (dateString: string): string => {
+  const isoMatch =
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/.exec(
+      dateString
+    );
+
+  if (!isoMatch) {
+    return dateString;
+  }
+
+  const [, year, month, day, hour, minute, second = '00', offset] = isoMatch;
+  const monthIndex = Number(month) - 1;
+  const monthName = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][monthIndex];
+
+  if (!monthName) {
+    return dateString;
+  }
+
+  const timezoneLabel = offset === 'Z' ? 'GMT' : `GMT${offset}`;
+
+  return `${monthName} ${Number(day)}, ${year}, ${hour}:${minute}:${second} ${timezoneLabel}`;
+};
+
 export const formatUrl = (url: string, maxLength: number = 80): string => {
   if (url.length <= maxLength) return url;
 

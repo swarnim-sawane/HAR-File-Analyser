@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { Entry } from '../types/har';
 import { HarAnalyzer } from '../utils/harAnalyzer';
-import { formatBytes, formatTime } from '../utils/formatters';
+import { formatBytes, formatCapturedDate, formatTime } from '../utils/formatters';
 
 interface RequestDetailsProps {
     entry: Entry;
@@ -57,7 +57,7 @@ const RequestDetails: React.FC<RequestDetailsProps> = ({ entry, onClose }) => {
         output += `URL: ${entry.request.url}\n`;
         output += `Method: ${entry.request.method}\n`;
         output += `HTTP Version: ${entry.request.httpVersion}\n`;
-        output += `Started: ${new Date(entry.startedDateTime).toLocaleString()}\n`;
+        output += `Started: ${formatCapturedDate(entry.startedDateTime)}\n`;
 
         if (entry.request.queryString.length > 0) {
             output += '\nQuery Parameters:\n';
@@ -186,7 +186,7 @@ const RequestDetails: React.FC<RequestDetailsProps> = ({ entry, onClose }) => {
                 </div>
                 <div className="info-row">
                     <span className="info-label">Started:</span>
-                    <div className="info-value">{new Date(entry.startedDateTime).toLocaleString()}</div>
+                    <div className="info-value">{formatCapturedDate(entry.startedDateTime)}</div>
                 </div>
             </div>
 
