@@ -1,5 +1,15 @@
-import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
-import { HarFile } from '../types/har';
+import axios, { AxiosInstance } from 'axios';
+import {
+  Entry,
+  HarEntriesResponse,
+  HarEntryQuery,
+  HarFile,
+} from '../types/har';
+import {
+  ConsoleLogEntriesResponse,
+  ConsoleLogEntry,
+  ConsoleLogQuery,
+} from '../types/consolelog';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
@@ -54,16 +64,44 @@ class ApiClient {
     return response.data;
   }
 
-  async getHarEntries(fileId: string, page: number = 1, limit: number = 100) {
+  async getHarEntries(
+    fileId: string,
+    pageOrQuery: number | HarEntryQuery = 1,
+    limit: number = 100
+  ): Promise<HarEntriesResponse> {
+    const params =
+      typeof pageOrQuery === 'number'
+        ? { page: pageOrQuery, limit }
+        : pageOrQuery;
     const response = await this.client.get(`/api/har/${fileId}/entries`, {
-      params: { page, limit }
+      params,
     });
+    return response.data;
+  }
+
+  async getHarEntry(fileId: string, index: number): Promise<Entry> {
+    const response = await this.client.get(`/api/har/${fileId}/entries/${index}`);
     return response.data;
   }
 
   async getHarStats(fileId: string) {
     const response = await this.client.get(`/api/har/${fileId}/stats`);
     return response.data;
+  }
+
+  async exportHarData(fileId: string, _query?: HarEntryQuery, fileName?: string): Promise<void> {
+    const harData = await this.getHarData(fileId);
+    const blob = new Blob([JSON.stringify(harData, null, 2)], {
+      type: 'application/json',
+    });
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = fileName || `${fileId}.har`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(objectUrl);
   }
 
   // Console Log API Methods
@@ -73,10 +111,23 @@ class ApiClient {
     return response.data;
   }
 
-  async getLogEntries(fileId: string, page: number = 1, limit: number = 100) {
+  async getLogEntries(
+    fileId: string,
+    pageOrQuery: number | ConsoleLogQuery = 1,
+    limit: number = 100
+  ): Promise<ConsoleLogEntriesResponse> {
+    const params =
+      typeof pageOrQuery === 'number'
+        ? { page: pageOrQuery, limit }
+        : pageOrQuery;
     const response = await this.client.get(`/api/console-log/${fileId}/entries`, {
-      params: { page, limit }
+      params,
     });
+    return response.data;
+  }
+
+  async getLogEntry(fileId: string, index: number): Promise<ConsoleLogEntry> {
+    const response = await this.client.get(`/api/console-log/${fileId}/entries/${index}`);
     return response.data;
   }
 
