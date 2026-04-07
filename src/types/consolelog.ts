@@ -46,3 +46,34 @@ export interface ConsoleFilterOptions {
     end: string | null;
   };
 }
+
+export type ConsoleLogSortField = 'timestamp' | 'level' | 'source' | 'message';
+
+export interface ConsoleLogEntrySummary extends ConsoleLogEntry {
+  index: number;
+  _id?: string;
+  fileId?: string;
+  createdAt?: string;
+}
+
+export interface ConsoleLogEntriesResponse {
+  entries: ConsoleLogEntrySummary[];
+  pagination: {
+    currentPage: number;
+    totalPages: number;
+    totalEntries: number;
+    hasMore: boolean;
+    limit: number;
+  };
+}
+
+export interface ConsoleLogQuery {
+  page?: number;
+  limit?: number;
+  search?: string;
+  levels?: LogLevel[];
+  startTime?: string | null;
+  endTime?: string | null;
+  sortBy?: ConsoleLogSortField;
+  sortDir?: 'asc' | 'desc';
+}

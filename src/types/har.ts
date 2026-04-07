@@ -149,6 +149,13 @@ export interface HarFile {
   log: HarLog;
 }
 
+export type HarSortField =
+  | 'time'
+  | 'startedDateTime'
+  | 'request.method'
+  | 'request.url'
+  | 'response.status';
+
 export interface FilterOptions {
   statusCodes: {
     '0': boolean;
@@ -160,4 +167,31 @@ export interface FilterOptions {
   };
   searchTerm: string;
   timingType: 'relative' | 'independent';
+}
+
+export interface HarEntrySummary extends Entry {
+  index: number;
+  _id?: string;
+  fileId?: string;
+  createdAt?: string;
+}
+
+export interface HarEntriesResponse {
+  entries: HarEntrySummary[];
+  pagination: {
+    currentPage: number;
+    totalPages: number;
+    totalEntries: number;
+    hasMore: boolean;
+    limit: number;
+  };
+}
+
+export interface HarEntryQuery {
+  page?: number;
+  limit?: number;
+  search?: string;
+  sortBy?: HarSortField;
+  sortDir?: 'asc' | 'desc';
+  statusBuckets?: Array<keyof FilterOptions['statusCodes']>;
 }
