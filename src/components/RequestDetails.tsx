@@ -76,9 +76,10 @@ const RequestDetails: React.FC<RequestDetailsProps> = ({ entry, onClose }) => {
     const formatResponseForCopy = (): string => {
         let output = '';
         output += `Status: ${entry.response.status} ${entry.response.statusText}\n`;
-        output += `Content Type: ${entry.response.content.mimeType}\n`;
-        output += `Size: ${formatBytes(entry.response.content.size)}\n`;
-        if (entry.response.content.compression) {
+        // Guard against entries with no body (e.g. 304 Not Modified, 204 No Content)
+        output += `Content Type: ${entry.response.content?.mimeType ?? ''}\n`;
+        output += `Size: ${formatBytes(entry.response.content?.size ?? 0)}\n`;
+        if (entry.response.content?.compression) {
             output += `Compression: ${formatBytes(entry.response.content.compression)} saved\n`;
         }
         return output;
@@ -244,15 +245,17 @@ const RequestDetails: React.FC<RequestDetailsProps> = ({ entry, onClose }) => {
                     <span className="info-label">Status:</span>
                     <div className="info-value">{entry.response.status} {entry.response.statusText}</div>
                 </div>
+                {/* Guard against entries with no body (e.g. 304 Not Modified, 204 No Content,
+                    OPTIONS preflights). response.content may be absent or empty in those cases. */}
                 <div className="info-row">
                     <span className="info-label">Content Type:</span>
-                    <div className="info-value">{entry.response.content.mimeType}</div>
+                    <div className="info-value">{entry.response.content?.mimeType ?? ''}</div>
                 </div>
                 <div className="info-row">
                     <span className="info-label">Size:</span>
-                    <div className="info-value">{formatBytes(entry.response.content.size)}</div>
+                    <div className="info-value">{formatBytes(entry.response.content?.size ?? 0)}</div>
                 </div>
-                {entry.response.content.compression && (
+                {entry.response.content?.compression && (
                     <div className="info-row">
                         <span className="info-label">Compression:</span>
                         <div className="info-value">{formatBytes(entry.response.content.compression)} saved</div>
@@ -260,11 +263,11 @@ const RequestDetails: React.FC<RequestDetailsProps> = ({ entry, onClose }) => {
                 )}
             </div>
 
-            {entry.response.content.text && (
+            {entry.response.content?.text && (
                 <>
                     <h4>Content Preview</h4>
                     <pre className="content-preview">
-                        {entry.response.content.encoding === 'base64'
+                        {entry.response.content?.encoding === 'base64'
                             ? '[Base64 encoded content]'
                             : entry.response.content.text.substring(0, 5000)}
                     </pre>
