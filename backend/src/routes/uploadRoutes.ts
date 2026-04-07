@@ -72,6 +72,13 @@ router.post('/chunk', upload.single('chunk'), async (req: Request, res: Response
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
+    // Prevent path traversal: fileId is used directly in a path.join below.
+    // Only allow alphanumeric chars, underscores, and hyphens.
+    if (!/^[a-zA-Z0-9_-]+$/.test(fileId)) {
+      await fs.unlink(req.file.path).catch(() => {});
+      return res.status(400).json({ error: 'Invalid fileId' });
+    }
+
     // FIXED: Rename temp file to proper chunk name
     const chunkPath = path.join(UPLOAD_DIR, `${fileId}_chunk_${chunkIndex}`);
     await fs.rename(req.file.path, chunkPath);
@@ -156,7 +163,11 @@ router.post('/complete', async (req: Request, res: Response) => {
     // ✅ FIXED: Stream-assemble chunks — never loads full file into RAM.
     // Each chunk is piped directly to the output file. Hash computed incrementally.
     // Memory usage = one chunk at a time (~10MB max) regardless of total file size.
-    const outputPath = path.join(PROCESSED_DIR, `${fileId}_${fileName}`);
+
+    // Prevent path traversal: strip any directory components from the user-supplied
+    // fileName before joining it into the output path.
+    const safeFileName = path.basename(fileName);
+    const outputPath = path.join(PROCESSED_DIR, `${fileId}_${safeFileName}`);
     const fsNative = require('fs') as typeof import('fs');
     const hasher = crypto.createHash('sha256');
     let assembledSize = 0;

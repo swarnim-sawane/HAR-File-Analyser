@@ -8,7 +8,17 @@
       "Bash(grep -E \"\\\\.\\(tsx|ts|json\\)$\")",
       "Read(//c/Users/ssawane/Documents/Work/HAR/ LATEST/Deployed/ build/HAR-File-Analyser/backend/src/routes/**)",
       "Read(//c/Users/ssawane/Documents/Work/HAR/ LATEST/Deployed/ build/HAR-File-Analyser/backend/src/services/**)",
-      "Read(//c/Users/ssawane/Documents/Work/HAR/ LATEST/Deployed/ build/HAR-File-Analyser/backend/src/**)"
+      "Read(//c/Users/ssawane/Documents/Work/HAR/ LATEST/Deployed/ build/HAR-File-Analyser/backend/src/**)",
+      "Read(//c/Users/ssawane/.config/superpowers/worktrees/HAR-File-Analyser/test-suite/**)",
+      "Bash(npm install:*)",
+      "Bash(npm test:*)",
+      "Bash(echo \"Exit code: $?\")",
+      "Bash(npx tsc:*)",
+      "Bash(npx vitest:*)",
+      "Bash(gh pr create --title 'test: add 160-test suite covering parsing, analysis, UI, edge cases, and performance' --body ':*)",
+      "Bash(where gh:*)",
+      "Bash(winget list:*)",
+      "Bash(cmd /c \"where gh 2>nul\")"
     ]
   }
 }
