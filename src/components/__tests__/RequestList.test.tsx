@@ -79,3 +79,27 @@ describe('RequestList — timestamp sort', () => {
     expect(timestamps[2]).toBe('06:17:56.000');
   });
 });
+
+describe('RequestList — size cell', () => {
+  it('shows request and response sizes with labelled icons', () => {
+    const entry = makeEntry({
+      request: { ...makeEntry().request, bodySize: 1024 },
+      response: { ...makeEntry().response, bodySize: 2048 },
+    });
+    render(<RequestList entries={[entry]} selectedEntry={null} onSelectEntry={noop} timingType="relative" />);
+    expect(screen.getByTestId('size-upload')).toBeInTheDocument();
+    expect(screen.getByTestId('size-download')).toBeInTheDocument();
+    expect(screen.getByTestId('size-upload').textContent).toContain('1 KB');
+    expect(screen.getByTestId('size-download').textContent).toContain('2 KB');
+  });
+
+  it('shows — for unknown bodySize (-1)', () => {
+    const entry = makeEntry({
+      request: { ...makeEntry().request, bodySize: -1 },
+      response: { ...makeEntry().response, bodySize: -1 },
+    });
+    render(<RequestList entries={[entry]} selectedEntry={null} onSelectEntry={noop} timingType="relative" />);
+    expect(screen.getByTestId('size-upload').textContent).toContain('—');
+    expect(screen.getByTestId('size-download').textContent).toContain('—');
+  });
+});
