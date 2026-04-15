@@ -18,6 +18,52 @@ export const formatTimestamp = (iso: string): string => {
   return clean.substring(0, 12);
 };
 
+interface AnalysisBadge {
+  key: string;
+  icon: React.ReactElement;
+  className: string;
+  title: string;
+}
+
+const getAnalysisBadges = (entry: Entry): AnalysisBadge[] => {
+  const badges: AnalysisBadge[] = [];
+  const { status, bodySize } = entry.response;
+
+  if (status >= 300 && status < 400) {
+    badges.push({
+      key: 'redirect',
+      icon: <CornerDownRight size={12} aria-hidden="true" />,
+      className: 'badge-redirect',
+      title: 'Redirect',
+    });
+  }
+  if (status === 304 || (status === 200 && bodySize === 0)) {
+    badges.push({
+      key: 'cached',
+      icon: <HardDrive size={12} aria-hidden="true" />,
+      className: 'badge-cached',
+      title: 'Cached',
+    });
+  }
+  if (entry.time > 3000) {
+    badges.push({
+      key: 'slow',
+      icon: <Clock size={12} aria-hidden="true" />,
+      className: 'badge-slow',
+      title: 'Slow (>3s)',
+    });
+  }
+  if (bodySize > 1_000_000) {
+    badges.push({
+      key: 'large',
+      icon: <AlertTriangle size={12} aria-hidden="true" />,
+      className: 'badge-large',
+      title: 'Large response (>1MB)',
+    });
+  }
+  return badges;
+};
+
 interface RequestListProps {
   entries: Entry[];
   selectedEntry: Entry | null;
@@ -120,8 +166,22 @@ const RequestList: React.FC<RequestListProps> = ({
           {entry.response.status}
         </span>
         <span className="request-method">{entry.request.method}</span>
-        <span className="request-url" title={entry.request.url}>
-          {entry.request.url}
+        <span className="request-url-cell">
+          <span className="request-url" title={entry.request.url}>
+            {entry.request.url}
+          </span>
+          {(() => {
+            const badges = getAnalysisBadges(entry);
+            return badges.length > 0 ? (
+              <span className="analysis-badges">
+                {badges.map(b => (
+                  <span key={b.key} className={`analysis-badge ${b.className}`} title={b.title}>
+                    {b.icon}
+                  </span>
+                ))}
+              </span>
+            ) : null;
+          })()}
         </span>
         <span className="request-size">
           <span className="request-size-up" data-testid="size-upload">
