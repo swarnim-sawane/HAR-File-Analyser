@@ -4,6 +4,16 @@ import { Entry } from '../types/har';
 import { HarAnalyzer } from '../utils/harAnalyzer';
 import { formatBytes, formatTime } from '../utils/formatters';
 
+export const formatTimestamp = (iso: string): string => {
+  const tIdx = iso.indexOf('T');
+  if (tIdx === -1) return iso;
+  const time = iso.slice(tIdx + 1);
+  // Strip timezone suffix (Z or ±HH:MM)
+  const clean = time.replace(/([Z]|[+-]\d{2}:\d{2})$/, '');
+  // Return up to HH:MM:SS.mmm (12 chars)
+  return clean.substring(0, 12);
+};
+
 interface RequestListProps {
   entries: Entry[];
   selectedEntry: Entry | null;
