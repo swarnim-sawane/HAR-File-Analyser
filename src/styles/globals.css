@@ -742,7 +742,7 @@ body {
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border-color);
     display: grid;
-    grid-template-columns: 70px 80px 1fr 90px 100px 200px;
+    grid-template-columns: 90px 70px 80px 1fr 110px 100px 180px;
     gap: 16px;
     font-size: 11px;
     font-weight: 600;
@@ -810,7 +810,7 @@ body {
 
 .request-item {
     display: grid;
-    grid-template-columns: 70px 80px 1fr 90px 100px 200px;
+    grid-template-columns: 90px 70px 80px 1fr 110px 100px 180px;
     gap: 16px;
     padding: 12px 24px;
     border-bottom: 1px solid var(--bg-secondary);
@@ -1248,7 +1248,7 @@ body {
 
     .request-list-header,
     .request-item {
-        grid-template-columns: 50px 60px 1fr 60px;
+        grid-template-columns: 50px 60px 1fr 80px;
     }
 
     .request-waterfall,
@@ -1331,7 +1331,7 @@ body {
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border-color);
     display: grid;
-    grid-template-columns: 70px 80px 1fr 90px 100px 200px;
+    grid-template-columns: 90px 70px 80px 1fr 110px 100px 180px;
     gap: 16px;
     position: sticky;
     top: 0;
@@ -1417,7 +1417,7 @@ body {
 
     .request-list-header,
     .request-item {
-        grid-template-columns: 50px 60px 1fr 60px;
+        grid-template-columns: 50px 60px 1fr 80px;
     }
 
     .request-waterfall,
