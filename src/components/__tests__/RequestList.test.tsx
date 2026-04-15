@@ -103,3 +103,44 @@ describe('RequestList — size cell', () => {
     expect(screen.getByTestId('size-download').textContent).toContain('—');
   });
 });
+
+describe('RequestList — analysis badges', () => {
+  it('shows redirect badge for 3xx status', () => {
+    const entry = makeEntry({ response: { ...makeEntry().response, status: 302 } });
+    render(<RequestList entries={[entry]} selectedEntry={null} onSelectEntry={noop} timingType="relative" />);
+    expect(screen.getByTitle('Redirect')).toBeInTheDocument();
+  });
+
+  it('shows cached badge for 304 status', () => {
+    const entry = makeEntry({ response: { ...makeEntry().response, status: 304, bodySize: 0 } });
+    render(<RequestList entries={[entry]} selectedEntry={null} onSelectEntry={noop} timingType="relative" />);
+    expect(screen.getByTitle('Cached')).toBeInTheDocument();
+  });
+
+  it('shows cached badge for 200 with 0 bodySize', () => {
+    const entry = makeEntry({ response: { ...makeEntry().response, status: 200, bodySize: 0 } });
+    render(<RequestList entries={[entry]} selectedEntry={null} onSelectEntry={noop} timingType="relative" />);
+    expect(screen.getByTitle('Cached')).toBeInTheDocument();
+  });
+
+  it('shows slow badge when time > 3000ms', () => {
+    const entry = makeEntry({ time: 3500 });
+    render(<RequestList entries={[entry]} selectedEntry={null} onSelectEntry={noop} timingType="relative" />);
+    expect(screen.getByTitle('Slow (>3s)')).toBeInTheDocument();
+  });
+
+  it('shows large badge when response bodySize > 1MB', () => {
+    const entry = makeEntry({ response: { ...makeEntry().response, bodySize: 1_100_000 } });
+    render(<RequestList entries={[entry]} selectedEntry={null} onSelectEntry={noop} timingType="relative" />);
+    expect(screen.getByTitle('Large response (>1MB)')).toBeInTheDocument();
+  });
+
+  it('shows no badges for a normal 200 response', () => {
+    const entry = makeEntry(); // 200, 2048 bytes, 300ms
+    render(<RequestList entries={[entry]} selectedEntry={null} onSelectEntry={noop} timingType="relative" />);
+    expect(screen.queryByTitle('Redirect')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('Cached')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('Slow (>3s)')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('Large response (>1MB)')).not.toBeInTheDocument();
+  });
+});
