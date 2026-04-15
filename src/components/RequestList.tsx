@@ -1,5 +1,9 @@
 // src/components/RequestList.tsx
 import React, { useState, useMemo } from 'react';
+import {
+  ArrowUp, ArrowDown, ArrowUpDown,
+  CornerDownRight, HardDrive, Clock, AlertTriangle,
+} from 'lucide-react';
 import { Entry } from '../types/har';
 import { HarAnalyzer } from '../utils/harAnalyzer';
 import { formatBytes, formatTime } from '../utils/formatters';
@@ -88,12 +92,10 @@ const RequestList: React.FC<RequestListProps> = ({
   };
 
   const renderSortIcon = (field: SortField) => {
-    if (sortField !== field) {
-      return <span className="sort-icon">⇅</span>;
-    }
-    return sortDirection === 'asc' ? 
-      <span className="sort-icon active">↑</span> : 
-      <span className="sort-icon active">↓</span>;
+    if (sortField !== field) return <ArrowUpDown size={12} className="sort-icon" aria-hidden="true" />;
+    return sortDirection === 'asc'
+      ? <ArrowUp size={12} className="sort-icon active" aria-hidden="true" />
+      : <ArrowDown size={12} className="sort-icon active" aria-hidden="true" />;
   };
 
   const renderEntry = (entry: Entry, index: number) => {
@@ -121,7 +123,17 @@ const RequestList: React.FC<RequestListProps> = ({
         <span className="request-url" title={entry.request.url}>
           {entry.request.url}
         </span>
-        <span className="request-size">{formatBytes(entry.response.bodySize)}</span>
+        <span className="request-size">
+          <span className="request-size-up" data-testid="size-upload">
+            <ArrowUp size={10} aria-hidden="true" />
+            {entry.request.bodySize >= 0 ? formatBytes(entry.request.bodySize) : '—'}
+          </span>
+          {' '}
+          <span className="request-size-down" data-testid="size-download">
+            <ArrowDown size={10} aria-hidden="true" />
+            {entry.response.bodySize >= 0 ? formatBytes(entry.response.bodySize) : '—'}
+          </span>
+        </span>
         <span className="request-time">{formatTime(totalTime)}</span>
         <div className="request-waterfall">
           <div
