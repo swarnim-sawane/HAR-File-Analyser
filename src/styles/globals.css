@@ -15051,3 +15051,86 @@ html.dark-mode .cmp-view-shell--ai .cmp-ai-error svg {
   }
 }
 
+/* === HAR Table Enhancements (2026-04-08) === */
+
+.request-timestamp {
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: #6366f1;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: flex;
+    align-items: center;
+}
+
+.request-size-up {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    color: #7c3aed;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.request-size-down {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    color: #0891b2;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.request-url-cell {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    overflow: hidden;
+    min-width: 0;
+}
+
+.request-url-cell .request-url {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.analysis-badges {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    flex-shrink: 0;
+}
+
+.analysis-badge {
+    display: inline-flex;
+    align-items: center;
+    cursor: default;
+    line-height: 1;
+}
+
+.badge-redirect { color: #ea580c; }
+.badge-cached   { color: #64748b; }
+.badge-slow     { color: #d97706; }
+.badge-large    { color: #dc2626; }
+
+/* Responsive: hide timestamp column on mobile */
+@media (max-width: 768px) {
+    .request-timestamp {
+        display: none;
+    }
+}
+
+/* Dark mode overrides */
+html.dark-mode .request-timestamp  { color: #818cf8; }
+html.dark-mode .request-size-up    { color: #a78bfa; }
+html.dark-mode .request-size-down  { color: #22d3ee; }
+html.dark-mode .badge-cached       { color: #94a3b8; }
+html.dark-mode .badge-redirect     { color: #fb923c; }
+html.dark-mode .badge-slow         { color: #fbbf24; }
+html.dark-mode .badge-large        { color: #f87171; }
+
