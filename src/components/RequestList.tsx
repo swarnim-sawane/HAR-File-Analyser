@@ -148,6 +148,7 @@ const RequestList: React.FC<RequestListProps> = ({
     const isSelected = selectedEntry === entry;
     const timingBreakdown = HarAnalyzer.getTimingBreakdown(entry);
     const totalTime = entry.time;
+    const badges = getAnalysisBadges(entry);
 
     return (
       <div
@@ -170,18 +171,15 @@ const RequestList: React.FC<RequestListProps> = ({
           <span className="request-url" title={entry.request.url}>
             {entry.request.url}
           </span>
-          {(() => {
-            const badges = getAnalysisBadges(entry);
-            return badges.length > 0 ? (
-              <span className="analysis-badges">
-                {badges.map(b => (
-                  <span key={b.key} className={`analysis-badge ${b.className}`} title={b.title}>
-                    {b.icon}
-                  </span>
-                ))}
-              </span>
-            ) : null;
-          })()}
+          {badges.length > 0 && (
+            <span className="analysis-badges">
+              {badges.map(b => (
+                <span key={b.key} className={`analysis-badge ${b.className}`} title={b.title}>
+                  {b.icon}
+                </span>
+              ))}
+            </span>
+          )}
         </span>
         <span className="request-size">
           <span className="request-size-up" data-testid="size-upload">
