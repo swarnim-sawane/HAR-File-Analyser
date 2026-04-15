@@ -54,3 +54,28 @@ describe('formatTimestamp', () => {
     expect(formatTimestamp('not-a-date')).toBe('not-a-date');
   });
 });
+
+describe('RequestList — timestamp sort', () => {
+  const entries = [
+    makeEntry({ startedDateTime: '2026-03-18T06:17:58.000Z', time: 100 }),
+    makeEntry({ startedDateTime: '2026-03-18T06:17:56.000Z', time: 200 }),
+    makeEntry({ startedDateTime: '2026-03-18T06:17:57.000Z', time: 150 }),
+  ];
+
+  it('renders entries in ascending timestamp order by default', () => {
+    render(<RequestList entries={entries} selectedEntry={null} onSelectEntry={noop} timingType="relative" />);
+    const timestamps = screen.getAllByTestId('request-timestamp').map(el => el.textContent);
+    expect(timestamps[0]).toBe('06:17:56.000');
+    expect(timestamps[1]).toBe('06:17:57.000');
+    expect(timestamps[2]).toBe('06:17:58.000');
+  });
+
+  it('reverses order to descending when Timestamp header is clicked', async () => {
+    const user = userEvent.setup();
+    render(<RequestList entries={entries} selectedEntry={null} onSelectEntry={noop} timingType="relative" />);
+    await user.click(screen.getByRole('button', { name: /timestamp/i }));
+    const timestamps = screen.getAllByTestId('request-timestamp').map(el => el.textContent);
+    expect(timestamps[0]).toBe('06:17:58.000');
+    expect(timestamps[2]).toBe('06:17:56.000');
+  });
+});

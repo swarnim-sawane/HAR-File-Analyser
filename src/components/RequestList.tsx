@@ -21,7 +21,7 @@ interface RequestListProps {
   timingType: 'relative' | 'independent';
 }
 
-type SortField = 'status' | 'method' | 'url' | 'size' | 'time';
+type SortField = 'status' | 'method' | 'url' | 'size' | 'time' | 'timestamp';
 type SortDirection = 'asc' | 'desc';
 
 const RequestList: React.FC<RequestListProps> = ({
@@ -30,7 +30,7 @@ const RequestList: React.FC<RequestListProps> = ({
   onSelectEntry,
   timingType,
 }) => {
-  const [sortField, setSortField] = useState<SortField>('time');
+  const [sortField, setSortField] = useState<SortField>('timestamp');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
 
   const handleSort = (field: SortField) => {
@@ -63,6 +63,9 @@ const RequestList: React.FC<RequestListProps> = ({
           break;
         case 'time':
           comparison = a.time - b.time;
+          break;
+        case 'timestamp':
+          comparison = new Date(a.startedDateTime).getTime() - new Date(b.startedDateTime).getTime();
           break;
       }
       
@@ -104,6 +107,13 @@ const RequestList: React.FC<RequestListProps> = ({
         className={`request-item ${isSelected ? 'selected' : ''}`}
         onClick={() => onSelectEntry(entry)}
       >
+        <span
+          className="request-timestamp"
+          data-testid="request-timestamp"
+          title={entry.startedDateTime}
+        >
+          {formatTimestamp(entry.startedDateTime)}
+        </span>
         <span className={`request-status ${getStatusClass(entry.response.status)}`}>
           {entry.response.status}
         </span>
@@ -139,8 +149,14 @@ const RequestList: React.FC<RequestListProps> = ({
   return (
     <div className="request-list har-request-list">
       <div className="request-list-header">
-        <button 
-          className="header-cell sortable" 
+        <button
+          className="header-cell sortable"
+          onClick={() => handleSort('timestamp')}
+        >
+          Timestamp {renderSortIcon('timestamp')}
+        </button>
+        <button
+          className="header-cell sortable"
           onClick={() => handleSort('status')}
         >
           Status {renderSortIcon('status')}
