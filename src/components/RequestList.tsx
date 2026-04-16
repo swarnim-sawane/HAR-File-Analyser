@@ -183,13 +183,13 @@ const RequestList: React.FC<RequestListProps> = ({
         </span>
         <span className="request-size">
           <span className="request-size-up" data-testid="size-upload">
-            <ArrowUp size={10} aria-hidden="true" />
-            {entry.request.bodySize >= 0 ? formatBytes(entry.request.bodySize) : '—'}
+            <ArrowUp size={9} aria-hidden="true" />
+            {entry.request.bodySize > 0 ? formatBytes(entry.request.bodySize, 0) : '—'}
           </span>
-          {' '}
+          <span className="request-size-sep" aria-hidden="true" />
           <span className="request-size-down" data-testid="size-download">
-            <ArrowDown size={10} aria-hidden="true" />
-            {entry.response.bodySize >= 0 ? formatBytes(entry.response.bodySize) : '—'}
+            <ArrowDown size={9} aria-hidden="true" />
+            {entry.response.bodySize > 0 ? formatBytes(entry.response.bodySize, 0) : '—'}
           </span>
         </span>
         <span className="request-time">{formatTime(totalTime)}</span>
