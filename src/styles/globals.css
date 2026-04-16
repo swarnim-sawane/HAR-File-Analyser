@@ -1252,7 +1252,8 @@ body {
     }
 
     .request-waterfall,
-    .request-time {
+    .request-time,
+    .request-timestamp {
         display: none;
     }
 }
@@ -1421,7 +1422,8 @@ body {
     }
 
     .request-waterfall,
-    .request-time {
+    .request-time,
+    .request-timestamp {
         display: none;
     }
 
@@ -15117,13 +15119,6 @@ html.dark-mode .cmp-view-shell--ai .cmp-ai-error svg {
 .badge-cached   { color: #64748b; }
 .badge-slow     { color: #d97706; }
 .badge-large    { color: #dc2626; }
-
-/* Responsive: hide timestamp column on mobile */
-@media (max-width: 768px) {
-    .request-timestamp {
-        display: none;
-    }
-}
 
 /* Dark mode overrides */
 html.dark-mode .request-timestamp  { color: #818cf8; }
