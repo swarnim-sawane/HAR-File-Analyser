@@ -18,6 +18,8 @@ import HarCompare from './components/HarCompare';
 import SanitizeModal from './components/SanitizeModal';
 import BatchSanitizeModal from './components/BatchSanitizeModal';
 import HarSanitizer from './components/HarSanitizer';
+import DocumentationPage from './components/DocumentationPage';
+import { ArrowLeftIcon, FileTextIcon } from './components/Icons';
 
 interface RecentFile {
   name: string;
@@ -45,7 +47,13 @@ const BACKEND_URL =
   import.meta.env.VITE_API_URL ||
   'http://localhost:4000';
 
+type AppPath = '/' | '/docs';
+
+const normalizePathname = (pathname: string): AppPath =>
+  pathname === '/docs' || pathname === '/docs/' ? '/docs' : '/';
+
 const App: React.FC = () => {
+  const [pathname, setPathname] = useState<AppPath>(() => normalizePathname(window.location.pathname));
   // ── HAR multi-tab state ──────────────────────────────────────────────────────
   const [harTabs, setHarTabs] = useState<HarFileTab[]>([]);
   const [activeHarTabId, setActiveHarTabId] = useState<string | null>(null);
@@ -79,9 +87,28 @@ const App: React.FC = () => {
   const LOG_RECENT_FILES_KEY = 'console_log_recent_files';
   const LOG_STATUS_POLL_INTERVAL_MS = 2000;
   const LOG_STATUS_TIMEOUT_MS = 180000;
+  useEffect(() => {
+    const handlePopState = () => {
+      setPathname(normalizePathname(window.location.pathname));
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const navigateTo = useCallback((nextPath: AppPath) => {
+    const normalizedPath = normalizePathname(nextPath);
+    if (normalizedPath === pathname) return;
+
+    window.history.pushState({}, '', normalizedPath);
+    setPathname(normalizedPath);
+    window.scrollTo?.(0, 0);
+  }, [pathname]);
 
   // ── Deep-link handler: ?fileId=<id> pre-loads a file uploaded by the MCP tool ──
   useEffect(() => {
+    if (pathname !== '/') return;
+
     const params = new URLSearchParams(window.location.search);
     const deepLinkFileId = params.get('fileId');
     if (!deepLinkFileId) return;
@@ -107,7 +134,7 @@ const App: React.FC = () => {
     wsClient.on('file:status', handleStatus);
     return () => { wsClient.off('file:status', handleStatus); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [pathname]);
 
   // Show "Parse locally instead" button after 10s of waiting for backend
   useEffect(() => {
@@ -514,6 +541,30 @@ const App: React.FC = () => {
     logTabs.length === 0 &&
     !isLogProcessing;
 
+  const isDocsRoute = pathname === '/docs';
+  const headerTitle = isDocsRoute
+    ? 'Documentation'
+    : showUnifiedUploader
+    ? 'File Analyzer'
+    : activeTool === 'har'
+    ? 'HAR Analyzer'
+    : activeTool === 'compare'
+    ? 'HAR Compare'
+    : 'Console Log Analyzer';
+  const headerSubtitle = isDocsRoute
+    ? 'Curated usage guide for HAR and console log analysis'
+    : showUnifiedUploader
+    ? 'HAR & Console Log Analysis'
+    : activeTool === 'har'
+    ? 'Network Analysis Tool'
+    : activeTool === 'compare'
+    ? 'Side-by-side HAR comparison'
+    : 'Console Log Analysis';
+  const headerActionLabel = isDocsRoute ? 'Back to Analyzer' : 'Documentation';
+  const handleHeaderAction = () => {
+    navigateTo(isDocsRoute ? '/' : '/docs');
+  };
+
   return (
     <div className="app-container">
       {/* ── Sanitize modals for the "+" add-tab upload flow ── */}
@@ -548,29 +599,26 @@ const App: React.FC = () => {
             <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
             <line x1="12" y1="22.08" x2="12" y2="12"></line>
           </svg>
-          <h1>
-            {showUnifiedUploader
-              ? 'File Analyzer'
-              : activeTool === 'har'
-              ? 'HAR Analyzer'
-              : activeTool === 'compare'
-              ? 'HAR Compare'
-              : 'Console Log Analyzer'}
-          </h1>
-          <span className="header-divider">
-            {showUnifiedUploader
-              ? 'HAR & Console Log Analysis'
-              : activeTool === 'har'
-              ? 'Network Analysis Tool'
-              : activeTool === 'compare'
-              ? 'Side-by-side HAR comparison'
-              : 'Console Log Analysis'}
-          </span>
+          <div className="header-title-group">
+            <h1>{headerTitle}</h1>
+          </div>
+          <span className="header-divider">{headerSubtitle}</span>
         </div>
-        <DarkModeToggle />
+        <div className="app-header-actions">
+          <span className="header-poc-badge">Proof of Concept</span>
+          <button type="button" className="app-header-action-button" onClick={handleHeaderAction}>
+            {isDocsRoute ? <ArrowLeftIcon /> : <FileTextIcon />}
+            <span>{headerActionLabel}</span>
+          </button>
+          <DarkModeToggle />
+        </div>
       </header>
 
       <main className="main-content">
+        {isDocsRoute ? (
+          <DocumentationPage onBackToAnalyzer={() => navigateTo('/')} />
+        ) : (
+          <>
         {/* ── Unified uploader — shown when no files are open in either tool ── */}
         {showUnifiedUploader && (
           <div className="upload-section">
@@ -852,6 +900,8 @@ const App: React.FC = () => {
         <div style={{ display: activeTool === 'compare' ? 'contents' : 'none' }}>
           <HarCompare openTabs={harTabs.map(t => ({ fileId: t.fileId, fileName: t.fileName }))} />
         </div>
+          </>
+        )}
       </main>
 
     </div>
