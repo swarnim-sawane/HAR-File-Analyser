@@ -1,0 +1,128 @@
+<h2>Table Column Layout</h2>
+<p class="subtitle">Adding Timestamp + Request Size — how should the table be structured?</p>
+
+<style>
+.pt { width: 100%; border-collapse: collapse; font-size: 11px; font-family: 'JetBrains Mono', monospace; margin-top: 8px; table-layout: fixed; }
+.pt th { background: #0f172a; color: #94a3b8; padding: 5px 7px; text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; overflow: hidden; }
+.pt th.sortable { cursor: pointer; }
+.pt th.sortable:hover { color: #e2e8f0; }
+.pt td { padding: 5px 7px; border-bottom: 1px solid #e2e8f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pt tr:hover td { background: #f0f9ff; }
+.ts { color: #6366f1; font-weight: 600; }
+.s2 { color: #16a34a; font-weight: 700; }
+.s3 { color: #d97706; font-weight: 700; }
+.s4 { color: #dc2626; font-weight: 700; }
+.url-c { color: #334155; }
+.sz { color: #475569; text-align: right; }
+.tm { color: #0369a1; text-align: right; font-weight: 600; }
+.ic { color: #64748b; text-align: center; }
+.badge-tag { display:inline-block; padding:1px 7px; border-radius:10px; font-size:10px; font-weight:600; margin-left:6px; }
+.tag-rec { background:#d1fae5;color:#065f46; }
+.tag-compact { background:#ede9fe;color:#5b21b6; }
+.tag-simple { background:#fef3c7;color:#92400e; }
+.option-label { font-weight:700; font-size:13px; margin-bottom:4px; }
+.option-desc { font-size:12px; color:#64748b; margin-bottom:8px; }
+.sort-arrow { color: #6366f1; }
+</style>
+
+<div class="options">
+
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <div class="option-label">Separate columns for Req + Resp size <span class="badge-tag tag-simple">Most explicit</span></div>
+      <div class="option-desc">8 columns. Req Size and Resp Size side by side. Needs horizontal scroll on small screens.</div>
+      <table class="pt">
+        <tr>
+          <th style="width:85px" class="sortable"><span class="sort-arrow">↑</span> Timestamp</th>
+          <th style="width:50px">Status</th>
+          <th style="width:55px">Method</th>
+          <th>URL</th>
+          <th style="width:65px">Req Size</th>
+          <th style="width:70px">Resp Size</th>
+          <th style="width:65px">Time</th>
+          <th style="width:130px">Timeline</th>
+        </tr>
+        <tr>
+          <td class="ts">06:17:56</td><td class="s3">302</td><td>GET</td><td class="url-c">/nof-hdcc</td><td class="sz">1.4KB</td><td class="sz">2.6KB</td><td class="tm">1589ms</td><td><div style="height:8px;background:linear-gradient(to right,#3b82f6 20%,#10b981 80%);border-radius:2px"></div></td>
+        </tr>
+        <tr>
+          <td class="ts">06:17:57</td><td class="s3">303</td><td>GET</td><td class="url-c">/oauth2/v1/auth</td><td class="sz">7.4KB</td><td class="sz">6.3KB</td><td class="tm">300ms</td><td><div style="height:8px;background:linear-gradient(to right,#3b82f6 60%,#10b981 40%);border-radius:2px"></div></td>
+        </tr>
+        <tr>
+          <td class="ts">06:18:00</td><td class="s2">200</td><td>GET</td><td class="url-c">/pages/servererror.jsp</td><td class="sz">825B</td><td class="sz">1.4KB</td><td class="tm">266ms</td><td><div style="height:8px;background:linear-gradient(to right,#3b82f6 30%,#10b981 70%);border-radius:2px"></div></td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <div class="option-label">Combined "↑/↓ Size" column <span class="badge-tag tag-rec">Recommended</span></div>
+      <div class="option-desc">7 columns. One size cell shows "↑1.4KB ↓2.6KB" — compact, no scroll needed. Industry standard (Chrome DevTools style).</div>
+      <table class="pt">
+        <tr>
+          <th style="width:85px" class="sortable"><span class="sort-arrow">↑</span> Timestamp</th>
+          <th style="width:50px">Status</th>
+          <th style="width:55px">Method</th>
+          <th>URL</th>
+          <th style="width:100px">Size ↑↓</th>
+          <th style="width:65px">Time</th>
+          <th style="width:130px">Timeline</th>
+        </tr>
+        <tr>
+          <td class="ts">06:17:56</td><td class="s3">302</td><td>GET</td><td class="url-c">/nof-hdcc</td>
+          <td class="sz"><span style="color:#7c3aed">↑</span>1.4KB <span style="color:#0891b2">↓</span>2.6KB</td>
+          <td class="tm">1589ms</td><td><div style="height:8px;background:linear-gradient(to right,#3b82f6 20%,#10b981 80%);border-radius:2px"></div></td>
+        </tr>
+        <tr>
+          <td class="ts">06:17:57</td><td class="s3">303</td><td>GET</td><td class="url-c">/oauth2/v1/auth</td>
+          <td class="sz"><span style="color:#7c3aed">↑</span>7.4KB <span style="color:#0891b2">↓</span>6.3KB</td>
+          <td class="tm">300ms</td><td><div style="height:8px;background:linear-gradient(to right,#3b82f6 60%,#10b981 40%);border-radius:2px"></div></td>
+        </tr>
+        <tr>
+          <td class="ts">06:18:00</td><td class="s2">200</td><td>GET</td><td class="url-c">/pages/servererror.jsp</td>
+          <td class="sz"><span style="color:#7c3aed">↑</span>825B <span style="color:#0891b2">↓</span>1.4KB</td>
+          <td class="tm">266ms</td><td><div style="height:8px;background:linear-gradient(to right,#3b82f6 30%,#10b981 70%);border-radius:2px"></div></td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <div class="option-label">Timestamp + Analysis icons only, keep Size as-is <span class="badge-tag tag-compact">Least change</span></div>
+      <div class="option-desc">7 columns. Keep response-only "Size" unchanged. Add a small icons column for cache/redirect indicators instead of request size.</div>
+      <table class="pt">
+        <tr>
+          <th style="width:85px" class="sortable"><span class="sort-arrow">↑</span> Timestamp</th>
+          <th style="width:50px">Status</th>
+          <th style="width:55px">Method</th>
+          <th>URL</th>
+          <th style="width:40px">⚑</th>
+          <th style="width:70px">Resp Size</th>
+          <th style="width:65px">Time</th>
+          <th style="width:110px">Timeline</th>
+        </tr>
+        <tr>
+          <td class="ts">06:17:56</td><td class="s3">302</td><td>GET</td><td class="url-c">/nof-hdcc</td>
+          <td class="ic">↪</td>
+          <td class="sz">2.6KB</td><td class="tm">1589ms</td><td><div style="height:8px;background:linear-gradient(to right,#3b82f6 20%,#10b981 80%);border-radius:2px"></div></td>
+        </tr>
+        <tr>
+          <td class="ts">06:17:57</td><td class="s3">303</td><td>GET</td><td class="url-c">/oauth2/v1/auth</td>
+          <td class="ic">↪</td>
+          <td class="sz">6.3KB</td><td class="tm">300ms</td><td><div style="height:8px;background:linear-gradient(to right,#3b82f6 60%,#10b981 40%);border-radius:2px"></div></td>
+        </tr>
+        <tr>
+          <td class="ts">06:18:00</td><td class="s2">200</td><td>GET</td><td class="url-c">/pages/servererror.jsp</td>
+          <td class="ic">💾</td>
+          <td class="sz">1.4KB</td><td class="tm">266ms</td><td><div style="height:8px;background:linear-gradient(to right,#3b82f6 30%,#10b981 70%);border-radius:2px"></div></td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+</div>
