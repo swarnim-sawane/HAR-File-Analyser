@@ -6,12 +6,13 @@ import {
   ChevronRightIcon,
   ClockIcon,
   ConsoleIcon,
+  FileTextIcon,
   InfoIcon,
   LayersIcon,
   NetworkIcon,
   RefreshIcon,
+  RouteIcon,
   ShieldIcon,
-  SparklesIcon,
 } from './Icons';
 import { InsightFinding, InsightHealth, InsightsResult } from '../hooks/useInsights';
 import './AiInsights.css';
@@ -113,14 +114,14 @@ const SECTION_META: Record<
     kind: 'Recommendations',
     label: 'Follow-up actions and optimization opportunities.',
     railLabel: 'Follow-up actions',
-    Icon: SparklesIcon,
+    Icon: RouteIcon,
   },
 };
 
 const SUMMARY_METRIC_META = [
   { key: 'findings', label: 'Findings', note: 'All sections', Icon: LayersIcon },
   { key: 'critical', label: 'Critical', note: 'Prompt attention', Icon: AlertIcon },
-  { key: 'sections', label: 'Sections', note: 'Review areas', Icon: SparklesIcon },
+  { key: 'sections', label: 'Review Areas', note: 'Grouped coverage', Icon: FileTextIcon },
 ] as const;
 
 function formatContext(finding: InsightFinding) {
@@ -147,7 +148,7 @@ function getSourceTitle(variant: 'har' | 'console') {
 }
 
 function getSourceKicker(variant: 'har' | 'console') {
-  return variant === 'har' ? 'AI HAR Insights' : 'AI Console Insights';
+  return variant === 'har' ? 'AI HAR Review' : 'AI Console Review';
 }
 
 function getSourceIcon(variant: 'har' | 'console') {
@@ -173,16 +174,17 @@ const AiInsightsSurface: React.FC<AiInsightsSurfaceProps> = ({
   productsLabel,
 }) => {
   const SourceIcon = getSourceIcon(variant);
+  const sourceKicker = getSourceKicker(variant);
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
 
   if (isGenerating) {
     return (
       <div className="ai-insights-state ai-insights-loading">
-        <div className="ai-insights-state-icon is-animated">
-          <SparklesIcon />
+        <div className="ai-insights-state-icon is-animated" aria-hidden="true">
+          <SourceIcon />
         </div>
         <div className="ai-insights-state-copy">
-          <span className="ai-insights-state-kicker">{getSourceKicker(variant)}</span>
+          <span className="ai-insights-state-kicker">{sourceKicker}</span>
           <h2>{loadingMessage}</h2>
           <p>{loadingHint}</p>
         </div>
@@ -200,16 +202,18 @@ const AiInsightsSurface: React.FC<AiInsightsSurfaceProps> = ({
   if (error) {
     return (
       <div className="ai-insights-state ai-insights-error">
-        <div className="ai-insights-state-icon tone-critical">
+        <div className="ai-insights-state-icon tone-critical" aria-hidden="true">
           <AlertIcon />
         </div>
         <div className="ai-insights-state-copy">
-          <span className="ai-insights-state-kicker">{getSourceKicker(variant)}</span>
+          <span className="ai-insights-state-kicker">{sourceKicker}</span>
           <h2>Analysis failed</h2>
           <p>{error}</p>
         </div>
         <button className="ai-insights-generate-btn" onClick={generate} type="button">
-          <RefreshIcon />
+          <span className="ai-insights-button-icon" aria-hidden="true">
+            <RefreshIcon />
+          </span>
           <span>Retry analysis</span>
         </button>
       </div>
@@ -219,16 +223,15 @@ const AiInsightsSurface: React.FC<AiInsightsSurfaceProps> = ({
   if (!insights) {
     return (
       <div className="ai-insights-state ai-insights-empty">
-        <div className="ai-insights-state-icon tone-accent">
+        <div className="ai-insights-state-icon tone-accent" aria-hidden="true">
           <SourceIcon />
         </div>
         <div className="ai-insights-state-copy">
-          <span className="ai-insights-state-kicker">{getSourceKicker(variant)}</span>
+          <span className="ai-insights-state-kicker">{sourceKicker}</span>
           <h2>AI Insights</h2>
           <p>{emptyDescription}</p>
         </div>
         <button className="ai-insights-generate-btn" onClick={generate} type="button">
-          <SparklesIcon />
           <span>Generate AI Insights</span>
         </button>
       </div>
@@ -264,12 +267,16 @@ const AiInsightsSurface: React.FC<AiInsightsSurfaceProps> = ({
           <div className="ai-insights-rail-stack">
             <section className="ai-insights-rail-card ai-insights-rail-card-health">
               <span className="ai-insights-rail-kicker">
-                <SourceIcon />
-                <span>{getSourceKicker(variant)}</span>
+                <span className="ai-insights-rail-kicker-icon" aria-hidden="true">
+                  <SourceIcon />
+                </span>
+                <span>{sourceKicker}</span>
               </span>
               <div className={`ai-insights-health-card tone-${health.tone}`}>
-                <span className="ai-insights-health-icon">
-                  <HealthIcon />
+                <span className="ai-insights-health-icon" aria-hidden="true">
+                  <span className="ai-insights-health-icon-glyph">
+                    <HealthIcon />
+                  </span>
                 </span>
                 <div>
                   <span>Overall health</span>
@@ -303,7 +310,7 @@ const AiInsightsSurface: React.FC<AiInsightsSurfaceProps> = ({
               <div className="ai-insights-rail-metrics">
                 {SUMMARY_METRIC_META.map(({ key, label, note, Icon }) => (
                   <article key={key} className="ai-insights-metric-card is-rail is-compact">
-                    <span className="ai-insights-metric-icon">
+                    <span className="ai-insights-metric-icon" aria-hidden="true">
                       <Icon />
                     </span>
                     <div className="ai-insights-metric-copy">
@@ -322,8 +329,10 @@ const AiInsightsSurface: React.FC<AiInsightsSurfaceProps> = ({
           <section className="ai-insights-hero">
             <div className="ai-insights-hero-copy">
               <span className="ai-insights-kicker">
-                <SparklesIcon />
-                <span>{getSourceKicker(variant)}</span>
+                <span className="ai-insights-kicker-icon" aria-hidden="true">
+                  <SourceIcon />
+                </span>
+                <span>{sourceKicker}</span>
               </span>
               <div className="ai-insights-hero-heading">
                 <div>
@@ -331,7 +340,9 @@ const AiInsightsSurface: React.FC<AiInsightsSurfaceProps> = ({
                   <p>{insights.summary}</p>
                 </div>
                 <button className="ai-insights-regen-btn" onClick={generate} type="button">
-                  <RefreshIcon />
+                  <span className="ai-insights-button-icon" aria-hidden="true">
+                    <RefreshIcon />
+                  </span>
                   <span>Regenerate</span>
                 </button>
               </div>
@@ -359,7 +370,7 @@ const AiInsightsSurface: React.FC<AiInsightsSurfaceProps> = ({
                   className="ai-insights-section-card"
                 >
                   <div className="ai-insights-section-header">
-                    <span className="ai-insights-section-icon">
+                    <span className="ai-insights-section-icon" aria-hidden="true">
                       <SectionIcon />
                     </span>
                     <div className="ai-insights-section-copy">
@@ -474,7 +485,7 @@ const AiInsightsSurface: React.FC<AiInsightsSurfaceProps> = ({
                       onClick={() => scrollToSection(section.type)}
                       type="button"
                     >
-                      <span className="ai-insights-rail-nav-icon">
+                      <span className="ai-insights-rail-nav-icon" aria-hidden="true">
                         <SectionIcon />
                       </span>
                       <span className="ai-insights-rail-nav-copy">

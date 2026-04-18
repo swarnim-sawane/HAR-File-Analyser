@@ -1,6 +1,6 @@
 // src/App.tsx
 
-import React, { useCallback, useRef, useState, useEffect } from 'react';
+import React, { startTransition, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import FileUploader from './components/FileUploader';
 import ConsoleLogUploader from './components/ConsoleLogUploader';
 import UnifiedUploader from './components/UnifiedUploader';
@@ -9,7 +9,7 @@ import ConsoleLogTabContent from './components/ConsoleLogTabContent';
 import { ConsoleLogFile } from './types/consolelog';
 import { ConsoleLogParser } from './utils/consoleLogParser';
 import './styles/globals.css';
-import DarkModeToggle from './components/DarkModeToggle';
+import ThemeSwitcher from './components/ThemeSwitcher';
 import { UploadResult, chunkedUploader } from './services/chunkedUploader';
 import { apiClient } from './services/apiClient';
 import { wsClient } from './services/websocketClient';
@@ -20,6 +20,7 @@ import BatchSanitizeModal from './components/BatchSanitizeModal';
 import HarSanitizer from './components/HarSanitizer';
 import DocumentationPage from './components/DocumentationPage';
 import { ArrowLeftIcon, FileTextIcon } from './components/Icons';
+import { applyTheme, resolveInitialTheme, ThemeMode } from './theme';
 
 interface RecentFile {
   name: string;
@@ -53,6 +54,13 @@ const normalizePathname = (pathname: string): AppPath =>
   pathname === '/docs' || pathname === '/docs/' ? '/docs' : '/';
 
 const App: React.FC = () => {
+  const [theme, setTheme] = useState<ThemeMode>(() =>
+    resolveInitialTheme({
+      doc: typeof document !== 'undefined' ? document : undefined,
+      storage: typeof window !== 'undefined' ? window.localStorage : null,
+      matchMedia: typeof window !== 'undefined' ? window.matchMedia.bind(window) : undefined,
+    })
+  );
   const [pathname, setPathname] = useState<AppPath>(() => normalizePathname(window.location.pathname));
   // ── HAR multi-tab state ──────────────────────────────────────────────────────
   const [harTabs, setHarTabs] = useState<HarFileTab[]>([]);
@@ -87,6 +95,14 @@ const App: React.FC = () => {
   const LOG_RECENT_FILES_KEY = 'console_log_recent_files';
   const LOG_STATUS_POLL_INTERVAL_MS = 2000;
   const LOG_STATUS_TIMEOUT_MS = 180000;
+
+  useLayoutEffect(() => {
+    applyTheme(theme, {
+      doc: document,
+      storage: window.localStorage,
+    });
+  }, [theme]);
+
   useEffect(() => {
     const handlePopState = () => {
       setPathname(normalizePathname(window.location.pathname));
@@ -150,6 +166,12 @@ const App: React.FC = () => {
     if (nextTool === activeTool) return;
     setActiveTool(nextTool);
   };
+
+  const handleThemeChange = useCallback((nextTheme: ThemeMode) => {
+    startTransition(() => {
+      setTheme((currentTheme) => (currentTheme === nextTheme ? currentTheme : nextTheme));
+    });
+  }, []);
 
   /** Switch to a different open HAR file tab */
   const handleHarFileTabSwitch = (tabId: string) => {
@@ -610,7 +632,7 @@ const App: React.FC = () => {
             {isDocsRoute ? <ArrowLeftIcon /> : <FileTextIcon />}
             <span>{headerActionLabel}</span>
           </button>
-          <DarkModeToggle />
+          <ThemeSwitcher theme={theme} onChange={handleThemeChange} />
         </div>
       </header>
 
@@ -897,7 +919,7 @@ const App: React.FC = () => {
         {/* HAR Compare Tool — mounted OUTSIDE the showUnifiedUploader conditional so it
             is never unmounted when the user switches tabs. Hidden via display:none
             when inactive so all loaded files and AI results survive tab switches. */}
-        <div style={{ display: activeTool === 'compare' ? 'contents' : 'none' }}>
+        <div className="compare-wrapper" style={{ display: activeTool === 'compare' ? undefined : 'none' }}>
           <HarCompare openTabs={harTabs.map(t => ({ fileId: t.fileId, fileName: t.fileName }))} />
         </div>
           </>
