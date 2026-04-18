@@ -1,0 +1,39 @@
+@font-face {
+  font-family: 'Oracle Sans';
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src:
+    url('/themes/redwood/OracleSans_W_Lt.woff2') format('woff2'),
+    url('/themes/redwood/OracleSans_W_Lt.woff') format('woff');
+}
+
+@font-face {
+  font-family: 'Oracle Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src:
+    url('/themes/redwood/OracleSans_W_Rg.woff2') format('woff2'),
+    url('/themes/redwood/OracleSans_W_Rg.woff') format('woff');
+}
+
+@font-face {
+  font-family: 'Oracle Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src:
+    url('/themes/redwood/OracleSans_W_SBd.woff2') format('woff2'),
+    url('/themes/redwood/OracleSans_W_SBd.woff') format('woff');
+}
+
+@font-face {
+  font-family: 'Oracle Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src:
+    url('/themes/redwood/OracleSans_W_Bd.woff2') format('woff2'),
+    url('/themes/redwood/OracleSans_W_Bd.woff') format('woff');
+}

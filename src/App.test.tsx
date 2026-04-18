@@ -43,9 +43,112 @@ const setPath = (path: string) => {
   window.history.replaceState({}, '', path);
 };
 
+const originalMatchMedia = window.matchMedia;
+
+const setPrefersDark = (prefersDark: boolean) => {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: query === '(prefers-color-scheme: dark)' ? prefersDark : false,
+      media: query,
+      onchange: null,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      dispatchEvent: () => false,
+    })),
+  });
+};
+
+const resetThemeEnvironment = () => {
+  window.localStorage.clear();
+  delete document.documentElement.dataset.theme;
+  document.documentElement.style.colorScheme = '';
+};
+
+beforeEach(() => {
+  resetThemeEnvironment();
+  setPrefersDark(false);
+  setPath('/');
+});
+
+afterAll(() => {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    value: originalMatchMedia,
+  });
+});
+
+describe('App theme behavior', () => {
+  it.each(['light', 'dark', 'redwood'] as const)('restores a saved %s theme on mount', (savedTheme) => {
+    window.localStorage.setItem('theme', savedTheme);
+
+    render(<App />);
+
+    expect(document.documentElement.dataset.theme).toBe(savedTheme);
+    expect(document.documentElement.style.colorScheme).toBe(savedTheme === 'dark' ? 'dark' : 'light');
+    expect(screen.getByRole('radio', { name: new RegExp(`${savedTheme} theme`, 'i') })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
+  });
+
+  it('keeps a pre-mounted root dataset theme before consulting storage or media', () => {
+    document.documentElement.dataset.theme = 'redwood';
+    window.localStorage.setItem('theme', 'dark');
+    setPrefersDark(true);
+
+    render(<App />);
+
+    expect(document.documentElement.dataset.theme).toBe('redwood');
+    expect(document.documentElement.style.colorScheme).toBe('light');
+    expect(screen.getByRole('radio', { name: /redwood theme/i })).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it.each([
+    { prefersDark: false, expectedTheme: 'light' },
+    { prefersDark: true, expectedTheme: 'dark' },
+  ])('uses the system $expectedTheme theme when there is no saved preference', ({ prefersDark, expectedTheme }) => {
+    setPrefersDark(prefersDark);
+
+    render(<App />);
+
+    expect(document.documentElement.dataset.theme).toBe(expectedTheme);
+    expect(document.documentElement.style.colorScheme).toBe(expectedTheme);
+    expect(screen.getByRole('radio', { name: new RegExp(`${expectedTheme} theme`, 'i') })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
+  });
+
+  it('updates the root theme and persisted preference when a theme is selected', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    expect(screen.getByRole('radiogroup', { name: /theme/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('radio', { name: /redwood theme/i }));
+    expect(document.documentElement.dataset.theme).toBe('redwood');
+    expect(document.documentElement.style.colorScheme).toBe('light');
+    expect(window.localStorage.getItem('theme')).toBe('redwood');
+    expect(screen.getByRole('radio', { name: /redwood theme/i })).toHaveAttribute('aria-checked', 'true');
+
+    await user.click(screen.getByRole('radio', { name: /dark theme/i }));
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(document.documentElement.style.colorScheme).toBe('dark');
+    expect(window.localStorage.getItem('theme')).toBe('dark');
+    expect(screen.getByRole('radio', { name: /dark theme/i })).toHaveAttribute('aria-checked', 'true');
+  });
+});
+
 describe('App documentation navigation', () => {
-  beforeEach(() => {
-    setPath('/');
+  it('mounts the compare workspace inside a persistent shell wrapper', () => {
+    render(<App />);
+
+    const compareWrapper = screen.getByTestId('har-compare').closest('.compare-wrapper');
+
+    expect(compareWrapper).not.toBeNull();
   });
 
   it('navigates to the documentation page and back from the header control', async () => {

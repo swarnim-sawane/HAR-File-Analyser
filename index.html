@@ -4,6 +4,35 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Advanced HAR file analyzer for debugging web applications" />
+    <link rel="stylesheet" href="/themes/redwood/oracle-sans.css" />
+    <script>
+      (function () {
+        var root = document.documentElement;
+        var storageKey = 'theme';
+        var savedTheme = null;
+
+        try {
+          savedTheme = window.localStorage.getItem(storageKey);
+        } catch (error) {
+          savedTheme = null;
+        }
+
+        var hasSavedTheme = savedTheme === 'light' || savedTheme === 'dark' || savedTheme === 'redwood';
+        var prefersDark = false;
+
+        try {
+          prefersDark =
+            typeof window.matchMedia === 'function' &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches;
+        } catch (error) {
+          prefersDark = false;
+        }
+
+        var theme = hasSavedTheme ? savedTheme : prefersDark ? 'dark' : 'light';
+        root.dataset.theme = theme;
+        root.style.colorScheme = theme === 'dark' ? 'dark' : 'light';
+      })();
+    </script>
     <title>HAR Analyzer - HTTP Archive Analysis Tool</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   </head>
