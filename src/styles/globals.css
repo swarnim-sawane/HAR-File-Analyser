@@ -15266,13 +15266,10 @@ html[data-theme='dark'] .cmp-ai-hero {
 
 /* HAR COMPARE COMPACT WORKSPACE REFINEMENT */
 .cmp-root {
-  gap: 18px;
+  gap: 16px;
 }
 
-.cmp-sticky-rail {
-  position: sticky;
-  top: 88px;
-  z-index: 14;
+.cmp-ready-header {
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -15494,12 +15491,25 @@ html[data-theme='dark'] .cmp-ai-hero {
 }
 
 .cmp-nav-shell--sticky {
+  position: sticky;
+  top: 0;
+  z-index: 12;
   display: flex;
   justify-content: center;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 20px;
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(14px);
+}
+
+.cmp-nav-shell--sticky .cmp-tabs {
+  width: 100%;
+  justify-content: center;
+  gap: 8px;
   padding: 0;
   background: transparent;
-  border: none;
-  box-shadow: none;
 }
 
 .cmp-view-shell {
@@ -15683,7 +15693,8 @@ html[data-theme='dark'] .cmp-ai-hero {
   min-height: 200px;
 }
 
-html[data-theme='dark'] .cmp-sticky-rail,
+html[data-theme='dark'] .cmp-ready-header,
+html[data-theme='dark'] .cmp-nav-shell--sticky,
 html[data-theme='dark'] .cmp-compact-file,
 html[data-theme='dark'] .cmp-sticky-pill,
 html[data-theme='dark'] .cmp-sticky-relation-pill,
@@ -15867,10 +15878,6 @@ html[data-theme='dark'] .cmp-view-shell--ai .cmp-ai-error svg {
 
 
 @media (max-width: 1200px) {
-  .cmp-sticky-rail {
-    top: 76px;
-  }
-
   .cmp-sticky-rail-top {
     grid-template-columns: 1fr;
   }
@@ -15913,8 +15920,7 @@ html[data-theme='dark'] .cmp-view-shell--ai .cmp-ai-error svg {
 }
 
 @media (max-width: 900px) {
-  .cmp-sticky-rail {
-    position: static;
+  .cmp-ready-header {
     padding: 14px;
   }
 
@@ -15931,6 +15937,11 @@ html[data-theme='dark'] .cmp-view-shell--ai .cmp-ai-error svg {
   .cmp-compact-file-actions {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .cmp-nav-shell--sticky {
+    position: static;
+    top: auto;
   }
 
   .cmp-compact-file-actions,
@@ -16743,11 +16754,14 @@ html[data-theme='redwood'] .cmp-root {
 
 html[data-theme='redwood'] .cmp-hero,
 html[data-theme='redwood'] .cmp-upload-stage,
+html[data-theme='redwood'] .cmp-ready-header,
 html[data-theme='redwood'] .cmp-nav-shell,
 html[data-theme='redwood'] .cmp-view-shell,
 html[data-theme='redwood'] .cmp-placeholder,
 html[data-theme='redwood'] .cmp-file-card,
+html[data-theme='redwood'] .cmp-compact-file,
 html[data-theme='redwood'] .cmp-hero-pill,
+html[data-theme='redwood'] .cmp-sticky-pill,
 html[data-theme='redwood'] .cmp-highlight-card,
 html[data-theme='redwood'] .cmp-diff-summary-card,
 html[data-theme='redwood'] .cmp-ai-fact,
@@ -16762,6 +16776,7 @@ html[data-theme='redwood'] .cmp-tabs .main-tab.active,
 html[data-theme='redwood'] .cmp-dz-icon,
 html[data-theme='redwood'] .cmp-compare-token-pill,
 html[data-theme='redwood'] .cmp-tab-icon,
+html[data-theme='redwood'] .cmp-sticky-relation-pill,
 html[data-theme='redwood'] .cmp-placeholder-icon,
 html[data-theme='redwood'] .cmp-placeholder-card-icon,
 html[data-theme='redwood'] .cmp-ai-icon,
@@ -16771,7 +16786,8 @@ html[data-theme='redwood'] .cmp-status-sep,
 html[data-theme='redwood'] .cmp-file-metrics span,
 html[data-theme='redwood'] .cmp-panel-file,
 html[data-theme='redwood'] .cmp-waterfall-legend > span,
-html[data-theme='redwood'] .cmp-tab-select {
+html[data-theme='redwood'] .cmp-tab-select,
+html[data-theme='redwood'] .cmp-compact-select {
     background: linear-gradient(180deg, rgba(255, 251, 250, 0.96), rgba(241, 239, 237, 0.94));
     border-color: rgba(92, 86, 81, 0.14);
 }

@@ -124,6 +124,8 @@ const SUMMARY_METRIC_META = [
   { key: 'sections', label: 'Review Areas', note: 'Grouped coverage', Icon: FileTextIcon },
 ] as const;
 
+const MODEL_BADGE_LABEL = 'Using OCA gpt-5.4';
+
 function formatContext(finding: InsightFinding) {
   return [finding.product, finding.component].filter(Boolean).join(' / ');
 }
@@ -184,7 +186,10 @@ const AiInsightsSurface: React.FC<AiInsightsSurfaceProps> = ({
           <SourceIcon />
         </div>
         <div className="ai-insights-state-copy">
-          <span className="ai-insights-state-kicker">{sourceKicker}</span>
+          <div className="ai-insights-state-meta">
+            <span className="ai-insights-state-kicker">{sourceKicker}</span>
+            <span className="ai-insights-model-badge">{MODEL_BADGE_LABEL}</span>
+          </div>
           <h2>{loadingMessage}</h2>
           <p>{loadingHint}</p>
         </div>
@@ -206,7 +211,10 @@ const AiInsightsSurface: React.FC<AiInsightsSurfaceProps> = ({
           <AlertIcon />
         </div>
         <div className="ai-insights-state-copy">
-          <span className="ai-insights-state-kicker">{sourceKicker}</span>
+          <div className="ai-insights-state-meta">
+            <span className="ai-insights-state-kicker">{sourceKicker}</span>
+            <span className="ai-insights-model-badge">{MODEL_BADGE_LABEL}</span>
+          </div>
           <h2>Analysis failed</h2>
           <p>{error}</p>
         </div>
@@ -227,7 +235,10 @@ const AiInsightsSurface: React.FC<AiInsightsSurfaceProps> = ({
           <SourceIcon />
         </div>
         <div className="ai-insights-state-copy">
-          <span className="ai-insights-state-kicker">{sourceKicker}</span>
+          <div className="ai-insights-state-meta">
+            <span className="ai-insights-state-kicker">{sourceKicker}</span>
+            <span className="ai-insights-model-badge">{MODEL_BADGE_LABEL}</span>
+          </div>
           <h2>AI Insights</h2>
           <p>{emptyDescription}</p>
         </div>
@@ -328,12 +339,15 @@ const AiInsightsSurface: React.FC<AiInsightsSurfaceProps> = ({
         <div className="ai-insights-main">
           <section className="ai-insights-hero">
             <div className="ai-insights-hero-copy">
-              <span className="ai-insights-kicker">
-                <span className="ai-insights-kicker-icon" aria-hidden="true">
-                  <SourceIcon />
+              <div className="ai-insights-hero-meta">
+                <span className="ai-insights-kicker">
+                  <span className="ai-insights-kicker-icon" aria-hidden="true">
+                    <SourceIcon />
+                  </span>
+                  <span>{sourceKicker}</span>
                 </span>
-                <span>{sourceKicker}</span>
-              </span>
+                <span className="ai-insights-model-badge">{MODEL_BADGE_LABEL}</span>
+              </div>
               <div className="ai-insights-hero-heading">
                 <div>
                   <h2>{getSourceTitle(variant)}</h2>

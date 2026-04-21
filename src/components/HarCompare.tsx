@@ -484,6 +484,8 @@ let compareSnapshot: CompareSnapshot = {
 };
 
 const HarCompare: React.FC<HarCompareProps> = ({ openTabs = [] }) => {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const navShellRef = useRef<HTMLDivElement | null>(null);
   const [harA, setHarA] = useState<HarFile | null>(compareSnapshot.harA);
   const [harB, setHarB] = useState<HarFile | null>(compareSnapshot.harB);
   const [nameA, setNameA] = useState<string | null>(compareSnapshot.nameA);
@@ -505,6 +507,24 @@ const HarCompare: React.FC<HarCompareProps> = ({ openTabs = [] }) => {
   useEffect(() => {
     compareSnapshot = { harA, harB, nameA, nameB, activeTab, aiText, aiError, diffFilter };
   }, [harA, harB, nameA, nameB, activeTab, aiText, aiError, diffFilter]);
+
+  const scrollCompareWorkspaceIntoView = useCallback((behavior: ScrollBehavior = 'auto') => {
+    const root = rootRef.current;
+    if (!root) return;
+
+    const wrapper = root.closest('.compare-wrapper') as HTMLElement | null;
+    if (!wrapper) return;
+
+    const navShell = navShellRef.current;
+    const top = navShell ? Math.max(navShell.offsetTop - 12, 0) : 0;
+
+    if (typeof wrapper.scrollTo === 'function') {
+      wrapper.scrollTo({ top, behavior });
+      return;
+    }
+
+    wrapper.scrollTop = top;
+  }, []);
 
   const readHar = useCallback((file: File): Promise<HarFile> => {
     return new Promise((resolve, reject) => {
@@ -803,8 +823,18 @@ Formatting rules:
   const totalA = Math.max(...waterfallA.map(row => row.relStart + row.duration), 0);
   const totalB = Math.max(...waterfallB.map(row => row.relStart + row.duration), 0);
 
+  const handleTabChange = useCallback((nextTab: CompareTab) => {
+    setActiveTab(nextTab);
+
+    if (!ready) return;
+
+    window.requestAnimationFrame(() => {
+      scrollCompareWorkspaceIntoView('smooth');
+    });
+  }, [ready, scrollCompareWorkspaceIntoView]);
+
   return (
-    <div className="cmp-root">
+    <div className="cmp-root" ref={rootRef}>
       {!ready && (
         <>
           <section className="cmp-hero">
@@ -922,7 +952,7 @@ Formatting rules:
 
       {ready && (
         <>
-          <section className="cmp-sticky-rail">
+          <section className="cmp-ready-header">
             <div className="cmp-sticky-rail-top">
               <div className="cmp-sticky-copy">
                 <span className="cmp-hero-kicker">Compare workspace</span>
@@ -950,21 +980,21 @@ Formatting rules:
 
               <CompactFileControl side="B" title="Comparison capture" fileName={nameB} loading={loadingB} progress={progressB} error={errorB} accentColor="#d97706" metrics={metricsB} openTabs={openTabs} onFile={file => loadFile(file, 'B')} onSelectOpenTab={(fileId, fileName) => loadFromFileId(fileId, fileName, 'B')} />
             </div>
-
-            <div className="cmp-nav-shell cmp-nav-shell--sticky">
-              <div className="main-tabs cmp-tabs">
-                {compareTabs.map(tab => {
-                  const Icon = tab.icon;
-                  return (
-                    <button key={tab.id} className={`main-tab${activeTab === tab.id ? ' active' : ''}`} onClick={() => setActiveTab(tab.id)}>
-                      <span className="cmp-tab-icon"><Icon /></span>
-                      {tab.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
           </section>
+
+          <div className="cmp-nav-shell cmp-nav-shell--sticky" ref={navShellRef}>
+            <div className="main-tabs cmp-tabs">
+              {compareTabs.map(tab => {
+                const Icon = tab.icon;
+                return (
+                  <button key={tab.id} className={`main-tab${activeTab === tab.id ? ' active' : ''}`} onClick={() => handleTabChange(tab.id)}>
+                    <span className="cmp-tab-icon"><Icon /></span>
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
           {activeTab === 'stats' && metricsA && metricsB && (
             <section className="cmp-view-shell">
@@ -1186,9 +1216,11 @@ Formatting rules:
 
               {aiText && (
                 <div className="cmp-ai-result">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {normalizedAiText}
-                  </ReactMarkdown>
+                  <div className="cmp-ai-text">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {normalizedAiText}
+                    </ReactMarkdown>
+                  </div>
                 </div>
               )}
             </section>

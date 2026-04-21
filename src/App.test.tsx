@@ -3,8 +3,40 @@ import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
 
+type UnifiedUploaderMockProps = {
+  onHarFileUpload?: (result: {
+    success: boolean;
+    fileId: string;
+    jobId: string;
+    fileName: string;
+    fileSize: number;
+    hash: string;
+    message: string;
+  }) => void | Promise<void>;
+};
+
 vi.mock('./components/UnifiedUploader', () => ({
-  default: () => <div>Drop any file to get started</div>,
+  default: ({ onHarFileUpload }: UnifiedUploaderMockProps) => (
+    <div>
+      <div>Drop any file to get started</div>
+      <button
+        type="button"
+        onClick={() =>
+          void onHarFileUpload?.({
+            success: true,
+            fileId: 'mock-har-id',
+            jobId: 'mock-job-id',
+            fileName: 'mock.har',
+            fileSize: 128,
+            hash: 'mock-hash',
+            message: 'ok',
+          })
+        }
+      >
+        Load mock HAR
+      </button>
+    </div>
+  ),
 }));
 
 vi.mock('./components/FileUploader', () => ({
@@ -149,6 +181,37 @@ describe('App documentation navigation', () => {
     const compareWrapper = screen.getByTestId('har-compare').closest('.compare-wrapper');
 
     expect(compareWrapper).not.toBeNull();
+  });
+
+  it('resets the persistent compare shell scroll when returning to Compare', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: /load mock har/i }));
+    await user.click(screen.getByRole('button', { name: /^compare$/i }));
+
+    const compareWrapper = screen.getByTestId('har-compare').closest('.compare-wrapper') as HTMLDivElement | null;
+    expect(compareWrapper).not.toBeNull();
+
+    const scrollToMock = vi.fn(({ top }: ScrollToOptions) => {
+      compareWrapper!.scrollTop = Number(top ?? 0);
+    });
+    Object.defineProperty(compareWrapper as HTMLDivElement, 'scrollTo', {
+      configurable: true,
+      value: scrollToMock,
+    });
+
+    compareWrapper!.scrollTop = 420;
+    scrollToMock.mockClear();
+
+    await user.click(screen.getByRole('button', { name: /^har$/i }));
+    await user.click(screen.getByRole('button', { name: /^compare$/i }));
+
+    expect(scrollToMock).toHaveBeenCalledWith({
+      top: 0,
+      behavior: 'auto',
+    });
+    expect(compareWrapper!.scrollTop).toBe(0);
   });
 
   it('navigates to the documentation page and back from the header control', async () => {
