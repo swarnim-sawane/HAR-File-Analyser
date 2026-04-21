@@ -83,6 +83,7 @@ const App: React.FC = () => {
   const [showLogLocalFallback, setShowLogLocalFallback] = useState(false);
   const logCancelRef = React.useRef<(() => void) | null>(null);
   const addLogTabInputRef = useRef<HTMLInputElement>(null);
+  const compareWrapperRef = useRef<HTMLDivElement | null>(null);
 
   const MAX_LOG_TABS = 8;
 
@@ -102,6 +103,20 @@ const App: React.FC = () => {
       storage: window.localStorage,
     });
   }, [theme]);
+
+  useLayoutEffect(() => {
+    if (activeTool !== 'compare') return;
+
+    const compareWrapper = compareWrapperRef.current;
+    if (!compareWrapper) return;
+
+    if (typeof compareWrapper.scrollTo === 'function') {
+      compareWrapper.scrollTo({ top: 0, behavior: 'auto' });
+      return;
+    }
+
+    compareWrapper.scrollTop = 0;
+  }, [activeTool]);
 
   useEffect(() => {
     const handlePopState = () => {
@@ -921,7 +936,11 @@ const App: React.FC = () => {
         {/* HAR Compare Tool — mounted OUTSIDE the showUnifiedUploader conditional so it
             is never unmounted when the user switches tabs. Hidden via display:none
             when inactive so all loaded files and AI results survive tab switches. */}
-        <div className="compare-wrapper" style={{ display: activeTool === 'compare' ? undefined : 'none' }}>
+        <div
+          className="compare-wrapper"
+          ref={compareWrapperRef}
+          style={{ display: activeTool === 'compare' ? undefined : 'none' }}
+        >
           <HarCompare openTabs={harTabs.map(t => ({ fileId: t.fileId, fileName: t.fileName }))} />
         </div>
           </>

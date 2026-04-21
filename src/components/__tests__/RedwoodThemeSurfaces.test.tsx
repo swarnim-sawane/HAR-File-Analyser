@@ -66,6 +66,8 @@ describe('Redwood theme surface smoke tests', () => {
       expect(screen.getByRole('heading', { name: /compare captures/i })).toBeInTheDocument();
     });
 
+    expect(container.querySelector('.cmp-ready-header')).not.toBeNull();
+    expect(container.querySelector('.cmp-nav-shell--sticky')).not.toBeNull();
     expect(screen.getByRole('heading', { name: /stats overview/i })).toBeInTheDocument();
     expect(screen.getByText(/performance and stability deltas/i)).toBeInTheDocument();
   });
