@@ -14,6 +14,16 @@ export const TYPE_COLOR: Record<string, string> = {
   other:      '#9ca3af',
 };
 
+const FLOW_RESOURCE_TYPES = new Set([
+  'document',
+  'script',
+  'xhr',
+  'stylesheet',
+  'image',
+  'font',
+  'other',
+]);
+
 // ─── Interfaces ───────────────────────────────────────────────────────────────
 export interface ZoneRequest {
   index:      number;        // original entry index
@@ -93,10 +103,20 @@ function detectProduct(domain: string): string | null {
   return null;
 }
 
+function normalizeFlowResourceType(type?: string): string {
+  const normalized = type?.trim().toLowerCase();
+
+  if (!normalized) return 'other';
+  if (normalized === 'fetch') return 'xhr';
+  if (FLOW_RESOURCE_TYPES.has(normalized)) return normalized;
+
+  return 'other';
+}
+
 // ─── Resource type heuristic ──────────────────────────────────────────────────
 function getResourceType(entry: Entry): string {
-  const ext = (entry as any);
-  if (ext._resourceType) return ext._resourceType as string;
+  const ext = entry as Entry & { _resourceType?: string };
+  if (ext._resourceType) return normalizeFlowResourceType(ext._resourceType);
 
   const mime = entry.response.content.mimeType?.toLowerCase() || '';
   const url  = entry.request.url.toLowerCase();
