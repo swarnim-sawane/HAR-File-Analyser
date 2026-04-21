@@ -626,8 +626,10 @@ const App: React.FC = () => {
           </div>
           <span className="header-divider">{headerSubtitle}</span>
         </div>
-        <div className="app-header-actions">
+        <div className="app-header-center">
           <span className="header-poc-badge">Proof of Concept</span>
+        </div>
+        <div className="app-header-actions">
           <button type="button" className="app-header-action-button" onClick={handleHeaderAction}>
             {isDocsRoute ? <ArrowLeftIcon /> : <FileTextIcon />}
             <span>{headerActionLabel}</span>

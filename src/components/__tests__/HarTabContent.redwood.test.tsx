@@ -1,5 +1,6 @@
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import HarTabContent from '../HarTabContent';
 
 const { getHarDataMock, mockHarState } = vi.hoisted(() => {
@@ -108,7 +109,11 @@ vi.mock('../FloatingAiChat', () => ({
 }));
 
 vi.mock('../RequestFlowDiagram', () => ({
-  default: () => <div>Request flow mock</div>,
+  default: () => <div>Journey map mock</div>,
+}));
+
+vi.mock('../RequestFlowGraphView', () => ({
+  default: () => <div>Scattered view mock</div>,
 }));
 
 vi.mock('../PerformanceScorecard', () => ({
@@ -154,5 +159,49 @@ describe('HarTabContent Redwood theme smoke test', () => {
       expect(getHarDataMock).toHaveBeenCalledWith('file-1');
       expect(mockHarState.loadHarData).toHaveBeenCalled();
     });
+  });
+
+  it('renders a request flow view toggle and switches from journey map to scattered view', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <HarTabContent
+        tabId="tab-1"
+        fileId="file-1"
+        fileName="session.har"
+        isActive
+        backendUrl="http://localhost:4000"
+        recentFiles={[]}
+        onAddNewTab={vi.fn()}
+        onLoadRecentNewTab={vi.fn()}
+        onClearRecent={vi.fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(getHarDataMock).toHaveBeenCalledWith('file-1');
+      expect(mockHarState.loadHarData).toHaveBeenCalled();
+    });
+
+    await user.click(screen.getByRole('button', { name: /request flow/i }));
+
+    const flowToggle = screen.getByRole('radiogroup', { name: /request flow view/i });
+    expect(flowToggle).toBeInTheDocument();
+
+    const journeyMapToggle = screen.getByRole('radio', { name: /journey map/i });
+    const nodeGraphToggle = screen.getByRole('radio', { name: /scattered view/i });
+
+    expect(journeyMapToggle).toHaveAttribute('aria-checked', 'true');
+    expect(nodeGraphToggle).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByText('Journey map mock')).toBeInTheDocument();
+    expect(screen.queryByText('Scattered view mock')).not.toBeInTheDocument();
+
+    await user.click(nodeGraphToggle);
+
+    expect(journeyMapToggle).toHaveAttribute('aria-checked', 'false');
+    expect(nodeGraphToggle).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByText('Scattered view mock')).toBeInTheDocument();
+    expect(screen.queryByText('Journey map mock')).not.toBeInTheDocument();
+    expect(document.documentElement.dataset.theme).toBe('redwood');
   });
 });
