@@ -158,8 +158,8 @@ describe('App documentation navigation', () => {
 
     expect(screen.getByText('Drop any file to get started')).toBeInTheDocument();
     expect(pocBadge).toBeInTheDocument();
-    expect(pocBadge.closest('.app-header-actions')).not.toBeNull();
-    expect(pocBadge.closest('.header-title-group')).toBeNull();
+    expect(pocBadge.closest('.app-header-center')).not.toBeNull();
+    expect(pocBadge.closest('.app-header-actions')).toBeNull();
 
     await user.click(screen.getByRole('button', { name: /documentation/i }));
     expect(screen.getByRole('heading', { name: /har file analyzer documentation/i })).toBeInTheDocument();
@@ -176,7 +176,8 @@ describe('App documentation navigation', () => {
 
     expect(screen.getByRole('heading', { name: /har file analyzer documentation/i })).toBeInTheDocument();
     expect(pocBadge).toBeInTheDocument();
-    expect(pocBadge.closest('.app-header-actions')).not.toBeNull();
+    expect(pocBadge.closest('.app-header-center')).not.toBeNull();
+    expect(pocBadge.closest('.app-header-actions')).toBeNull();
     expect(screen.getByRole('heading', { name: /recommended investigation workflow/i })).toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: /documentation section navigation/i })).toBeInTheDocument();
   });

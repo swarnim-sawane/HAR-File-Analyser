@@ -2,7 +2,7 @@
 // Self-contained HAR analyzer instance. One is mounted per open file.
 // Hidden (display:none) when not active so state is preserved while switching tabs.
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import FilterPanel from './FilterPanel';
 import RequestList from './RequestList';
 import RequestDetails from './RequestDetails';
@@ -10,12 +10,14 @@ import Toolbar from './Toolbar';
 import { useHarData } from '../hooks/useHarData';
 import FloatingAiChat from './FloatingAiChat';
 import RequestFlowDiagram from './RequestFlowDiagram';
+import RequestFlowGraphView from './RequestFlowGraphView';
 import PerformanceScorecard from './PerformanceScorecard';
 import AiInsights from './AiInsights';
 import { apiClient } from '../services/apiClient';
-import { ChevronDownIcon, ClockIcon, FileIcon, TrashIcon, UploadIcon } from './Icons';
+import { ChevronDownIcon, ClockIcon, FileIcon, NetworkIcon, RouteIcon, TrashIcon, UploadIcon } from './Icons';
 
 type HarTab = 'analyzer' | 'flow' | 'scorecard' | 'insights';
+type FlowViewMode = 'diagram' | 'nodes';
 
 interface RecentFile {
   name: string;
@@ -48,11 +50,27 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
 }) => {
   const harState = useHarData();
   const [activeTab, setActiveTab] = useState<HarTab>('analyzer');
+  const [flowViewMode, setFlowViewMode] = useState<FlowViewMode>('diagram');
   const [detailsWidth, setDetailsWidth] = useState(450);
   const [isLoadingFile, setIsLoadingFile] = useState(true);
   const [showStickyRecent, setShowStickyRecent] = useState(false);
+  const flowViewRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const DETAILS_MIN = 320;
   const DETAILS_MAX = 900;
+  const flowViewOptions: Array<{ value: FlowViewMode; label: string; description: string; icon: React.ReactNode }> = [
+    {
+      value: 'diagram',
+      label: 'Journey Map',
+      description: 'Current cross-domain journey view',
+      icon: <RouteIcon />,
+    },
+    {
+      value: 'nodes',
+      label: 'Scattered View',
+      description: 'Original scattered request node view',
+      icon: <NetworkIcon />,
+    },
+  ];
 
   // Load file data when the tab is first created.
   useEffect(() => {
@@ -100,6 +118,44 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
 
     const diffDays = Math.floor(diffHours / 24);
     return `${diffDays}d ago`;
+  };
+
+  const focusFlowView = (index: number) => {
+    flowViewRefs.current[index]?.focus();
+  };
+
+  const moveFlowView = (index: number) => {
+    const nextOption = flowViewOptions[index];
+    if (!nextOption) return;
+    setFlowViewMode(nextOption.value);
+    focusFlowView(index);
+  };
+
+  const handleFlowViewKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, currentIndex: number) => {
+    const lastIndex = flowViewOptions.length - 1;
+
+    switch (event.key) {
+      case 'ArrowRight':
+      case 'ArrowDown':
+        event.preventDefault();
+        moveFlowView(currentIndex === lastIndex ? 0 : currentIndex + 1);
+        break;
+      case 'ArrowLeft':
+      case 'ArrowUp':
+        event.preventDefault();
+        moveFlowView(currentIndex === 0 ? lastIndex : currentIndex - 1);
+        break;
+      case 'Home':
+        event.preventDefault();
+        moveFlowView(0);
+        break;
+      case 'End':
+        event.preventDefault();
+        moveFlowView(lastIndex);
+        break;
+      default:
+        break;
+    }
   };
 
   return (
@@ -246,14 +302,56 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
           )}
 
           {activeTab === 'flow' && (
-            <div className="flow-tab-panel">
-              <RequestFlowDiagram
-                entries={harState.filteredEntries}
-                onNodeClick={(entry: any) => {
-                  harState.setSelectedEntry(entry);
-                  setActiveTab('analyzer');
-                }}
-              />
+            <div className="flow-tab-shell">
+              <div className="flow-view-toggle-bar">
+                <span className="flow-view-toggle-kicker">View</span>
+
+                <div className="flow-view-toggle" role="radiogroup" aria-label="Request Flow View">
+                  {flowViewOptions.map((option, index) => {
+                    const isActive = flowViewMode === option.value;
+
+                    return (
+                      <button
+                        key={option.value}
+                        ref={(element) => {
+                          flowViewRefs.current[index] = element;
+                        }}
+                        type="button"
+                        role="radio"
+                        aria-checked={isActive}
+                        tabIndex={isActive ? 0 : -1}
+                        title={option.description}
+                        className={`flow-view-toggle-option ${isActive ? 'is-active' : ''}`}
+                        onClick={() => setFlowViewMode(option.value)}
+                        onKeyDown={(event) => handleFlowViewKeyDown(event, index)}
+                      >
+                        <span className="flow-view-toggle-option-icon" aria-hidden="true">{option.icon}</span>
+                        <span className="flow-view-toggle-option-label">{option.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flow-tab-panel">
+                {flowViewMode === 'diagram' ? (
+                  <RequestFlowDiagram
+                    entries={harState.filteredEntries}
+                    onNodeClick={(entry: any) => {
+                      harState.setSelectedEntry(entry);
+                      setActiveTab('analyzer');
+                    }}
+                  />
+                ) : (
+                  <RequestFlowGraphView
+                    entries={harState.filteredEntries}
+                    onNodeClick={(entry) => {
+                      harState.setSelectedEntry(entry);
+                      setActiveTab('analyzer');
+                    }}
+                  />
+                )}
+              </div>
             </div>
           )}
 
