@@ -75,8 +75,9 @@ describe('HarCompare', () => {
     const user = userEvent.setup();
     const fileA = new File([makeHarJson()], 'baseline.har', { type: 'application/json' });
     const fileB = new File([makeHarJson()], 'comparison.har', { type: 'application/json' });
+    const markdown = '## What was broken\n\u2022 First issue\n\u25E6 Why it matters\n\u2022 Second issue';
     const chunks = [
-      `data: ${JSON.stringify({ choices: [{ delta: { content: '## What was broken\\n- First issue\\n- Second issue' } }] })}\n\n`,
+      `data: ${JSON.stringify({ choices: [{ delta: { content: markdown } }] })}\n\n`,
       'data: [DONE]\n\n',
     ];
     let chunkIndex = 0;
@@ -118,6 +119,11 @@ describe('HarCompare', () => {
 
     expect(container.querySelector('.cmp-ai-result .cmp-ai-text')).not.toBeNull();
     expect(screen.getByText(/first issue/i)).toBeInTheDocument();
+    expect(screen.getByText(/why it matters/i)).toBeInTheDocument();
     expect(screen.getByText(/second issue/i)).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(container.querySelectorAll('.cmp-ai-result .cmp-ai-text ul').length).toBeGreaterThan(1);
+    });
   });
 });

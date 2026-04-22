@@ -126,14 +126,14 @@ body {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-height: 40px;
-    padding: 0 18px;
+    min-height: 46px;
+    padding: 0 24px;
     border: 1px solid var(--poc-badge-border);
     border-radius: 999px;
     background: var(--poc-badge-background);
     color: var(--poc-badge-text);
     box-shadow: var(--poc-badge-shadow), inset 0 1px 0 var(--poc-badge-highlight);
-    font-size: 11px;
+    font-size: 14px;
     font-weight: 800;
     letter-spacing: 0.22em;
     line-height: 1;
@@ -9860,10 +9860,11 @@ html[data-theme='dark'] .sensitive-badge {
   font-size: 14px;
   line-height: 1.65;
   color: var(--text-primary);
+  overflow-wrap: anywhere;
 }
 
 .cmp-ai-text p {
-  margin: 0 0 10px;
+  margin: 0 0 12px;
 }
 
 .cmp-ai-text p:last-child {
@@ -9872,22 +9873,30 @@ html[data-theme='dark'] .sensitive-badge {
 
 .cmp-ai-text ul,
 .cmp-ai-text ol {
-  margin: 6px 0 10px 20px;
-  padding: 0;
+  margin: 8px 0 14px;
+  padding-left: 1.45rem;
+  list-style-position: outside;
 }
 
 .cmp-ai-text li {
-  margin: 0 0 6px;
-  line-height: 1.55;
+  margin: 0 0 10px;
+  padding-left: 0.15rem;
+  line-height: 1.65;
+}
+
+.cmp-ai-text li::marker {
+  color: color-mix(in srgb, var(--accent) 48%, var(--text-secondary) 52%);
 }
 
 .cmp-ai-text li > ul,
 .cmp-ai-text li > ol {
-  margin: 6px 0 0 18px;
+  margin: 8px 0 0;
+  padding-left: 1.2rem;
 }
 
 .cmp-ai-text li > p {
-  display: contents;
+  display: block;
+  margin: 0;
 }
 
 .cmp-ai-text h1,
@@ -9914,6 +9923,7 @@ html[data-theme='dark'] .sensitive-badge {
   font-family: 'SFMono-Regular', 'Fira Code', monospace;
   font-size: 0.86em;
   word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .cmp-ai-text pre {
@@ -10756,14 +10766,68 @@ html[data-theme='dark'] .unified-pill-log {
 }
 
 .scorecard-finding-meta {
+  --scorecard-meta-url-color: color-mix(in srgb, var(--accent) 52%, var(--text-secondary) 48%);
+  --scorecard-meta-url-active-color: color-mix(in srgb, var(--accent) 78%, var(--text-primary) 22%);
+  --scorecard-meta-url-bg: rgba(var(--accent-rgb), 0.12);
+  --scorecard-meta-url-ring: rgba(var(--accent-rgb), 0.18);
   margin: 4px 0 0;
   padding-left: 18px;
-  color: var(--text-tertiary);
+  color: color-mix(in srgb, var(--text-secondary) 88%, var(--text-primary) 12%);
   display: grid;
   gap: 5px;
   font-size: 12px;
   line-height: 1.55;
   word-break: break-word;
+}
+
+.scorecard-finding-meta-row {
+  color: inherit;
+}
+
+.scorecard-finding-meta-prefix,
+.scorecard-finding-meta-suffix {
+  color: inherit;
+}
+
+.scorecard-finding-meta-url,
+.scorecard-finding-meta-url:visited {
+  color: var(--scorecard-meta-url-color);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.16em;
+  border-radius: 0.35em;
+  padding: 0 0.12em;
+  margin: 0 -0.12em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  transition:
+    color 0.18s ease,
+    background-color 0.18s ease,
+    text-decoration-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.scorecard-finding-meta-url.is-interactive {
+  cursor: pointer;
+}
+
+.scorecard-finding-meta-url.is-visual-only {
+  cursor: default;
+  text-decoration-style: dotted;
+}
+
+.scorecard-finding-meta-url.is-interactive:hover,
+.scorecard-finding-meta-url.is-interactive:focus-visible,
+.scorecard-finding-meta-url.is-visual-only:hover,
+.scorecard-finding-meta-url.is-visual-only:focus-visible {
+  color: var(--scorecard-meta-url-active-color);
+  background: var(--scorecard-meta-url-bg);
+  text-decoration-color: currentColor;
+  box-shadow: inset 0 0 0 1px var(--scorecard-meta-url-ring);
+  outline: none;
 }
 
 .scorecard-explainer-item,
@@ -11880,6 +11944,14 @@ html[data-theme='dark'] .scorecard-score-description {
   color: #94a3b8;
 }
 
+html[data-theme='dark'] .scorecard-finding-meta {
+  --scorecard-meta-url-color: #cbd5e1;
+  --scorecard-meta-url-active-color: #eff6ff;
+  --scorecard-meta-url-bg: rgba(59, 130, 246, 0.16);
+  --scorecard-meta-url-ring: rgba(96, 165, 250, 0.24);
+  color: #b9c7d9;
+}
+
 html[data-theme='dark'] .scorecard-hero-kicker {
   border-color: rgba(59, 130, 246, 0.24);
   background: rgba(37, 99, 235, 0.12);
@@ -12078,6 +12150,12 @@ html[data-theme='dark'] .scorecard-kpi-card.is-embedded .scorecard-kpi-note {
 
 html[data-theme='dark'] .scorecard-traffic-bar {
   background: rgba(226, 232, 240, 0.18);
+}
+html[data-theme='redwood'] .scorecard-finding-meta {
+  --scorecard-meta-url-color: #716861;
+  --scorecard-meta-url-active-color: #7f2d1c;
+  --scorecard-meta-url-bg: rgba(172, 62, 46, 0.1);
+  --scorecard-meta-url-ring: rgba(172, 62, 46, 0.18);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
