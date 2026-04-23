@@ -285,7 +285,9 @@ const AiInsightsSurface: React.FC<AiInsightsSurfaceProps> = ({
               </span>
               <div className={`ai-insights-health-card tone-${health.tone}`}>
                 <span className="ai-insights-health-icon" aria-hidden="true">
-                  <span className="ai-insights-health-icon-glyph">
+                  <span
+                    className={`ai-insights-health-icon-glyph${health.tone === 'degraded' ? ' ai-insights-health-icon-glyph--degraded' : ''}`}
+                  >
                     <HealthIcon />
                   </span>
                 </span>

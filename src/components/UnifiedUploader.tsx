@@ -8,6 +8,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { chunkedUploader, UploadProgress, UploadResult } from '../services/chunkedUploader';
 import { restoreRecentFile, storeRecentFile } from '../services/recentFilesStore';
 import { wsClient } from '../services/websocketClient';
+import { detectUploadFileType, UNIFIED_FILE_INPUT_ACCEPT, UploadFileType } from '../utils/uploadFileTypes';
 import SanitizeModal from './SanitizeModal';
 import BatchSanitizeModal from './BatchSanitizeModal';
 import {
@@ -37,11 +38,9 @@ interface UnifiedUploaderProps {
   onClearLogRecent?: () => void;
 }
 
-type DetectedType = 'har' | 'log';
-
 interface TypedFile {
   file: File;
-  type: DetectedType;
+  type: UploadFileType;
 }
 
 const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
@@ -80,23 +79,6 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
   }, [error]);
 
   // ── File-type detection ───────────────────────────────────────────────────
-
-  const detectFileType = async (file: File): Promise<DetectedType> => {
-    const name = file.name.toLowerCase();
-    if (name.endsWith('.har')) return 'har';
-    if (name.endsWith('.log') || name.endsWith('.txt')) return 'log';
-    if (name.endsWith('.json') || file.type === 'application/json') {
-      // Peek at the first 8 KB: HAR files have {"log":{"entries":[...]}}
-      try {
-        const snippet = await file.slice(0, 8192).text();
-        if (/"log"\s*:\s*\{/.test(snippet) && /"entries"\s*:/.test(snippet)) return 'har';
-      } catch {
-        // ignore read errors, fall through to log
-      }
-      return 'log';
-    }
-    return 'log';
-  };
 
   // ── Validation ────────────────────────────────────────────────────────────
 
@@ -228,7 +210,7 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
     setIsDetecting(true);
     setStatusMessage('Detecting file type...');
     const typed: TypedFile[] = await Promise.all(
-      files.map(async (f) => ({ file: f, type: await detectFileType(f) }))
+      files.map(async (f) => ({ file: f, type: await detectUploadFileType(f) }))
     );
     setIsDetecting(false);
     setStatusMessage('');
@@ -237,7 +219,7 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
     const logFiles = typed.filter((t) => t.type === 'log').map((t) => t.file);
 
     if (harFiles.length === 0 && logFiles.length === 0) {
-      setError('Unsupported file type. Please upload a .har, .log, or .txt file.');
+      setError('Unsupported file type. Please upload a HAR capture (.har or .oc), a console log (.log or .txt), or a .json export.');
       return;
     }
 
@@ -319,7 +301,7 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
     .sort((a, b) => b.timestamp - a.timestamp)
     .slice(0, 6);
 
-  const handleRecentFileClick = async (f: { name: string; data: File; fileType: DetectedType }) => {
+  const handleRecentFileClick = async (f: { name: string; data: File; fileType: UploadFileType }) => {
     // In-session: f.data is the real File. After a page refresh localStorage only
     // restores name/timestamp so f.data is undefined — restore from IndexedDB.
     let file: File | null =
@@ -449,14 +431,14 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
 
             {/* Supported type pills */}
             <div className="unified-type-badges">
-              <span className="unified-type-badge unified-badge-har">.har</span>
+              <span className="unified-type-badge unified-badge-har">.har / .oc</span>
               <span className="unified-type-badge unified-badge-log">.log / .txt</span>
               <span className="unified-type-badge unified-badge-json">.json</span>
             </div>
 
             <input
               type="file"
-              accept=".har,.log,.txt,.json,application/json,text/plain"
+              accept={UNIFIED_FILE_INPUT_ACCEPT}
               onChange={handleFileInput}
               style={{ display: 'none' }}
               id="unified-file-input"

@@ -3,8 +3,15 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import HarCompare from '../HarCompare';
 import { makeHarJson } from '../../test-utils/fixtures';
+import { HAR_FILE_INPUT_ACCEPT } from '../../utils/uploadFileTypes';
 
 const originalFetch = global.fetch;
+
+function getHarFileInputs(container: HTMLElement): HTMLInputElement[] {
+  return Array.from(container.querySelectorAll('input[type="file"]')).filter(
+    (node): node is HTMLInputElement => node instanceof HTMLInputElement && node.accept === HAR_FILE_INPUT_ACCEPT,
+  );
+}
 
 describe('HarCompare', () => {
   afterEach(() => {
@@ -15,8 +22,8 @@ describe('HarCompare', () => {
 
   it('scrolls the compare workspace back to the sticky tab strip when switching tabs', async () => {
     const user = userEvent.setup();
-    const fileA = new File([makeHarJson()], 'baseline.har', { type: 'application/json' });
-    const fileB = new File([makeHarJson()], 'comparison.har', { type: 'application/json' });
+    const fileA = new File([makeHarJson()], 'baseline.oc', { type: 'application/json' });
+    const fileB = new File([makeHarJson()], 'comparison.oc', { type: 'application/json' });
     const requestAnimationFrameSpy = vi
       .spyOn(window, 'requestAnimationFrame')
       .mockImplementation((callback: FrameRequestCallback) => {
@@ -33,11 +40,11 @@ describe('HarCompare', () => {
     const wrapper = container.querySelector('.compare-wrapper') as HTMLDivElement | null;
     expect(wrapper).not.toBeNull();
 
-    const fileInputs = container.querySelectorAll('input[type="file"][accept=".har"]');
+    const fileInputs = getHarFileInputs(container);
     expect(fileInputs).toHaveLength(2);
 
-    await user.upload(fileInputs[0] as HTMLInputElement, fileA);
-    await user.upload(fileInputs[1] as HTMLInputElement, fileB);
+    await user.upload(fileInputs[0], fileA);
+    await user.upload(fileInputs[1], fileB);
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: /compare captures/i })).toBeInTheDocument();
@@ -73,8 +80,8 @@ describe('HarCompare', () => {
 
   it('renders AI markdown inside the formatted compare text wrapper', async () => {
     const user = userEvent.setup();
-    const fileA = new File([makeHarJson()], 'baseline.har', { type: 'application/json' });
-    const fileB = new File([makeHarJson()], 'comparison.har', { type: 'application/json' });
+    const fileA = new File([makeHarJson()], 'baseline.oc', { type: 'application/json' });
+    const fileB = new File([makeHarJson()], 'comparison.oc', { type: 'application/json' });
     const markdown = '## What was broken\n\u2022 First issue\n\u25E6 Why it matters\n\u2022 Second issue';
     const chunks = [
       `data: ${JSON.stringify({ choices: [{ delta: { content: markdown } }] })}\n\n`,
@@ -105,11 +112,11 @@ describe('HarCompare', () => {
       </div>
     );
 
-    const fileInputs = container.querySelectorAll('input[type="file"][accept=".har"]');
+    const fileInputs = getHarFileInputs(container);
     expect(fileInputs).toHaveLength(2);
 
-    await user.upload(fileInputs[0] as HTMLInputElement, fileA);
-    await user.upload(fileInputs[1] as HTMLInputElement, fileB);
+    await user.upload(fileInputs[0], fileA);
+    await user.upload(fileInputs[1], fileB);
     await user.click(screen.getByRole('button', { name: /ai summary/i }));
     await user.click(screen.getByRole('button', { name: /run ai analysis/i }));
 

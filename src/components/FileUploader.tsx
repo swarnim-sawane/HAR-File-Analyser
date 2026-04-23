@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { chunkedUploader, UploadProgress, UploadResult } from '../services/chunkedUploader';
 import { restoreRecentFile, storeRecentFile } from '../services/recentFilesStore';
 import { wsClient } from '../services/websocketClient';
+import { HAR_FILE_INPUT_ACCEPT, isHarFileCandidate } from '../utils/uploadFileTypes';
 import SanitizeModal from './SanitizeModal';
 import BatchSanitizeModal from './BatchSanitizeModal';
 import {
@@ -24,7 +25,7 @@ interface FileUploaderProps {
   onFileUpload: (result: UploadResult) => void | Promise<void>;
   recentFiles?: RecentFile[];
   onClearRecent?: () => void;
-  /** Allow selecting/dropping multiple .har files at once (each creates its own tab) */
+  /** Allow selecting/dropping multiple HAR capture files at once (each creates its own tab) */
   multiple?: boolean;
 }
 
@@ -125,9 +126,9 @@ const FileUploader: React.FC<FileUploaderProps> = ({
    * for a single sanitization decision before opening any tabs.
    */
   const processMultipleFiles = async (files: File[]) => {
-    const harFiles = files.filter(f => f.name.endsWith('.har') || f.type === 'application/json');
+    const harFiles = files.filter(isHarFileCandidate);
     if (harFiles.length === 0) {
-      setError('No valid .har files found in your selection');
+      setError('No valid HAR capture files found in your selection');
       return;
     }
 
@@ -209,9 +210,9 @@ const FileUploader: React.FC<FileUploaderProps> = ({
     e.preventDefault();
     setIsDragging(false);
     const allFiles = Array.from(e.dataTransfer.files);
-    const harFiles = allFiles.filter(f => f.name.endsWith('.har') || f.type === 'application/json');
+    const harFiles = allFiles.filter(isHarFileCandidate);
     if (harFiles.length === 0) {
-      setError('Please upload a valid .har file');
+      setError('Please upload a valid HAR capture file');
       return;
     }
     if (harFiles.length === 1) {
@@ -362,8 +363,8 @@ const FileUploader: React.FC<FileUploaderProps> = ({
               {isValidating
                 ? 'Please wait while we validate your file'
                 : multiple
-                  ? 'Drag and drop one or more .har files here'
-                  : 'Drag and drop your .har file here'}
+                  ? 'Drag and drop one or more HAR capture files here'
+                  : 'Drag and drop your HAR capture file here'}
             </p>
             {multiTotal > 0 && (
               <p style={{ fontSize: '13px', color: 'var(--text-secondary, #888)', marginTop: '4px' }}>
@@ -374,7 +375,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({
               <>
                 <input
                   type="file"
-                  accept=".har,application/json"
+                  accept={HAR_FILE_INPUT_ACCEPT}
                   onChange={handleFileInput}
                   style={{ display: 'none' }}
                   id="file-input"

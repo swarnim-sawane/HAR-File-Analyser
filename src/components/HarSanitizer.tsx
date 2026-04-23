@@ -6,6 +6,7 @@ import {
   defaultScrubItems,
   SanitizeOptions,
 } from '../utils/har_sanitize';
+import { HAR_FILE_INPUT_ACCEPT, isHarFileCandidate } from '../utils/uploadFileTypes';
 
 export type ScrubType = 'cookies' | 'headers' | 'queryArgs' | 'postParams' | 'mimeTypes' | 'domains';
 export type ScrubState = Record<ScrubType, Record<string, boolean>>;
@@ -166,9 +167,7 @@ const HarSanitizer: React.FC = () => {
     setIsDragging(false);
 
     const files = Array.from(e.dataTransfer.files);
-    const harFile = files.find(file =>
-      file.name.endsWith('.har') || file.type === 'application/json'
-    );
+    const harFile = files.find(isHarFileCandidate);
 
     if (harFile) {
       handleFileUpload(harFile);
@@ -281,7 +280,7 @@ const HarSanitizer: React.FC = () => {
             </div>
             <input
               type="file"
-              accept=".har,application/json"
+              accept={HAR_FILE_INPUT_ACCEPT}
               onChange={handleFileInput}
               style={{ display: 'none' }}
               id="sanitizer-file-input"
