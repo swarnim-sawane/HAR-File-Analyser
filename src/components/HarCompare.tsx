@@ -17,6 +17,7 @@ import {
 } from './Icons';
 import { Entry, HarFile } from '../types/har';
 import { apiClient } from '../services/apiClient';
+import { HAR_FILE_INPUT_ACCEPT } from '../utils/uploadFileTypes';
 
 const BACKEND_URL =
   (import.meta as any).env?.VITE_BACKEND_URL ||
@@ -297,7 +298,7 @@ const DropZone: React.FC<DropZoneProps> = ({ title, hint, fileName, loading, pro
       <input
         ref={inputRef}
         type="file"
-        accept=".har"
+        accept={HAR_FILE_INPUT_ACCEPT}
         style={{ display: 'none' }}
         onChange={event => {
           const file = event.target.files?.[0];
@@ -393,7 +394,7 @@ const CompactFileControl: React.FC<CompactFileControlProps> = ({ side, title, fi
       <input
         ref={inputRef}
         type="file"
-        accept=".har"
+        accept={HAR_FILE_INPUT_ACCEPT}
         style={{ display: 'none' }}
         onChange={event => {
           const file = event.target.files?.[0];

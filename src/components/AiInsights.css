@@ -380,7 +380,6 @@
 }
 
 .ai-insights-health-icon {
-  --ai-insights-health-icon-offset-y: -0.5px;
   width: 34px;
   height: 34px;
   display: grid;
@@ -398,7 +397,10 @@
   display: grid;
   place-items: center;
   line-height: 0;
-  transform: translateY(var(--ai-insights-health-icon-offset-y));
+}
+
+.ai-insights-health-icon-glyph--degraded {
+  transform: translate(1px, 1px);
 }
 
 .ai-insights-health-icon svg {

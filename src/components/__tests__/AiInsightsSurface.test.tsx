@@ -80,11 +80,12 @@ const healthExpectations: Array<{
   overallHealth: InsightsResult['overallHealth'];
   expectedIcon: string;
   expectedLabel: string;
+  expectsOpticalAlignmentHook: boolean;
 }> = [
-  { overallHealth: 'warning', expectedIcon: 'InfoIcon', expectedLabel: 'Warning' },
-  { overallHealth: 'critical', expectedIcon: 'AlertIcon', expectedLabel: 'Critical' },
-  { overallHealth: 'degraded', expectedIcon: 'ClockIcon', expectedLabel: 'Degraded' },
-  { overallHealth: 'healthy', expectedIcon: 'CheckIcon', expectedLabel: 'Healthy' },
+  { overallHealth: 'warning', expectedIcon: 'InfoIcon', expectedLabel: 'Warning', expectsOpticalAlignmentHook: false },
+  { overallHealth: 'critical', expectedIcon: 'AlertIcon', expectedLabel: 'Critical', expectsOpticalAlignmentHook: false },
+  { overallHealth: 'degraded', expectedIcon: 'ClockIcon', expectedLabel: 'Degraded', expectsOpticalAlignmentHook: true },
+  { overallHealth: 'healthy', expectedIcon: 'CheckIcon', expectedLabel: 'Healthy', expectsOpticalAlignmentHook: false },
 ];
 
 describe('AiInsightsSurface icon clarity', () => {
@@ -166,7 +167,7 @@ describe('AiInsightsSurface icon clarity', () => {
 
   it.each(healthExpectations)(
     'keeps the %s health icon centered through the dedicated slot markup',
-    ({ overallHealth, expectedIcon, expectedLabel }) => {
+    ({ overallHealth, expectedIcon, expectedLabel, expectsOpticalAlignmentHook }) => {
       const { container } = render(
         <AiInsightsSurface
           {...baseProps}
@@ -186,6 +187,7 @@ describe('AiInsightsSurface icon clarity', () => {
       expect(within(healthCard as HTMLElement).getByText('Overall health')).toBeInTheDocument();
       expect(within(healthCard as HTMLElement).getByText(expectedLabel)).toBeInTheDocument();
       expect(within(healthGlyph as HTMLElement).getByTestId(expectedIcon)).toBeInTheDocument();
+      expect((healthGlyph as HTMLElement).classList.contains('ai-insights-health-icon-glyph--degraded')).toBe(expectsOpticalAlignmentHook);
     }
   );
 });

@@ -21,6 +21,7 @@ import HarSanitizer from './components/HarSanitizer';
 import DocumentationPage from './components/DocumentationPage';
 import { ArrowLeftIcon, FileTextIcon } from './components/Icons';
 import { applyTheme, resolveInitialTheme, ThemeMode } from './theme';
+import { HAR_FILE_INPUT_ACCEPT } from './utils/uploadFileTypes';
 
 interface RecentFile {
   name: string;
@@ -774,7 +775,7 @@ const App: React.FC = () => {
                 <input
                   ref={addTabInputRef}
                   type="file"
-                  accept=".har,application/json"
+                  accept={HAR_FILE_INPUT_ACCEPT}
                   multiple
                   style={{ display: 'none' }}
                   onChange={handleAddTabFileInput}

@@ -6,12 +6,19 @@ import FloatingAiChat from '../FloatingAiChat';
 import HarCompare from '../HarCompare';
 import HarSanitizer from '../HarSanitizer';
 import { makeHarJson } from '../../test-utils/fixtures';
+import { HAR_FILE_INPUT_ACCEPT } from '../../utils/uploadFileTypes';
 
 const originalFetch = global.fetch;
 
 const setPath = (path: string) => {
   window.history.replaceState({}, '', path);
 };
+
+function getHarFileInputs(container: HTMLElement): HTMLInputElement[] {
+  return Array.from(container.querySelectorAll('input[type="file"]')).filter(
+    (node): node is HTMLInputElement => node instanceof HTMLInputElement && node.accept === HAR_FILE_INPUT_ACCEPT,
+  );
+}
 
 describe('Redwood theme surface smoke tests', () => {
   beforeEach(() => {
@@ -42,8 +49,8 @@ describe('Redwood theme surface smoke tests', () => {
 
   it('renders the compare workspace in Redwood mode for both upload and active views', async () => {
     const user = userEvent.setup();
-    const fileA = new File([makeHarJson()], 'baseline.har', { type: 'application/json' });
-    const fileB = new File([makeHarJson()], 'comparison.har', { type: 'application/json' });
+    const fileA = new File([makeHarJson()], 'baseline.oc', { type: 'application/json' });
+    const fileB = new File([makeHarJson()], 'comparison.oc', { type: 'application/json' });
     const { container } = render(
       <div className="compare-wrapper">
         <HarCompare />
@@ -56,11 +63,11 @@ describe('Redwood theme surface smoke tests', () => {
     expect(screen.getByText(/upload baseline har/i)).toBeInTheDocument();
     expect(screen.getByText(/upload comparison har/i)).toBeInTheDocument();
 
-    const fileInputs = container.querySelectorAll('input[type="file"][accept=".har"]');
+    const fileInputs = getHarFileInputs(container);
     expect(fileInputs).toHaveLength(2);
 
-    await user.upload(fileInputs[0] as HTMLInputElement, fileA);
-    await user.upload(fileInputs[1] as HTMLInputElement, fileB);
+    await user.upload(fileInputs[0], fileA);
+    await user.upload(fileInputs[1], fileB);
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: /compare captures/i })).toBeInTheDocument();
@@ -74,7 +81,7 @@ describe('Redwood theme surface smoke tests', () => {
 
   it('renders the sanitizer workspace in Redwood mode for both upload and working views', async () => {
     const user = userEvent.setup();
-    const file = new File([makeHarJson()], 'session.har', { type: 'application/json' });
+    const file = new File([makeHarJson()], 'session.oc', { type: 'application/json' });
     const { container } = render(
       <div className="sanitizer-wrapper">
         <HarSanitizer />
@@ -88,6 +95,7 @@ describe('Redwood theme surface smoke tests', () => {
 
     const fileInput = container.querySelector('#sanitizer-file-input') as HTMLInputElement | null;
     expect(fileInput).not.toBeNull();
+    expect(fileInput?.accept).toBe(HAR_FILE_INPUT_ACCEPT);
 
     await user.upload(fileInput as HTMLInputElement, file);
 
