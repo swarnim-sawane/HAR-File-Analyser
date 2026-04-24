@@ -139,3 +139,8 @@ backend/processed/
 backend/uploads/
 backend/processed/
 backend/uploads/
+
+
+.claude/
+backend/processed/
+*.har
