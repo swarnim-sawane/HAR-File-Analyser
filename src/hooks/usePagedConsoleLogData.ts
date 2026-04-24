@@ -68,6 +68,7 @@ function defaultFilters(): ConsoleFilterOptions {
     },
     searchTerm: '',
     groupBy: 'all',
+    quickFocus: 'all',
     timeRange: {
       start: null,
       end: null,

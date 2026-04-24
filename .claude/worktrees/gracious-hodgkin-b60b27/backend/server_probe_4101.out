@@ -1,0 +1,23 @@
+🚀 Starting HAR Analyzer Backend...
+
+✅ MongoDB connected
+📊 Creating MongoDB indexes...
+✅ MongoDB indexes created
+✅ Redis connected
+✅ Qdrant connected (optional - for AI features)
+🎉 All databases connected successfully!
+
+✅ Subscribed to Redis socket:events channel
+📁 Upload directory: C:\Users\ssawane\Documents\Work\HAR LATEST\Deployed build\HAR-File-Analyser\backend\uploads
+📁 Processed directory: C:\Users\ssawane\Documents\Work\HAR LATEST\Deployed build\HAR-File-Analyser\backend\processed
+✅ Server running on http://localhost:4101
+📡 WebSocket server ready
+🔔 Redis pub/sub bridge active
+🌐 CORS enabled for:
+   - http://localhost:3000
+   - http://localhost:5173
+   - http://localhost:4000
+
+✨ Ready to accept requests!
+
+✅ Redis ready

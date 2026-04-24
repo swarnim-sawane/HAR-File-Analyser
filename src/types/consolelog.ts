@@ -1,9 +1,22 @@
 // src/types/consolelog.ts
 
+import type {
+  ConsoleInferredSeverity,
+  ConsoleIssueTag,
+} from '../../shared/consoleLogCore';
+
 export type LogLevel = 'log' | 'info' | 'warn' | 'error' | 'debug' | 'trace' | 'verbose';
+export type { ConsoleInferredSeverity, ConsoleIssueTag };
+
+export type ConsoleQuickFocus =
+  | 'all'
+  | 'errors'
+  | 'warnings'
+  | ConsoleIssueTag;
 
 export interface ConsoleLogEntry {
   id: string;
+  index?: number;
   timestamp: string;
   level: LogLevel;
   message: string;
@@ -14,6 +27,12 @@ export interface ConsoleLogEntry {
   args?: any[];
   url?: string;
   category?: string;
+  rawText?: string;
+  inferredSeverity: ConsoleInferredSeverity;
+  issueTags: ConsoleIssueTag[];
+  primaryIssue?: ConsoleIssueTag;
+  fileId?: string;
+  _id?: string;
 }
 
 export interface ConsoleLogFile {
@@ -41,6 +60,7 @@ export interface ConsoleFilterOptions {
   };
   searchTerm: string;
   groupBy: 'all' | 'level' | 'source';
+  quickFocus: ConsoleQuickFocus;
   timeRange: {
     start: string | null;
     end: string | null;

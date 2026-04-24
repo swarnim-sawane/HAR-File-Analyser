@@ -22,6 +22,8 @@ const HTTP_STATUS_RE = /\b([45]\d{2})\b/;
 export function buildConsoleLogContext(logData: ConsoleLogFile): string {
   const entries = logData.entries;
   const total = entries.length;
+  const getEvidenceText = (entry: { rawText?: string; message: string; stackTrace?: string }) =>
+    entry.rawText || [entry.message, entry.stackTrace].filter(Boolean).join('\n');
 
   // ── Level counts ────────────────────────────────────────────────────────────
   const levelCounts: Record<string, number> = {};
@@ -45,12 +47,12 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
   const errorAndWarnEntries = entries.filter((e) => e.level === 'error' || e.level === 'warn');
 
   const http5xxEntries = errorAndWarnEntries.filter((e) => {
-    const match = HTTP_STATUS_RE.exec(e.message);
+    const match = HTTP_STATUS_RE.exec(getEvidenceText(e));
     return match ? parseInt(match[1], 10) >= 500 : false;
   });
 
   const http4xxEntries = errorAndWarnEntries.filter((e) => {
-    const match = HTTP_STATUS_RE.exec(e.message);
+    const match = HTTP_STATUS_RE.exec(getEvidenceText(e));
     if (!match) return false;
     const code = parseInt(match[1], 10);
     return code >= 400 && code < 500;
@@ -59,16 +61,26 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
   // ── All errors: non-HTTP errors last (after HTTP-status-bearing ones) ───────
   const errorEntries = entries.filter((e) => e.level === 'error');
   // Entries that don't already appear in the 5xx/4xx buckets
-  const http5xxSet = new Set(http5xxEntries.map((e) => e.message));
-  const http4xxSet = new Set(http4xxEntries.map((e) => e.message));
+  const http5xxSet = new Set(http5xxEntries.map((e) => getEvidenceText(e)));
+  const http4xxSet = new Set(http4xxEntries.map((e) => getEvidenceText(e)));
   const remainingErrors = errorEntries.filter(
-    (e) => !http5xxSet.has(e.message) && !http4xxSet.has(e.message)
+    (e) => !http5xxSet.has(getEvidenceText(e)) && !http4xxSet.has(getEvidenceText(e))
   );
 
-  const formatError = (e: { level: string; source?: string; message: string; stackTrace?: string }) => {
+  const formatError = (
+    e: {
+      level: string;
+      source?: string;
+      message: string;
+      rawText?: string;
+      stackTrace?: string;
+      issueTags: string[];
+    },
+  ) => {
     const src = e.source ? ` [${e.source}]` : '';
-    const stack = e.stackTrace ? `\n  Stack: ${e.stackTrace.substring(0, 200)}` : '';
-    return `${e.level.toUpperCase()}${src}: ${e.message}${stack}`;
+    const issueTags = e.issueTags.length > 0 ? ` [${e.issueTags.join(', ')}]` : '';
+    const evidence = getEvidenceText(e).substring(0, 320);
+    return `${e.level.toUpperCase()}${src}${issueTags}: ${e.message}\n  Evidence: ${evidence}`;
   };
 
   const http5xxLines  = http5xxEntries.slice(0, 10).map(formatError);
@@ -79,13 +91,14 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
   const warnEntries = entries.filter((e) => e.level === 'warn');
   const warnLines = warnEntries.slice(0, 30).map((e) => {
     const src = e.source ? ` [${e.source}]` : '';
-    return `WARN${src}: ${e.message.substring(0, 200)}`;
+    const issueTags = e.issueTags.length > 0 ? ` [${e.issueTags.join(', ')}]` : '';
+    return `WARN${src}${issueTags}: ${getEvidenceText(e).substring(0, 260)}`;
   });
 
   // ── Repeated message patterns ───────────────────────────────────────────────
   const msgCounts = new Map<string, number>();
   for (const e of entries) {
-    const key = e.message.substring(0, 80);
+    const key = getEvidenceText(e).substring(0, 120);
     msgCounts.set(key, (msgCounts.get(key) || 0) + 1);
   }
   const repeatedMessages = Array.from(msgCounts.entries())
@@ -96,17 +109,37 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
 
   // ── Action chain failures (VB-specific) ─────────────────────────────────────
   const chainFailures = entries
-    .filter((e) => e.level === 'error' && e.message.toLowerCase().includes('chain') && e.message.toLowerCase().includes('fail'))
+    .filter((e) => {
+      const evidence = getEvidenceText(e).toLowerCase();
+      return e.level === 'error' && evidence.includes('chain') && evidence.includes('fail');
+    })
     .slice(0, 10)
-    .map((e) => e.message.substring(0, 200));
+    .map((e) => getEvidenceText(e).substring(0, 200));
 
   // ── REST / API errors ────────────────────────────────────────────────────────
   const apiErrors = entries
-    .filter((e) => (e.level === 'error' || e.level === 'warn') &&
-      (e.message.includes('fetch') || e.message.includes('REST') || e.message.includes('JSON') ||
-       e.message.includes('response') || e.message.includes('api') || e.message.includes('status')))
+    .filter((e) => {
+      const evidence = getEvidenceText(e).toLowerCase();
+      return (
+        (e.level === 'error' || e.level === 'warn' || e.issueTags.includes('cors') || e.issueTags.includes('network')) &&
+        (evidence.includes('fetch') ||
+          evidence.includes('rest') ||
+          evidence.includes('json') ||
+          evidence.includes('response') ||
+          evidence.includes('api') ||
+          evidence.includes('status') ||
+          e.issueTags.includes('browser-policy'))
+      );
+    })
     .slice(0, 15)
-    .map((e) => `[${e.level.toUpperCase()}] ${e.message.substring(0, 200)}`);
+    .map((e) => `[${e.level.toUpperCase()}] ${getEvidenceText(e).substring(0, 240)}`);
+
+  const issueSummary = entries.reduce<Record<string, number>>((acc, entry) => {
+    entry.issueTags.forEach((tag) => {
+      acc[tag] = (acc[tag] || 0) + 1;
+    });
+    return acc;
+  }, {});
 
   // ── Unique source modules ────────────────────────────────────────────────────
   const uniqueModules = [...new Set(
@@ -129,6 +162,13 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
 
   if (topSources.length > 0) {
     parts.push(`TOP SOURCES BY FREQUENCY:\n${topSources.join('\n')}`);
+  }
+
+  if (Object.keys(issueSummary).length > 0) {
+    const issueLines = Object.entries(issueSummary)
+      .sort(([, a], [, b]) => b - a)
+      .map(([tag, count]) => `${tag}: ${count}`);
+    parts.push(`INFERRED ISSUE TAGS:\n${issueLines.join('\n')}`);
   }
 
   // HTTP 5xx — highest priority block
@@ -258,4 +298,4 @@ export function useConsoleLogInsights(
   }, []);
 
   return { insights, isGenerating, error, generate, cancel };
-}
+}

@@ -11,13 +11,14 @@ import { useHarData } from '../hooks/useHarData';
 import FloatingAiChat from './FloatingAiChat';
 import RequestFlowDiagram from './RequestFlowDiagram';
 import RequestFlowGraphView from './RequestFlowGraphView';
+import RequestFlowTraceView from './RequestFlowTraceView';
 import PerformanceScorecard from './PerformanceScorecard';
 import AiInsights from './AiInsights';
 import { apiClient } from '../services/apiClient';
-import { ChevronDownIcon, ClockIcon, FileIcon, NetworkIcon, RouteIcon, TrashIcon, UploadIcon } from './Icons';
+import { ChevronDownIcon, ClockIcon, FileIcon, NetworkIcon, RouteIcon, ServerIcon, TrashIcon, UploadIcon } from './Icons';
 
 type HarTab = 'analyzer' | 'flow' | 'scorecard' | 'insights';
-type FlowViewMode = 'diagram' | 'nodes';
+type FlowViewMode = 'diagram' | 'nodes' | 'trace';
 
 interface RecentFile {
   name: string;
@@ -50,7 +51,7 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
 }) => {
   const harState = useHarData();
   const [activeTab, setActiveTab] = useState<HarTab>('analyzer');
-  const [flowViewMode, setFlowViewMode] = useState<FlowViewMode>('diagram');
+  const [flowViewMode, setFlowViewMode] = useState<FlowViewMode>('nodes');
   const [detailsWidth, setDetailsWidth] = useState(450);
   const [isLoadingFile, setIsLoadingFile] = useState(true);
   const [showStickyRecent, setShowStickyRecent] = useState(false);
@@ -70,6 +71,12 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
       description: 'Original scattered request node view',
       icon: <NetworkIcon />,
     },
+    // {
+    //   value: 'trace',
+    //   label: 'System Trace',
+    //   description: 'Inferred primary request chain from the visible HAR entries',
+    //   icon: <ServerIcon />,
+    // },
   ];
 
   // Load file data when the tab is first created.
@@ -338,6 +345,14 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
                   <RequestFlowDiagram
                     entries={harState.filteredEntries}
                     onNodeClick={(entry: any) => {
+                      harState.setSelectedEntry(entry);
+                      setActiveTab('analyzer');
+                    }}
+                  />
+                ) : flowViewMode === 'trace' ? (
+                  <RequestFlowTraceView
+                    entries={harState.filteredEntries}
+                    onNodeClick={(entry) => {
                       harState.setSelectedEntry(entry);
                       setActiveTab('analyzer');
                     }}

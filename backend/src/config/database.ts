@@ -1,6 +1,7 @@
 import { MongoClient, Db } from 'mongodb';
 import Redis from 'ioredis';
 import { QdrantClient } from '@qdrant/js-client-rest';
+import { reconcileConsoleLogEntryIndex } from './consoleLogIndexBootstrap';
 
 let mongoClient: MongoClient;
 let db: Db;
@@ -49,6 +50,7 @@ export async function connectDatabases() {
     
     // Console Logs indexes (for fast queries and filtering)
     await db.collection('console_logs').createIndex({ fileId: 1 });
+    await reconcileConsoleLogEntryIndex(db.collection('console_logs'));
     await db.collection('console_logs').createIndex({ fileId: 1, level: 1 });
     await db.collection('console_logs').createIndex({ fileId: 1, source: 1 });
     await db.collection('console_logs').createIndex({ fileId: 1, timestamp: 1 });

@@ -116,6 +116,10 @@ vi.mock('../RequestFlowGraphView', () => ({
   default: () => <div>Scattered view mock</div>,
 }));
 
+vi.mock('../RequestFlowTraceView', () => ({
+  default: () => <div>System trace mock</div>,
+}));
+
 vi.mock('../PerformanceScorecard', () => ({
   default: () => <div>Scorecard mock</div>,
 }));
@@ -161,7 +165,7 @@ describe('HarTabContent Redwood theme smoke test', () => {
     });
   });
 
-  it('renders a request flow view toggle and switches from journey map to scattered view', async () => {
+  it('renders a request flow view toggle with journey, scattered, and system trace views', async () => {
     const user = userEvent.setup();
 
     render(
@@ -190,18 +194,31 @@ describe('HarTabContent Redwood theme smoke test', () => {
 
     const journeyMapToggle = screen.getByRole('radio', { name: /journey map/i });
     const nodeGraphToggle = screen.getByRole('radio', { name: /scattered view/i });
-
-    expect(journeyMapToggle).toHaveAttribute('aria-checked', 'true');
-    expect(nodeGraphToggle).toHaveAttribute('aria-checked', 'false');
-    expect(screen.getByText('Journey map mock')).toBeInTheDocument();
-    expect(screen.queryByText('Scattered view mock')).not.toBeInTheDocument();
-
-    await user.click(nodeGraphToggle);
+    const traceToggle = screen.getByRole('radio', { name: /system trace/i });
 
     expect(journeyMapToggle).toHaveAttribute('aria-checked', 'false');
     expect(nodeGraphToggle).toHaveAttribute('aria-checked', 'true');
+    expect(traceToggle).toHaveAttribute('aria-checked', 'false');
     expect(screen.getByText('Scattered view mock')).toBeInTheDocument();
     expect(screen.queryByText('Journey map mock')).not.toBeInTheDocument();
+    expect(screen.queryByText('System trace mock')).not.toBeInTheDocument();
+
+    await user.click(traceToggle);
+
+    expect(journeyMapToggle).toHaveAttribute('aria-checked', 'false');
+    expect(nodeGraphToggle).toHaveAttribute('aria-checked', 'false');
+    expect(traceToggle).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByText('System trace mock')).toBeInTheDocument();
+    expect(screen.queryByText('Scattered view mock')).not.toBeInTheDocument();
+
+    await user.click(journeyMapToggle);
+
+    expect(journeyMapToggle).toHaveAttribute('aria-checked', 'true');
+    expect(nodeGraphToggle).toHaveAttribute('aria-checked', 'false');
+    expect(traceToggle).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByText('Journey map mock')).toBeInTheDocument();
+    expect(screen.queryByText('Scattered view mock')).not.toBeInTheDocument();
+    expect(screen.queryByText('System trace mock')).not.toBeInTheDocument();
     expect(document.documentElement.dataset.theme).toBe('redwood');
   });
 });

@@ -247,6 +247,8 @@ const ConsoleLogTabContent: React.FC<ConsoleLogTabContentProps> = ({
                     groupedEntries={logGroupedEntries}
                     selectedEntry={logState.selectedEntry}
                     onSelectEntry={logState.setSelectedEntry}
+                    quickFocus={logState.filters.quickFocus}
+                    onQuickFocusChange={(quickFocus) => logState.updateFilters({ quickFocus })}
                   />
                 </div>
 
@@ -255,6 +257,7 @@ const ConsoleLogTabContent: React.FC<ConsoleLogTabContentProps> = ({
                     <div className="resize-handle" onMouseDown={startResize} />
                     <ConsoleLogDetails
                       entry={logState.selectedEntry}
+                      isLoading={logState.selectedEntryLoading}
                       onClose={() => logState.setSelectedEntry(null)}
                     />
                   </aside>

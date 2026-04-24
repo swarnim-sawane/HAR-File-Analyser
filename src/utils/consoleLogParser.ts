@@ -1,477 +1,137 @@
 // src/utils/consoleLogParser.ts
 
-import { ConsoleLogEntry, ConsoleLogFile, LogLevel } from '../types/consolelog';
 import { v4 as uuidv4 } from 'uuid';
+import { parseConsoleText, normalizeStructuredConsoleEntry } from '../../shared/consoleLogCore';
+import { ConsoleLogEntry, ConsoleLogFile } from '../types/consolelog';
 
 export class ConsoleLogParser {
-  // Parse JSON format (Chrome DevTools, custom formats)
   static parseJSON(content: string, fileName: string): ConsoleLogFile {
     try {
-      const parsed = JSON.parse(content);
+      const parsed = JSON.parse(content) as
+        | { metadata?: Record<string, unknown>; entries?: unknown[]; logs?: unknown[] }
+        | unknown[];
 
-      // Check if it's already in our format
-      if (parsed.metadata && parsed.entries) {
-        return parsed;
+      if (
+        typeof parsed === 'object' &&
+        parsed !== null &&
+        'metadata' in parsed &&
+        'entries' in parsed &&
+        Array.isArray(parsed.entries)
+      ) {
+        const entries = parsed.entries.map((entry, index) =>
+          this.toConsoleLogEntry((entry ?? {}) as Record<string, unknown>, index),
+        );
+
+        return {
+          metadata: {
+            fileName:
+              typeof parsed.metadata?.fileName === 'string' ? parsed.metadata.fileName : fileName,
+            uploadedAt:
+              typeof parsed.metadata?.uploadedAt === 'string'
+                ? parsed.metadata.uploadedAt
+                : new Date().toISOString(),
+            totalEntries:
+              typeof parsed.metadata?.totalEntries === 'number'
+                ? parsed.metadata.totalEntries
+                : entries.length,
+            browser:
+              typeof parsed.metadata?.browser === 'string' ? parsed.metadata.browser : undefined,
+            version:
+              typeof parsed.metadata?.version === 'string' ? parsed.metadata.version : undefined,
+            truncatedAt:
+              typeof parsed.metadata?.truncatedAt === 'number'
+                ? parsed.metadata.truncatedAt
+                : undefined,
+          },
+          entries,
+        };
       }
 
-      // Check if it's an array of log entries
       if (Array.isArray(parsed)) {
         return this.parseJSONArray(parsed, fileName);
       }
 
-      // Check if it's a single object with logs array
-      if (parsed.logs && Array.isArray(parsed.logs)) {
+      if (
+        typeof parsed === 'object' &&
+        parsed !== null &&
+        'logs' in parsed &&
+        Array.isArray(parsed.logs)
+      ) {
         return this.parseJSONArray(parsed.logs, fileName);
       }
 
       throw new Error('Unrecognized JSON format');
     } catch (error) {
-      throw new Error(`Failed to parse JSON: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(
+        `Failed to parse JSON: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
     }
   }
 
-  private static parseJSONArray(logs: any[], fileName: string): ConsoleLogFile {
-    const entries: ConsoleLogEntry[] = logs.map((log) => {
-      return {
-        id: log.id || uuidv4(),
-        timestamp: log.timestamp || log.time || log.timeStamp || new Date().toISOString(),
-        level: this.normalizeLogLevel(log.level || log.type || log.severity || 'log'),
-        message: log.message || log.msg || log.text || String(log),
-        source: log.source || log.file || log.filename || undefined,
-        lineNumber: log.lineNumber || log.line || log.lineno || undefined,
-        columnNumber: log.columnNumber || log.column || log.colno || undefined,
-        stackTrace: log.stackTrace || log.stack || log.trace || undefined,
-        args: log.args || log.arguments || log.data || undefined,
-        url: log.url || log.uri || log.location || undefined,
-        category: log.category || log.tag || undefined,
-      };
-    });
-
-    return {
-      metadata: {
-        fileName,
-        uploadedAt: new Date().toISOString(),
-        totalEntries: entries.length,
-      },
-      entries,
-    };
-  }
-
-  // Parse plain text format with multiline support
-  static parsePlainText(content: string, fileName: string): ConsoleLogFile {
-    const lines = content.split('\n');
-    const entries: ConsoleLogEntry[] = [];
-    let currentEntry: ConsoleLogEntry | null = null;
-    let stackTraceLines: string[] = [];
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      
-      // Check if this line is a stack trace continuation
-      const isStackTraceLine = this.isStackTraceLine(line);
-      
-      if (isStackTraceLine && currentEntry) {
-        // Accumulate stack trace lines
-        stackTraceLines.push(line.trim());
-        continue;
-      }
-
-      // If we have a current entry with stack trace, finalize it
-      if (currentEntry && stackTraceLines.length > 0) {
-        currentEntry.stackTrace = stackTraceLines.join('\n');
-        entries.push(currentEntry);
-        currentEntry = null;
-        stackTraceLines = [];
-      }
-
-      // Try to parse the line as a new log entry
-      const entry = this.parsePlainTextLine(line.trim());
-      
-      if (entry) {
-        // If we have a pending entry, push it first
-        if (currentEntry) {
-          if (stackTraceLines.length > 0) {
-            currentEntry.stackTrace = stackTraceLines.join('\n');
-            stackTraceLines = [];
-          }
-          entries.push(currentEntry);
-        }
-        currentEntry = entry;
-      } else if (currentEntry && line.trim()) {
-        // This might be a continuation of the previous message
-        currentEntry.message += '\n' + line.trim();
-      }
-    }
-
-    // Don't forget the last entry
-    if (currentEntry) {
-      if (stackTraceLines.length > 0) {
-        currentEntry.stackTrace = stackTraceLines.join('\n');
-      }
-      entries.push(currentEntry);
-    }
-
-    return {
-      metadata: {
-        fileName,
-        uploadedAt: new Date().toISOString(),
-        totalEntries: entries.length,
-      },
-      entries,
-    };
-  }
-
-  private static isStackTraceLine(line: string): boolean {
-    const trimmed = line.trim();
-    return (
-      trimmed.startsWith('at ') ||
-      trimmed.startsWith('    at ') ||
-      /^\s+at\s+/.test(line) ||
-      /^\s+\w+@/.test(line) || // Firefox format (indented)
-      /^\s+.*:\d+:\d+/.test(line) || // file:line:col (indented)
-      // Chrome/browser callsite lines: "functionName @ file.js:line" (no indent required)
-      /^[\w$.()\s<>]+\s*@\s*\S+\.js:\d+/.test(trimmed) ||
-      /^\(anonymous\)\s*@\s*\S+:\d+/.test(trimmed) ||
-      // Promise chain continuation frames: "Promise.then", "Promise.catch", etc.
-      /^Promise\.(then|catch|finally|all|race|allSettled|any)$/.test(trimmed)
+  private static parseJSONArray(logs: unknown[], fileName: string): ConsoleLogFile {
+    const entries = logs.map((log, index) =>
+      this.toConsoleLogEntry((log ?? {}) as Record<string, unknown>, index),
     );
-  }
-
-  // ── Oracle ODL / ADF / WebLogic Diagnostic Logging ──────────────────────────
-  // Format: [ISO_TS_TZ] [COMPONENT] [LEVEL:CODE] [MSG_ID] [LOGGER] [key: val]... message
-  // e.g.  [2025-06-12T12:14:50.095-04:00] [DefaultServer] [NOTIFICATION:16] [] [oracle.adfdiagnostics] [APP: ebsaudit] ... MDSInstance.clearCache()
-  // The [tid: ...] attribute can contain nested brackets, so we depth-track them.
-
-  private static parseOdlLine(line: string): ConsoleLogEntry | null {
-    // The fixed header has exactly 5 bracket-enclosed fields (no nested brackets in these 5).
-    const ODL_HEADER =
-      /^\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[.\d]*[+-]\d{2}:\d{2})\]\s+\[([^\]]*)\]\s+\[(\w+(?::\d+)?)\]\s+\[([^\]]*)\]\s+\[([^\]]*)\]\s*([\s\S]*)$/;
-    const m = line.match(ODL_HEADER);
-    if (!m) return null;
-
-    const [, rawTs, component, levelRaw, msgId, logger, rest] = m;
-
-    // Level: strip optional ":CODE" numeric suffix
-    const levelStr = levelRaw.split(':')[0];
-
-    // Source: prefer Java logger path; fall back to component name
-    const source = logger.trim() || component.trim() || undefined;
-
-    // Parse remaining [key: value] attributes and the trailing message text
-    const { message, attrs } = this.extractOdlRest(rest);
-
-    // Prepend message-ID code when present and not already in the message
-    const msgIdTrimmed = msgId.trim();
-    const fullMessage = msgIdTrimmed && !message.startsWith(`[${msgIdTrimmed}]`)
-      ? `[${msgIdTrimmed}] ${message}`
-      : message;
 
     return {
-      id: uuidv4(),
-      timestamp: this.normalizeTimestamp(rawTs),
-      level: this.normalizeLogLevel(levelStr),
-      source,
-      message: fullMessage || `[${component}] ${levelStr}`,
-      category: attrs['APP'] || attrs['app'] || undefined,
+      metadata: {
+        fileName,
+        uploadedAt: new Date().toISOString(),
+        totalEntries: entries.length,
+      },
+      entries,
     };
   }
 
-  // Walk the attribute portion of an ODL line with depth-aware bracket tracking.
-  // Returns extracted key→value attributes and the final message text.
-  private static extractOdlRest(rest: string): { message: string; attrs: Record<string, string> } {
-    const attrs: Record<string, string> = {};
-    const s = rest.trimStart();
-    let i = 0;
-    let msgStart = 0;
+  private static toConsoleLogEntry(
+    log: Record<string, unknown>,
+    index: number,
+  ): ConsoleLogEntry {
+    const normalized = normalizeStructuredConsoleEntry(log, new Date().toISOString());
+    const id =
+      typeof log.id === 'string'
+        ? log.id
+        : typeof log._id === 'string'
+          ? log._id
+          : uuidv4();
 
-    while (i < s.length) {
-      if (s[i] !== '[') {
-        // Non-bracket text starts the message
-        msgStart = i;
-        break;
-      }
-      // Depth-track to find the matching ']' (handles nested brackets like tid)
-      let depth = 1;
-      let j = i + 1;
-      while (j < s.length && depth > 0) {
-        if (s[j] === '[') depth++;
-        else if (s[j] === ']') depth--;
-        j++;
-      }
-      // s[i+1 .. j-2] is the bracket content
-      const content = s.substring(i + 1, j - 1);
-      // Parse as "key: value"
-      const ci = content.indexOf(': ');
-      if (ci > 0) {
-        attrs[content.substring(0, ci).trim()] = content.substring(ci + 2);
-      }
-      i = j;
-      // Skip one space separator
-      while (i < s.length && s[i] === ' ') i++;
-      msgStart = i;
-    }
-
-    return { message: s.substring(msgStart).trim(), attrs };
-  }
-
-  private static parsePlainTextLine(line: string): ConsoleLogEntry | null {
-    if (!line.trim()) return null;
-
-    // Pattern ODL: Oracle ADF / WebLogic Diagnostic Logging
-    const odlEntry = this.parseOdlLine(line);
-    if (odlEntry) return odlEntry;
-
-    // Pattern 0a: Oracle Visual Builder (VB) format with optional source file prefix
-    // [VB (INFO), /vb/module/path]: Message text
-    // [VB (WARN), /vb/module/path]: Message text
-    // [VB (ERROR), /vb/module/path]: Message text
-    const vbPattern = /^\[VB \((\w+)\),\s*([^\]]+)\]:\s*(.+)$/;
-    const vbMatch = line.match(vbPattern);
-    if (vbMatch) {
-      return {
-        id: uuidv4(),
-        timestamp: new Date().toISOString(),
-        level: this.normalizeLogLevel(vbMatch[1]),
-        source: vbMatch[2].trim(),
-        message: vbMatch[3],
-      };
-    }
-
-    // Pattern 0b: Source-file-prefixed VB format
-    // actionRunner.js:59 [VB (INFO), /vb/module]: Message
-    // servicesManager.js:127 [VB (WARN), /vb/module]: Message
-    const vbSourcePattern = /^(\S+\.js:\d+)\s+\[VB \((\w+)\),\s*([^\]]+)\]:\s*(.+)$/;
-    const vbSourceMatch = line.match(vbSourcePattern);
-    if (vbSourceMatch) {
-      const [, fileLoc, levelStr, modulePath, message] = vbSourceMatch;
-      const colonIdx = fileLoc.lastIndexOf(':');
-      return {
-        id: uuidv4(),
-        timestamp: new Date().toISOString(),
-        level: this.normalizeLogLevel(levelStr),
-        source: modulePath.trim(),
-        lineNumber: parseInt(fileLoc.substring(colonIdx + 1)),
-        message,
-      };
-    }
-
-    // Pattern 0c: Generic bracketed component format
-    // [COMPONENT (LEVEL), /path/to/module]: Message
-    const genericComponentPattern = /^\[(\w[\w\s]*)\s*\((\w+)\),\s*([^\]]*)\]:\s*(.+)$/;
-    const genericComponentMatch = line.match(genericComponentPattern);
-    if (genericComponentMatch) {
-      const level = this.normalizeLogLevel(genericComponentMatch[2]);
-      if (level !== 'log' || this.isValidLogLevel(genericComponentMatch[2])) {
-        return {
-          id: uuidv4(),
-          timestamp: new Date().toISOString(),
-          level,
-          source: genericComponentMatch[3].trim() || genericComponentMatch[1],
-          message: genericComponentMatch[4],
-        };
-      }
-    }
-
-    // Pattern 1: Chrome/Edge DevTools format with timestamp
-    // [12:34:56.789] ERROR: Something went wrong
-    // [2024-01-16T12:34:56.789Z] ERROR: Something went wrong
-    const chromePattern = /^\[([^\]]+)\]\s*(\w+):\s*(.+)$/;
-    const chromeMatch = line.match(chromePattern);
-    if (chromeMatch) {
-      return {
-        id: uuidv4(),
-        timestamp: this.normalizeTimestamp(chromeMatch[1]),
-        level: this.normalizeLogLevel(chromeMatch[2]),
-        message: chromeMatch[3],
-      };
-    }
-
-    // Pattern 2: Browser console with source
-    // ERROR: Message http://example.com/script.js:123:45
-    const browserPattern = /^(\w+):\s*(.+?)\s+(https?:\/\/[^\s]+):(\d+):(\d+)$/;
-    const browserMatch = line.match(browserPattern);
-    if (browserMatch) {
-      return {
-        id: uuidv4(),
-        timestamp: new Date().toISOString(),
-        level: this.normalizeLogLevel(browserMatch[1]),
-        message: browserMatch[2],
-        url: browserMatch[3],
-        lineNumber: parseInt(browserMatch[4]),
-        columnNumber: parseInt(browserMatch[5]),
-      };
-    }
-
-    // Pattern 3: ISO timestamp with level
-    // 2024-01-16T12:34:56.789Z ERROR Something went wrong
-    // 2024-01-16 12:34:56.789 ERROR Something went wrong
-    const isoPattern = /^(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?(?:Z|[+-]\d{2}:?\d{2})?)\s+(\w+)\s+(.+)$/;
-    const isoMatch = line.match(isoPattern);
-    if (isoMatch) {
-      return {
-        id: uuidv4(),
-        timestamp: this.normalizeTimestamp(isoMatch[1]),
-        level: this.normalizeLogLevel(isoMatch[2]),
-        message: isoMatch[3],
-      };
-    }
-
-    // Pattern 4: Unix timestamp
-    // 1705401234567 ERROR Something went wrong
-    const unixPattern = /^(\d{10,13})\s+(\w+)\s+(.+)$/;
-    const unixMatch = line.match(unixPattern);
-    if (unixMatch) {
-      const timestamp = parseInt(unixMatch[1]);
-      const date = timestamp > 10000000000 ? new Date(timestamp) : new Date(timestamp * 1000);
-      return {
-        id: uuidv4(),
-        timestamp: date.toISOString(),
-        level: this.normalizeLogLevel(unixMatch[2]),
-        message: unixMatch[3],
-      };
-    }
-
-    // Pattern 5: Level with file source and line
-    // ERROR: Something went wrong at file.js:10:15
-    // ERROR file.js:10 Something went wrong
-    const sourcePattern = /^(\w+)[:\s]+(?:(.+?)\s+at\s+)?(.+?):(\d+):(\d+)\s*(.*)$/;
-    const sourceMatch = line.match(sourcePattern);
-    if (sourceMatch && this.isValidLogLevel(sourceMatch[1])) {
-      return {
-        id: uuidv4(),
-        timestamp: new Date().toISOString(),
-        level: this.normalizeLogLevel(sourceMatch[1]),
-        message: sourceMatch[2] || sourceMatch[6] || '',
-        source: sourceMatch[3],
-        lineNumber: parseInt(sourceMatch[4]),
-        columnNumber: parseInt(sourceMatch[5]),
-      };
-    }
-
-    // Pattern 6: Simple level prefix
-    // ERROR: Something went wrong
-    // [ERROR] Something went wrong
-    const simplePattern = /^[\[]?(\w+)[\]]?:\s*(.+)$/;
-    const simpleMatch = line.match(simplePattern);
-    if (simpleMatch && this.isValidLogLevel(simpleMatch[1])) {
-      return {
-        id: uuidv4(),
-        timestamp: new Date().toISOString(),
-        level: this.normalizeLogLevel(simpleMatch[1]),
-        message: simpleMatch[2],
-      };
-    }
-
-    // Pattern 7: Time-only timestamp
-    // 12:34:56.789 ERROR Something went wrong
-    const timePattern = /^(\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?)\s+(\w+)\s+(.+)$/;
-    const timeMatch = line.match(timePattern);
-    if (timeMatch && this.isValidLogLevel(timeMatch[2])) {
-      const today = new Date().toISOString().split('T')[0];
-      return {
-        id: uuidv4(),
-        timestamp: `${today}T${timeMatch[1].replace(',', '.')}Z`,
-        level: this.normalizeLogLevel(timeMatch[2]),
-        message: timeMatch[3],
-      };
-    }
-
-    // Pattern 8: Starts with known level word
-    // ERROR Something went wrong
-    const levelWordPattern = /^(\w+)\s+(.+)$/;
-    const levelWordMatch = line.match(levelWordPattern);
-    if (levelWordMatch && this.isValidLogLevel(levelWordMatch[1])) {
-      return {
-        id: uuidv4(),
-        timestamp: new Date().toISOString(),
-        level: this.normalizeLogLevel(levelWordMatch[1]),
-        message: levelWordMatch[2],
-      };
-    }
-
-    // Default: treat entire line as a log message
     return {
+      id,
+      index: typeof log.index === 'number' ? log.index : index,
+      _id: typeof log._id === 'string' ? log._id : undefined,
+      fileId: typeof log.fileId === 'string' ? log.fileId : undefined,
+      ...normalized,
+    };
+  }
+
+  static parsePlainText(content: string, fileName: string): ConsoleLogFile {
+    const entries = parseConsoleText(content).map((entry, index) => ({
       id: uuidv4(),
-      timestamp: new Date().toISOString(),
-      level: 'log',
-      message: line,
+      index,
+      ...entry,
+    }));
+
+    return {
+      metadata: {
+        fileName,
+        uploadedAt: new Date().toISOString(),
+        totalEntries: entries.length,
+      },
+      entries,
     };
   }
 
-  private static isValidLogLevel(level: string): boolean {
-    const normalized = level.toLowerCase();
-    const validLevels = ['log', 'info', 'warn', 'warning', 'error', 'err', 'debug', 'trace', 'verbose', 'fatal', 'critical'];
-    return validLevels.includes(normalized);
-  }
-
-  private static normalizeTimestamp(timestamp: string): string {
-    // Try parsing as ISO date
-    try {
-      const date = new Date(timestamp);
-      if (!isNaN(date.getTime())) {
-        return date.toISOString();
-      }
-    } catch {}
-
-    // If it's just a time (HH:MM:SS), add today's date
-    if (/^\d{2}:\d{2}:\d{2}/.test(timestamp)) {
-      const today = new Date().toISOString().split('T')[0];
-      return `${today}T${timestamp.replace(',', '.')}Z`;
-    }
-
-    // Return as-is if we can't parse
-    return timestamp;
-  }
-
-  private static normalizeLogLevel(level: string): LogLevel {
-    const normalized = level.toLowerCase().trim();
-    const validLevels: LogLevel[] = ['log', 'info', 'warn', 'error', 'debug', 'trace', 'verbose'];
-
-    if (validLevels.includes(normalized as LogLevel)) {
-      return normalized as LogLevel;
-    }
-
-    // Map common variations
-    const levelMap: Record<string, LogLevel> = {
-      'warning': 'warn',
-      'err': 'error',
-      'fatal': 'error',
-      'critical': 'error',
-      'panic': 'error',
-      'information': 'info',
-      'inf': 'info',
-      'dbg': 'debug',
-      'verbose': 'verbose',
-      'trace': 'trace',
-      'notice': 'info',
-      'emerg': 'error',
-      'emergency': 'error',
-      'alert': 'error',
-      'crit': 'error',
-      // Oracle ODL / ADF / WebLogic levels
-      'notification': 'info',
-      'severe': 'error',
-      'incident_error': 'error',
-      'incident': 'error',
-    };
-
-    return levelMap[normalized] || 'log';
-  }
-
-  // Auto-detect format and parse
   static async parseFile(file: File): Promise<ConsoleLogFile> {
     const content = await file.text();
 
-    // Try JSON first
     if (content.trim().startsWith('{') || content.trim().startsWith('[')) {
       try {
         return this.parseJSON(content, file.name);
       } catch {
-        // Fall through to plain text parsing
+        // Fall back to plain text parsing when JSON parsing fails.
       }
     }
 
-    // Parse as plain text
     return this.parsePlainText(content, file.name);
   }
 }

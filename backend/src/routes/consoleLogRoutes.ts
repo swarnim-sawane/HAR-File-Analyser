@@ -1,12 +1,83 @@
 import express, { Request, Response } from 'express';
+import type { SortDirection } from 'mongodb';
 import { getMongoDb, getRedis } from '../config/database';
 
 const router = express.Router();
+const SORT_FIELDS = ['timestamp', 'level', 'source', 'message', 'index'] as const;
+type SortField = (typeof SORT_FIELDS)[number];
 
-/**
- * ✅ FIXED: Get console log entries with pagination (not all at once!)
- * GET /api/logs/:fileId/entries?page=1&limit=100
- */
+function parseLevels(levels: unknown): string[] | undefined {
+  if (Array.isArray(levels)) {
+    const normalized = levels.flatMap((value) =>
+      typeof value === 'string' ? value.split(',').map((part) => part.trim().toLowerCase()) : [],
+    );
+    return normalized.filter(Boolean);
+  }
+
+  if (typeof levels === 'string' && levels.trim()) {
+    return levels
+      .split(',')
+      .map((part) => part.trim().toLowerCase())
+      .filter(Boolean);
+  }
+
+  return undefined;
+}
+
+function buildLogFilter(fileId: string, query: Request['query']) {
+  const filter: Record<string, unknown> = { fileId };
+  const levels = parseLevels(query.levels);
+
+  if (levels?.length) {
+    filter.level = { $in: levels };
+  }
+
+  if (typeof query.startTime === 'string' || typeof query.endTime === 'string') {
+    const timestampFilter: Record<string, string> = {};
+    if (typeof query.startTime === 'string' && query.startTime) {
+      timestampFilter.$gte = query.startTime;
+    }
+    if (typeof query.endTime === 'string' && query.endTime) {
+      timestampFilter.$lte = query.endTime;
+    }
+    if (Object.keys(timestampFilter).length > 0) {
+      filter.timestamp = timestampFilter;
+    }
+  }
+
+  if (typeof query.search === 'string' && query.search.trim()) {
+    const regex = new RegExp(query.search.trim(), 'i');
+    filter.$or = [
+      { message: regex },
+      { rawText: regex },
+      { source: regex },
+      { url: regex },
+      { stackTrace: regex },
+      { issueTags: regex },
+      { primaryIssue: regex },
+    ];
+  }
+
+  return filter;
+}
+
+function buildSort(query: Request['query']) {
+  const sortField =
+    typeof query.sortBy === 'string' && ['timestamp', 'level', 'source', 'message', 'index'].includes(query.sortBy)
+      ? query.sortBy
+      : 'index';
+  const sortDirection = query.sortDir === 'asc' ? 1 : -1;
+
+  return { [sortField]: sortField === 'index' ? 1 : sortDirection };
+}
+
+function listProjection() {
+  return {
+    rawText: 0,
+    args: 0,
+  };
+}
+
 router.get('/:fileId/entries', async (req: Request, res: Response) => {
   try {
     const { fileId } = req.params;

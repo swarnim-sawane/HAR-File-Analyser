@@ -14,6 +14,7 @@ export interface RequestFlowNodePayload {
   entryIndex: number;
   domainLabel?: string;
   productLabel?: string;
+  traceRole?: 'root' | 'primary' | 'branch' | 'terminal';
   onClick?: () => void;
 }
 
@@ -51,6 +52,28 @@ const handleStyle = (accent: string): React.CSSProperties => ({
   background: accent,
 });
 
+const getTraceBadge = (traceRole?: RequestFlowNodePayload['traceRole'], status?: number) => {
+  switch (traceRole) {
+    case 'root':
+      return {
+        label: 'Root',
+        color: '#5b8def',
+      };
+    case 'branch':
+      return {
+        label: 'Branch',
+        color: '#64748b',
+      };
+    case 'terminal':
+      return {
+        label: status && status >= 400 ? 'Failure' : 'Terminal',
+        color: status && status >= 400 ? '#ef4444' : '#5b8def',
+      };
+    default:
+      return null;
+  }
+};
+
 const renderNode = (
   data: RequestFlowNodePayload,
   options: {
@@ -69,6 +92,18 @@ const renderNode = (
   const boxShadow = data.isCritical
     ? `0 0 0 2px ${options.highlightRing}, ${options.shadow}`
     : options.shadow;
+  const traceBadge = getTraceBadge(data.traceRole, data.status);
+  const badges = [
+    ...(traceBadge ? [traceBadge] : []),
+    ...(options.badgeLabel
+      ? [
+          {
+            label: options.badgeLabel,
+            color: options.badgeColor || options.accent,
+          },
+        ]
+      : []),
+  ];
 
   return (
     <div
@@ -113,17 +148,30 @@ const renderNode = (
           {data.type}
         </span>
 
-        {options.badgeLabel && (
+        {badges.length > 0 && (
           <span
             style={{
-              fontSize: '10px',
-              fontWeight: 700,
-              color: options.badgeColor || options.accent,
-              textTransform: 'uppercase',
-              letterSpacing: '0.05em',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'flex-end',
+              gap: 6,
+              flexWrap: 'wrap',
             }}
           >
-            {options.badgeLabel}
+            {badges.map((badge) => (
+              <span
+                key={badge.label}
+                style={{
+                  fontSize: '10px',
+                  fontWeight: 700,
+                  color: badge.color,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                }}
+              >
+                {badge.label}
+              </span>
+            ))}
           </span>
         )}
       </div>

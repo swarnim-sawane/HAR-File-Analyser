@@ -1,19 +1,38 @@
 // src/utils/consoleLogAnalyzer.ts
 
-import { ConsoleLogEntry, LogLevel } from '../types/consolelog';
+import { ConsoleLogEntry, ConsoleQuickFocus, LogLevel } from '../types/consolelog';
 
 export class ConsoleLogAnalyzer {
   static filterByLevel(entries: ConsoleLogEntry[], levels: LogLevel[]): ConsoleLogEntry[] {
     return entries.filter(entry => levels.includes(entry.level));
   }
 
+  static filterByQuickFocus(entries: ConsoleLogEntry[], quickFocus: ConsoleQuickFocus): ConsoleLogEntry[] {
+    if (quickFocus === 'all') {
+      return entries;
+    }
+
+    if (quickFocus === 'errors') {
+      return entries.filter((entry) => entry.level === 'error' || entry.inferredSeverity === 'error');
+    }
+
+    if (quickFocus === 'warnings') {
+      return entries.filter((entry) => entry.level === 'warn' || entry.inferredSeverity === 'warning');
+    }
+
+    return entries.filter((entry) => entry.issueTags.includes(quickFocus));
+  }
+
   static searchEntries(entries: ConsoleLogEntry[], term: string): ConsoleLogEntry[] {
     const lowerTerm = term.toLowerCase();
     return entries.filter(entry =>
       entry.message.toLowerCase().includes(lowerTerm) ||
+      entry.rawText?.toLowerCase().includes(lowerTerm) ||
       entry.source?.toLowerCase().includes(lowerTerm) ||
       entry.url?.toLowerCase().includes(lowerTerm) ||
-      entry.stackTrace?.toLowerCase().includes(lowerTerm)
+      entry.stackTrace?.toLowerCase().includes(lowerTerm) ||
+      entry.issueTags.some((tag) => tag.toLowerCase().includes(lowerTerm)) ||
+      entry.primaryIssue?.toLowerCase().includes(lowerTerm)
     );
   }
 

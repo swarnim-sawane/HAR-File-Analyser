@@ -1,106 +1,142 @@
-// src/components/ConsoleLogList.tsx
-
-import React, { useMemo, useState } from 'react';
-import { ConsoleLogEntry, LogLevel } from '../types/consolelog';
+import React, { useEffect, useId, useMemo, useState } from 'react';
+import { ConsoleLogEntry, ConsoleQuickFocus, LogLevel } from '../types/consolelog';
 import { formatDate } from '../utils/formatters';
 
 interface ConsoleLogListProps {
   entries: ConsoleLogEntry[];
   groupedEntries: Map<string, ConsoleLogEntry[]> | null;
   selectedEntry: ConsoleLogEntry | null;
-  onSelectEntry: (entry: ConsoleLogEntry) => void;
+  onSelectEntry: (entry: ConsoleLogEntry) => void | Promise<void>;
+  quickFocus: ConsoleQuickFocus;
+  onQuickFocusChange: (quickFocus: ConsoleQuickFocus) => void;
 }
 
 type SortField = 'timestamp' | 'severity';
 type SortDirection = 'asc' | 'desc';
+
+const QUICK_FOCUS_OPTIONS: Array<{ key: ConsoleQuickFocus; label: string }> = [
+  { key: 'all', label: 'All' },
+  { key: 'errors', label: 'Errors' },
+  { key: 'warnings', label: 'Warnings' },
+  { key: 'cors', label: 'CORS' },
+  { key: 'network', label: 'Network' },
+  { key: 'exception', label: 'Exceptions' },
+  { key: 'react', label: 'React' },
+  { key: 'browser-policy', label: 'Browser Policy' },
+];
+
+const ISSUE_TAG_LABELS: Record<string, string> = {
+  cors: 'CORS',
+  network: 'Network',
+  exception: 'Exception',
+  promise: 'Promise',
+  react: 'React',
+  'browser-policy': 'Browser Policy',
+  'http-4xx': 'HTTP 4xx',
+  'http-5xx': 'HTTP 5xx',
+};
 
 const ConsoleLogList: React.FC<ConsoleLogListProps> = ({
   entries,
   groupedEntries,
   selectedEntry,
   onSelectEntry,
+  quickFocus,
+  onQuickFocusChange,
 }) => {
+  const selectAllId = useId();
   const [sortField, setSortField] = useState<SortField>('timestamp');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
+  useEffect(() => {
+    setSelectedIds((current) => {
+      const visibleIds = new Set(entries.map((entry) => entry.id));
+      const next = new Set(Array.from(current).filter((entryId) => visibleIds.has(entryId)));
+      return next.size === current.size ? current : next;
+    });
+  }, [entries]);
+
   const handleSort = (field: SortField) => {
     if (sortField === field) {
-      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortField(field);
-      setSortDirection('desc');
+      setSortDirection((current) => (current === 'asc' ? 'desc' : 'asc'));
+      return;
     }
+
+    setSortField(field);
+    setSortDirection('desc');
   };
 
   const copyToClipboard = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
     } catch {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.focus();
-      ta.select();
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
       document.execCommand('copy');
-      document.body.removeChild(ta);
+      document.body.removeChild(textarea);
     }
   };
 
-  const handleCopyMessage = async (entry: ConsoleLogEntry, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const formattedText = `[${entry.level.toUpperCase()}] ${formatDate(entry.timestamp)}
-${entry.message}${
-      entry.source ? `\nSource: ${entry.source}${entry.lineNumber ? `:${entry.lineNumber}` : ''}` : ''
-    }`;
+  const buildClipboardText = (entry: ConsoleLogEntry): string => {
+    const sourceText = entry.source
+      ? `\nSource: ${entry.source}${entry.lineNumber ? `:${entry.lineNumber}` : ''}${
+          entry.columnNumber ? `:${entry.columnNumber}` : ''
+        }`
+      : '';
+    const urlText = entry.url ? `\nURL: ${entry.url}` : '';
+    const inferredText =
+      entry.inferredSeverity !== 'none' ? `\nInferred Severity: ${entry.inferredSeverity}` : '';
+    const issueTagsText =
+      entry.issueTags.length > 0 ? `\nIssue Tags: ${entry.issueTags.join(', ')}` : '';
+    const rawText = entry.rawText?.trim() ? `\n\nRaw Event:\n${entry.rawText}` : '';
 
-    await copyToClipboard(formattedText);
+    return `[${entry.level.toUpperCase()}] ${formatDate(entry.timestamp)}${sourceText}${urlText}${inferredText}${issueTagsText}\n\nMessage:\n${entry.message}${rawText}`;
+  };
+
+  const handleCopyEvent = async (entry: ConsoleLogEntry, event: React.MouseEvent) => {
+    event.stopPropagation();
+    await copyToClipboard(buildClipboardText(entry));
     setCopiedId(entry.id);
-    setTimeout(() => setCopiedId(null), 1500);
+    window.setTimeout(() => setCopiedId(null), 1500);
+  };
+
+  const toggleEntrySelection = (entryId: string) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(entryId)) {
+        next.delete(entryId);
+      } else {
+        next.add(entryId);
+      }
+      return next;
+    });
   };
 
   const handleSelectAll = () => {
-    if (selectedIds.size === entries.length) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(entries.map((e) => e.id)));
-    }
-  };
-
-  const handleSelectEntry = (entryId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const newSelected = new Set(selectedIds);
-    if (newSelected.has(entryId)) {
-      newSelected.delete(entryId);
-    } else {
-      newSelected.add(entryId);
-    }
-    setSelectedIds(newSelected);
+    setSelectedIds((current) => {
+      if (entries.length > 0 && current.size === entries.length) {
+        return new Set();
+      }
+      return new Set(entries.map((entry) => entry.id));
+    });
   };
 
   const handleCopySelected = async () => {
-    const selectedEntries = entries.filter((e) => selectedIds.has(e.id));
-    const text = selectedEntries
-      .map(
-        (e) =>
-          `[${e.level.toUpperCase()}] ${formatDate(e.timestamp)}\n${e.message}${
-            e.source ? `\nSource: ${e.source}${e.lineNumber ? `:${e.lineNumber}` : ''}` : ''
-          }`
-      )
-      .join('\n\n');
+    const selectedEntries = entries.filter((entry) => selectedIds.has(entry.id));
+    const text = selectedEntries.map(buildClipboardText).join('\n\n---\n\n');
     await copyToClipboard(text);
     setCopiedId('bulk-copy');
-    setTimeout(() => setCopiedId(null), 1500);
+    window.setTimeout(() => setCopiedId(null), 1500);
   };
 
-  const handleClearSelection = () => {
-    setSelectedIds(new Set());
-  };
-
-  const getLevelPriority = (level: LogLevel): number => {
+  const getLevelPriority = (entry: ConsoleLogEntry): number => {
     const priorities: Record<LogLevel, number> = {
       error: 5,
       warn: 4,
@@ -110,31 +146,62 @@ ${entry.message}${
       trace: 1,
       verbose: 1,
     };
-    return priorities[level] || 0;
+
+    const basePriority = priorities[entry.level] || 0;
+    if (entry.inferredSeverity === 'error') {
+      return Math.max(basePriority, 5);
+    }
+    if (entry.inferredSeverity === 'warning') {
+      return Math.max(basePriority, 4);
+    }
+    return basePriority;
   };
 
-  const sortedEntries = useMemo(() => {
-    const sorted = [...entries];
-    sorted.sort((a, b) => {
+  const sortEntries = (items: ConsoleLogEntry[]) =>
+    [...items].sort((a, b) => {
       let comparison = 0;
 
-      switch (sortField) {
-        case 'timestamp':
+      if (sortField === 'timestamp') {
+        comparison = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+      } else {
+        comparison = getLevelPriority(b) - getLevelPriority(a);
+        if (comparison === 0) {
           comparison = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
-          break;
-        case 'severity':
-          comparison = getLevelPriority(b.level) - getLevelPriority(a.level);
-          if (comparison === 0) {
-            comparison = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
-          }
-          break;
+        }
       }
 
       return sortDirection === 'asc' ? comparison : -comparison;
     });
 
-    return sorted;
-  }, [entries, sortField, sortDirection]);
+  const sortedEntries = useMemo(() => sortEntries(entries), [entries, sortDirection, sortField]);
+
+  const overlayErrorCount = entries.filter(
+    (entry) => entry.level === 'error' || entry.inferredSeverity === 'error',
+  ).length;
+  const overlayWarningCount = entries.filter(
+    (entry) =>
+      (entry.level === 'warn' || entry.inferredSeverity === 'warning') &&
+      entry.inferredSeverity !== 'error',
+  ).length;
+
+  const quickFocusCounts = useMemo(() => {
+    return {
+      all: entries.length,
+      errors: entries.filter((entry) => entry.level === 'error' || entry.inferredSeverity === 'error')
+        .length,
+      warnings: entries.filter(
+        (entry) => entry.level === 'warn' || entry.inferredSeverity === 'warning',
+      ).length,
+      cors: entries.filter((entry) => entry.issueTags.includes('cors')).length,
+      network: entries.filter((entry) => entry.issueTags.includes('network')).length,
+      exception: entries.filter((entry) => entry.issueTags.includes('exception')).length,
+      promise: entries.filter((entry) => entry.issueTags.includes('promise')).length,
+      react: entries.filter((entry) => entry.issueTags.includes('react')).length,
+      'http-4xx': entries.filter((entry) => entry.issueTags.includes('http-4xx')).length,
+      'http-5xx': entries.filter((entry) => entry.issueTags.includes('http-5xx')).length,
+      'browser-policy': entries.filter((entry) => entry.issueTags.includes('browser-policy')).length,
+    } satisfies Record<ConsoleQuickFocus, number>;
+  }, [entries]);
 
   const getLevelBadgeClass = (level: LogLevel): string => {
     const classes: Record<LogLevel, string> = {
@@ -151,65 +218,98 @@ ${entry.message}${
 
   const renderSortIcon = (field: SortField) => {
     if (sortField !== field) {
-      return <span className="sort-icon console-sort-icon inactive">⇅</span>;
+      return <span className="console-sort-icon inactive">{'\u2195'}</span>;
     }
-    return sortDirection === 'asc' ? (
-      <span className="sort-icon console-sort-icon">↑</span>
-    ) : (
-      <span className="sort-icon console-sort-icon">↓</span>
+
+    return (
+      <span className="console-sort-icon">
+        {sortDirection === 'asc' ? '\u2191' : '\u2193'}
+      </span>
     );
   };
 
+  const renderIssueBadges = (entry: ConsoleLogEntry) =>
+    entry.issueTags.slice(0, 3).map((tag) => (
+      <span key={`${entry.id}-${tag}`} className={`console-issue-pill issue-${tag}`}>
+        {ISSUE_TAG_LABELS[tag] || tag}
+      </span>
+    ));
+
   const renderEntry = (entry: ConsoleLogEntry) => {
-    const isSelected = selectedEntry?.id === entry.id;
+    const isSelected =
+      selectedEntry?.id === entry.id || (selectedEntry?.index !== undefined && selectedEntry.index === entry.index);
     const isChecked = selectedIds.has(entry.id);
-    const priority = getLevelPriority(entry.level);
+    const sourceLabel = entry.source ? entry.source.split('/').pop() || entry.source : null;
 
     return (
       <div
         key={entry.id}
         className={`request-item ${isSelected ? 'selected' : ''} ${isChecked ? 'checked-item' : ''}`}
-        onClick={() => onSelectEntry(entry)}
+        data-inferred-severity={entry.inferredSeverity}
+        onClick={() => void onSelectEntry(entry)}
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            void onSelectEntry(entry);
+          }
+        }}
       >
         <div className="log-checkbox">
           <input
             type="checkbox"
             checked={isChecked}
-            onChange={(e) => handleSelectEntry(entry.id, e as any)}
-            onClick={(e) => e.stopPropagation()}
+            onChange={() => toggleEntrySelection(entry.id)}
+            onClick={(event) => event.stopPropagation()}
+            aria-label={`Select log entry ${entry.index ?? entry.id}`}
           />
-          <span className="checkbox-custom console-row-checkbox"></span>
+          <span className="checkbox-custom console-row-checkbox" aria-hidden="true"></span>
         </div>
 
         <div className="log-level-cell">
-          <span className={`status-badge ${getLevelBadgeClass(entry.level)}`}>{entry.level.toUpperCase()}</span>
-          {priority >= 4 && (
-            <span className="priority-indicator" title={`Priority: ${priority}`}>
-              {'!'.repeat(priority - 3)}
+          <div className="console-level-stack">
+            <span className={`status-badge ${getLevelBadgeClass(entry.level)}`}>
+              {entry.level.toUpperCase()}
             </span>
-          )}
+            {entry.inferredSeverity !== 'none' && (
+              <span className={`console-inferred-pill ${entry.inferredSeverity}`}>
+                {entry.inferredSeverity === 'error' ? 'Error' : 'Warning'}
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="log-timestamp-cell">{formatDate(entry.timestamp)}</div>
 
         <div className="log-message-cell">
-          <div className="log-message">{entry.message}</div>
+          <div className="console-message-stack">
+            <div className="log-message" title={entry.message}>
+              {entry.message}
+            </div>
+            {entry.issueTags.length > 0 && (
+              <div className="console-row-badges">{renderIssueBadges(entry)}</div>
+            )}
+          </div>
         </div>
 
-        <div className="log-source-cell">
-          {entry.source && (
+        <div className="log-source-cell" title={entry.source || undefined}>
+          {sourceLabel ? (
             <>
-              <span className="source-file">{entry.source.split('/').pop()}</span>
-              {entry.lineNumber && <span className="source-line">:{entry.lineNumber}</span>}
+              <span className="source-file">{sourceLabel}</span>
+              {entry.lineNumber ? <span className="source-line">:{entry.lineNumber}</span> : null}
+              {entry.columnNumber ? <span className="source-line">:{entry.columnNumber}</span> : null}
             </>
+          ) : (
+            <span className="console-source-empty">--</span>
           )}
         </div>
 
         <div className="log-actions-cell">
           <button
             className={`btn-copy ${copiedId === entry.id ? 'copied' : ''}`}
-            onClick={(e) => handleCopyMessage(entry, e)}
-            title="Copy log entry"
+            onClick={(event) => void handleCopyEvent(entry, event)}
+            title="Copy full event"
+            aria-label="Copy full event"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
@@ -227,34 +327,25 @@ ${entry.message}${
     }
 
     return Array.from(groupedEntries.entries()).map(([groupKey, groupEntries]) => {
-      const sortedGroupEntries = [...groupEntries].sort((a, b) => {
-        let comparison = 0;
-        switch (sortField) {
-          case 'timestamp':
-            comparison = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
-            break;
-          case 'severity':
-            comparison = getLevelPriority(b.level) - getLevelPriority(a.level);
-            if (comparison === 0) {
-              comparison = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
-            }
-            break;
-        }
-        return sortDirection === 'asc' ? comparison : -comparison;
-      });
-
-      const errorCount = groupEntries.filter((e) => e.level === 'error').length;
-      const warnCount = groupEntries.filter((e) => e.level === 'warn').length;
+      const sortedGroupEntries = sortEntries(groupEntries);
+      const groupErrorCount = sortedGroupEntries.filter(
+        (entry) => entry.level === 'error' || entry.inferredSeverity === 'error',
+      ).length;
+      const groupWarningCount = sortedGroupEntries.filter(
+        (entry) =>
+          (entry.level === 'warn' || entry.inferredSeverity === 'warning') &&
+          entry.inferredSeverity !== 'error',
+      ).length;
 
       return (
         <div key={groupKey} className="page-group">
           <div className="page-header">
             <div className="group-title-container">
               <span className="group-title">{groupKey}</span>
-              {(errorCount > 0 || warnCount > 0) && (
+              {(groupErrorCount > 0 || groupWarningCount > 0) && (
                 <span className="group-severity">
-                  {errorCount > 0 && <span className="error-count">{errorCount} errors</span>}
-                  {warnCount > 0 && <span className="warn-count">{warnCount} warnings</span>}
+                  {groupErrorCount > 0 && <span className="error-count">{groupErrorCount} issues</span>}
+                  {groupWarningCount > 0 && <span className="warn-count">{groupWarningCount} warnings</span>}
                 </span>
               )}
             </div>
@@ -266,48 +357,57 @@ ${entry.message}${
     });
   };
 
-  const errorCount = entries.filter((e) => e.level === 'error').length;
-  const warnCount = entries.filter((e) => e.level === 'warn').length;
-  const allSelected = selectedIds.size === entries.length && entries.length > 0;
+  const allSelected = entries.length > 0 && selectedIds.size === entries.length;
 
   return (
     <div className="request-list console-request-list">
       <div className="log-summary-bar console-log-summary-bar">
         <div className="summary-left console-summary-left">
-          <div className="select-all-container console-select-all-container">
-            <input type="checkbox" id="select-all" checked={allSelected} onChange={handleSelectAll} />
-            <label htmlFor="select-all" className="select-all-label console-select-all-label">
-              <span className="checkbox-custom console-select-all-checkbox"></span>
+          <div className="console-select-all-container">
+            <input type="checkbox" id={selectAllId} checked={allSelected} onChange={handleSelectAll} />
+            <label htmlFor={selectAllId} className="select-all-label console-select-all-label">
+              <span className="checkbox-custom console-select-all-checkbox" aria-hidden="true"></span>
               <span className="select-text console-select-text">
                 {selectedIds.size > 0 ? `${selectedIds.size} selected` : 'Select all'}
               </span>
             </label>
           </div>
-          {errorCount > 0 && (
+
+          <span className="summary-text console-summary-text">
+            <strong>{entries.length}</strong> visible
+          </span>
+
+          {overlayErrorCount > 0 && (
             <span className="summary-badge console-summary-badge status-4xx">
-              {errorCount} error{errorCount !== 1 ? 's' : ''}
+              {overlayErrorCount} errors
             </span>
           )}
-          {warnCount > 0 && (
+
+          {overlayWarningCount > 0 && (
             <span className="summary-badge console-summary-badge status-3xx">
-              {warnCount} warning{warnCount !== 1 ? 's' : ''}
+              {overlayWarningCount} warnings
             </span>
           )}
         </div>
+
         <div className="summary-right console-summary-right">
           {selectedIds.size > 0 && (
             <div className="selection-actions console-selection-actions">
               <button
                 className={`action-btn-glass console-action-btn copy-all ${copiedId === 'bulk-copy' ? 'copied' : ''}`}
-                onClick={handleCopySelected}
+                onClick={() => void handleCopySelected()}
               >
-                {copiedId === 'bulk-copy' ? '✓ Copied' : 'Copy Selected'}
+                {copiedId === 'bulk-copy' ? 'Copied' : 'Copy Selected'}
               </button>
-              <button className="action-btn-glass console-action-btn clear" onClick={handleClearSelection}>
-                x Clear
+              <button
+                className="action-btn-glass console-action-btn clear"
+                onClick={() => setSelectedIds(new Set())}
+              >
+                Clear
               </button>
             </div>
           )}
+
           <div className="sort-controls console-sort-controls">
             <span className="sort-label console-sort-label">Sort by:</span>
             <button
@@ -323,6 +423,20 @@ ${entry.message}${
               Severity {renderSortIcon('severity')}
             </button>
           </div>
+        </div>
+
+        <div className="console-summary-inline-filters" role="toolbar" aria-label="Console issue quick filters">
+          {QUICK_FOCUS_OPTIONS.map((option) => (
+            <button
+              key={option.key}
+              type="button"
+              className={`console-quick-chip ${quickFocus === option.key ? 'active' : ''}`}
+              onClick={() => onQuickFocusChange(option.key)}
+            >
+              <span>{option.label}</span>
+              <strong aria-hidden="true">{quickFocusCounts[option.key]}</strong>
+            </button>
+          ))}
         </div>
       </div>
 
@@ -341,7 +455,7 @@ ${entry.message}${
 
       <div className="request-list-content">
         {entries.length === 0 ? (
-          <div className="no-data">No log entries match the current filters</div>
+          <div className="no-data">No log entries match the current filters.</div>
         ) : (
           renderGroupedEntries()
         )}

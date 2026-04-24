@@ -1,10 +1,16 @@
 // src/hooks/useConsoleLogData.ts
 
-import { useState, useCallback, useMemo } from 'react';
-import { ConsoleLogFile, ConsoleLogEntry, ConsoleFilterOptions, LogLevel } from '../types/consolelog';
-import { ConsoleLogParser } from '../utils/consoleLogParser';
-import { ConsoleLogAnalyzer } from '../utils/consoleLogAnalyzer';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { normalizeStructuredConsoleEntry } from '../../shared/consoleLogCore';
+import {
+  ConsoleFilterOptions,
+  ConsoleLogEntry,
+  ConsoleLogFile,
+  LogLevel,
+} from '../types/consolelog';
 import { apiClient } from '../services/apiClient';
+import { ConsoleLogAnalyzer } from '../utils/consoleLogAnalyzer';
+import { ConsoleLogParser } from '../utils/consoleLogParser';
 
 interface BackendLogEntry {
   _id?: { toString?: () => string } | string;
@@ -14,39 +20,22 @@ interface BackendLogEntry {
   message?: string;
   source?: string;
   stackTrace?: string;
+  rawText?: string;
   lineNumber?: number;
   columnNumber?: number;
   args?: unknown[];
   url?: string;
   category?: string;
+  issueTags?: unknown[];
+  inferredSeverity?: string;
+  primaryIssue?: string;
+  fileId?: string;
 }
 
-const normalizeLogLevel = (level: string | undefined): LogLevel => {
-  const normalized = (level || 'log').toLowerCase().trim();
-  if (
-    normalized === 'log' ||
-    normalized === 'info' ||
-    normalized === 'warn' ||
-    normalized === 'error' ||
-    normalized === 'debug' ||
-    normalized === 'trace' ||
-    normalized === 'verbose'
-  ) {
-    return normalized;
-  }
+const MAX_BROWSER_ENTRIES = 50_000;
 
-  if (normalized === 'warning') return 'warn';
-  if (normalized === 'err' || normalized === 'fatal' || normalized === 'critical') return 'error';
-  if (normalized === 'information' || normalized === 'notice') return 'info';
-  if (normalized === 'dbg') return 'debug';
-
-  return 'log';
-};
-
-export const useConsoleLogData = () => {
-  const [logData, setLogData] = useState<ConsoleLogFile | null>(null);
-  const [selectedEntry, setSelectedEntry] = useState<ConsoleLogEntry | null>(null);
-  const [filters, setFilters] = useState<ConsoleFilterOptions>({
+function defaultFilters(): ConsoleFilterOptions {
+  return {
     levels: {
       log: true,
       info: true,
@@ -58,22 +47,82 @@ export const useConsoleLogData = () => {
     },
     searchTerm: '',
     groupBy: 'all',
+    quickFocus: 'all',
     timeRange: {
       start: null,
       end: null,
     },
-  });
+  };
+}
+
+function normalizeBackendEntry(
+  entry: Record<string, unknown>,
+  fallbackIndex: number,
+  fileId?: string | null,
+): ConsoleLogEntry {
+  const rawId = entry._id;
+  const normalized = normalizeStructuredConsoleEntry(entry, new Date().toISOString());
+  const id =
+    typeof entry.id === 'string'
+      ? entry.id
+      : typeof rawId === 'string'
+        ? rawId
+        : rawId && typeof rawId === 'object' && typeof (rawId as { toString?: () => string }).toString === 'function'
+          ? (rawId as { toString: () => string }).toString()
+          : `log-entry-${fallbackIndex}`;
+
+  return {
+    id,
+    index: typeof entry.index === 'number' ? entry.index : fallbackIndex,
+    fileId: typeof fileId === 'string' ? fileId : typeof entry.fileId === 'string' ? entry.fileId : undefined,
+    _id:
+      typeof rawId === 'string'
+        ? rawId
+        : rawId && typeof rawId === 'object' && typeof (rawId as { toString?: () => string }).toString === 'function'
+          ? (rawId as { toString: () => string }).toString()
+          : undefined,
+    ...normalized,
+  };
+}
+
+function normalizeLogFile(data: ConsoleLogFile, fileId?: string | null): ConsoleLogFile {
+  return {
+    metadata: {
+      ...data.metadata,
+      totalEntries:
+        typeof data.metadata.totalEntries === 'number'
+          ? data.metadata.totalEntries
+          : data.entries.length,
+    },
+    entries: data.entries.map((entry, index) =>
+      normalizeBackendEntry(entry as unknown as Record<string, unknown>, index, fileId),
+    ),
+  };
+}
+
+export const useConsoleLogData = () => {
+  const [logData, setLogData] = useState<ConsoleLogFile | null>(null);
+  const [selectedEntry, setSelectedEntryState] = useState<ConsoleLogEntry | null>(null);
+  const [selectedEntryLoading, setSelectedEntryLoading] = useState(false);
+  const [filters, setFilters] = useState<ConsoleFilterOptions>(defaultFilters);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [backendFileId, setBackendFileId] = useState<string | null>(null);
+
+  const detailCacheRef = useRef<Map<number, ConsoleLogEntry>>(new Map());
+  const detailRequestIdRef = useRef(0);
 
   const loadLogFile = useCallback(async (file: File) => {
     setIsLoading(true);
     setError(null);
+    setBackendFileId(null);
+    detailCacheRef.current.clear();
 
     try {
       const parsed = await ConsoleLogParser.parseFile(file);
-      setLogData(parsed);
-      setSelectedEntry(null);
+      setLogData(normalizeLogFile(parsed));
+      setSelectedEntryState(null);
+      setSelectedEntryLoading(false);
       return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to parse log file');
@@ -83,14 +132,11 @@ export const useConsoleLogData = () => {
     }
   }, []);
 
-  // Maximum entries to load into the browser at once.
-  // Loading millions of entries causes browser OOM / freeze on large files.
-  // Engineers can use filters/search to drill into the full dataset on the backend.
-  const MAX_BROWSER_ENTRIES = 50_000;
-
   const loadLogFromBackend = useCallback(async (fileId: string, fileName: string) => {
     setIsLoading(true);
     setError(null);
+    setBackendFileId(fileId);
+    detailCacheRef.current.clear();
 
     try {
       const status = await apiClient.getLogStatus(fileId).catch(() => null);
@@ -104,35 +150,19 @@ export const useConsoleLogData = () => {
       let expectedTotal = typeof status?.totalEntries === 'number' ? status.totalEntries : 0;
 
       while (hasMore && allEntries.length < MAX_BROWSER_ENTRIES) {
-        const pageData = await apiClient.getLogEntries(fileId, page, pageSize) as {
+        const pageData = (await apiClient.getLogEntries(fileId, page, pageSize)) as {
           entries?: BackendLogEntry[];
           pagination?: { hasMore?: boolean; totalEntries?: number };
         };
 
         const pageEntries = Array.isArray(pageData.entries) ? pageData.entries : [];
-        const mappedEntries = pageEntries.map((entry) => {
-          const rawId = entry._id;
-          const id =
-            typeof rawId === 'string'
-              ? rawId
-              : rawId?.toString
-                ? rawId.toString()
-                : `log-entry-${entry.index ?? page}-${Math.random().toString(36).slice(2, 8)}`;
-
-          return {
-            id,
-            timestamp: entry.timestamp || new Date().toISOString(),
-            level: normalizeLogLevel(entry.level),
-            message: entry.message || '',
-            source: entry.source,
-            stackTrace: entry.stackTrace,
-            lineNumber: entry.lineNumber,
-            columnNumber: entry.columnNumber,
-            args: entry.args,
-            url: entry.url,
-            category: entry.category,
-          };
-        });
+        const mappedEntries = pageEntries.map((entry, entryOffset) =>
+          normalizeBackendEntry(
+            entry as unknown as Record<string, unknown>,
+            allEntries.length + entryOffset,
+            fileId,
+          ),
+        );
 
         allEntries.push(...mappedEntries);
         expectedTotal = pageData.pagination?.totalEntries ?? expectedTotal;
@@ -142,19 +172,20 @@ export const useConsoleLogData = () => {
 
       const resolvedTotal = expectedTotal > 0 ? expectedTotal : allEntries.length;
       const resolvedName = typeof status?.fileName === 'string' ? status.fileName : fileName;
-      const isTruncated = resolvedTotal > MAX_BROWSER_ENTRIES && allEntries.length >= MAX_BROWSER_ENTRIES;
+      const isTruncated =
+        resolvedTotal > MAX_BROWSER_ENTRIES && allEntries.length >= MAX_BROWSER_ENTRIES;
 
       setLogData({
         metadata: {
           fileName: resolvedName,
           uploadedAt,
           totalEntries: resolvedTotal,
-          // Pass truncation info through so UI can show a warning banner
           ...(isTruncated ? { truncatedAt: MAX_BROWSER_ENTRIES } : {}),
         },
         entries: allEntries,
       });
-      setSelectedEntry(null);
+      setSelectedEntryState(null);
+      setSelectedEntryLoading(false);
       return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load processed log file');
@@ -165,54 +196,110 @@ export const useConsoleLogData = () => {
   }, []);
 
   const updateFilters = useCallback((newFilters: Partial<ConsoleFilterOptions>) => {
-    setFilters(prev => ({ ...prev, ...newFilters }));
+    setFilters((prev) => ({ ...prev, ...newFilters }));
   }, []);
 
-  /** Directly hydrate the hook with pre-parsed data (used by ConsoleLogTabContent
-   *  when the file was already parsed in App.tsx before the tab was created). */
   const loadFromData = useCallback((data: ConsoleLogFile) => {
-    setLogData(data);
-    setSelectedEntry(null);
+    setBackendFileId(null);
+    detailCacheRef.current.clear();
+    setLogData(normalizeLogFile(data));
+    setSelectedEntryState(null);
+    setSelectedEntryLoading(false);
     setError(null);
   }, []);
 
   const clearData = useCallback(() => {
     setLogData(null);
-    setSelectedEntry(null);
+    setSelectedEntryState(null);
+    setSelectedEntryLoading(false);
     setError(null);
+    setBackendFileId(null);
+    detailCacheRef.current.clear();
+    setFilters(defaultFilters());
   }, []);
+
+  const setSelectedEntry = useCallback(
+    async (entry: ConsoleLogEntry | null) => {
+      detailRequestIdRef.current += 1;
+      const requestId = detailRequestIdRef.current;
+
+      if (!entry) {
+        setSelectedEntryState(null);
+        setSelectedEntryLoading(false);
+        return;
+      }
+
+      setSelectedEntryState(entry);
+
+      if (!backendFileId || entry.index === undefined) {
+        setSelectedEntryLoading(false);
+        return;
+      }
+
+      const cached = detailCacheRef.current.get(entry.index);
+      if (cached) {
+        setSelectedEntryState(cached);
+        setSelectedEntryLoading(false);
+        return;
+      }
+
+      setSelectedEntryLoading(true);
+
+      try {
+        const detail = (await apiClient.getLogEntry(fileIdFromEntry(entry, backendFileId), entry.index)) as BackendLogEntry;
+        if (requestId !== detailRequestIdRef.current) {
+          return;
+        }
+
+        const normalizedDetail = normalizeBackendEntry(
+          detail as unknown as Record<string, unknown>,
+          entry.index,
+          backendFileId,
+        );
+
+        detailCacheRef.current.set(entry.index, normalizedDetail);
+        setSelectedEntryState(normalizedDetail);
+      } catch (err) {
+        if (requestId === detailRequestIdRef.current) {
+          setError(err instanceof Error ? err.message : 'Failed to load log details');
+        }
+      } finally {
+        if (requestId === detailRequestIdRef.current) {
+          setSelectedEntryLoading(false);
+        }
+      }
+    },
+    [backendFileId],
+  );
 
   const filteredEntries = useMemo(() => {
     if (!logData) return [];
 
     let entries = [...logData.entries];
 
-    // Filter by levels
     const enabledLevels = Object.entries(filters.levels)
       .filter(([, enabled]) => enabled)
       .map(([level]) => level as LogLevel);
 
     entries = ConsoleLogAnalyzer.filterByLevel(entries, enabledLevels);
+    entries = ConsoleLogAnalyzer.filterByQuickFocus(entries, filters.quickFocus);
 
-    // Filter by search term
     if (filters.searchTerm) {
       entries = ConsoleLogAnalyzer.searchEntries(entries, filters.searchTerm);
     }
 
-    // Filter by time range
-    entries = ConsoleLogAnalyzer.filterByTimeRange(
+    return ConsoleLogAnalyzer.filterByTimeRange(
       entries,
       filters.timeRange.start,
-      filters.timeRange.end
+      filters.timeRange.end,
     );
-
-    return entries;
-  }, [logData, filters]);
+  }, [filters, logData]);
 
   return {
     logData,
     filteredEntries,
     selectedEntry,
+    selectedEntryLoading,
     filters,
     isLoading,
     error,
@@ -224,3 +311,7 @@ export const useConsoleLogData = () => {
     clearData,
   };
 };
+
+function fileIdFromEntry(entry: ConsoleLogEntry, fallbackFileId: string): string {
+  return typeof entry.fileId === 'string' && entry.fileId ? entry.fileId : fallbackFileId;
+}
