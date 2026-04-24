@@ -1,5 +1,7 @@
 import express, { Request, Response } from 'express';
 import { promises as fs } from 'fs';
+import { createReadStream } from 'fs';
+import { createGzip } from 'zlib';
 import path from 'path';
 import { getMongoDb } from '../config/database';
 import { getRedis } from '../config/database';
@@ -49,19 +51,34 @@ router.get('/:fileId', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Invalid file path' });
     }
 
-    const raw = await fs.readFile(resolvedFilePath, 'utf-8');
-    const parsed = JSON.parse(raw);
+    const acceptEncoding = req.headers['accept-encoding'] || '';
+    const useGzip = acceptEncoding.includes('gzip');
 
-    if (!parsed?.log || !Array.isArray(parsed.log.entries)) {
-      return res.status(422).json({ error: 'Invalid HAR payload' });
+    res.setHeader('Content-Type', 'application/json');
+    if (useGzip) {
+      res.setHeader('Content-Encoding', 'gzip');
+      res.setHeader('Vary', 'Accept-Encoding');
     }
 
-    return res.json(parsed);
+    const fileStream = createReadStream(resolvedFilePath);
+    fileStream.on('error', (streamErr: NodeJS.ErrnoException) => {
+      if (!res.headersSent) {
+        if (streamErr.code === 'ENOENT') {
+          res.status(404).json({ error: 'HAR file not available yet' });
+        } else {
+          console.error('Failed to stream HAR data:', streamErr);
+          res.status(500).json({ error: 'Failed to fetch HAR data' });
+        }
+      }
+    });
+
+    if (useGzip) {
+      fileStream.pipe(createGzip()).pipe(res);
+    } else {
+      fileStream.pipe(res);
+    }
+    return;
   } catch (error: any) {
-    if (error?.code === 'ENOENT') {
-      return res.status(404).json({ error: 'HAR file not available yet' });
-    }
-
     console.error('Failed to fetch HAR data:', error);
     return res.status(500).json({ error: 'Failed to fetch HAR data' });
   }

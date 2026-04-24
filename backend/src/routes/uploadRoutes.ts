@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import multer from 'multer';
 import { promises as fs } from 'fs';
+import { createGunzip } from 'zlib';
 import path from 'path';
 import crypto from 'crypto';
 import { getRedis } from '../config/database';
@@ -48,8 +49,8 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage: storage,
   limits: {
-    // ✅ Must match CHUNK_SIZE in chunkedUploader.ts (10MB) + headroom for multipart envelope
-    fileSize: 12 * 1024 * 1024
+    // Must match CHUNK_SIZE in chunkedUploader.ts (3MB) + headroom for multipart envelope
+    fileSize: 4 * 1024 * 1024
   }
 });
 
@@ -137,7 +138,7 @@ router.post('/chunk', upload.single('chunk'), async (req: Request, res: Response
 // Complete upload (assemble chunks)
 router.post('/complete', async (req: Request, res: Response) => {
   try {
-    const { fileId, totalChunks, fileName, fileType } = req.body;
+    const { fileId, totalChunks, fileName, fileType, compressed } = req.body;
 
     if (!fileId || !totalChunks || !fileName || !fileType) {
       return res.status(400).json({ error: 'Missing parameters' });
@@ -223,6 +224,23 @@ router.post('/complete', async (req: Request, res: Response) => {
       await fs.unlink(chunkPath).catch(() => {});
     }
 
+    // If client compressed the upload, decompress now so all downstream code
+    // (sanitize, worker, HAR route) sees plain JSON — no changes needed elsewhere.
+    if (compressed === 'gzip') {
+      const compressedPath = outputPath + '.gz.tmp';
+      await fs.rename(outputPath, compressedPath);
+      const fsNative2 = require('fs') as typeof import('fs');
+      await new Promise<void>((resolve, reject) => {
+        fsNative2.createReadStream(compressedPath)
+          .pipe(createGunzip())
+          .pipe(fsNative2.createWriteStream(outputPath))
+          .on('finish', resolve)
+          .on('error', reject);
+      });
+      await fs.unlink(compressedPath).catch(() => {});
+      console.log(`✓ Decompressed gzip → plain JSON: ${outputPath}`);
+    }
+
     // Hash was computed incrementally — no need to read file again
     const hash = hasher.digest('hex');
 
@@ -238,7 +256,7 @@ router.post('/complete', async (req: Request, res: Response) => {
       fileSize: stats.size,
       fileType,
       hash,
-      uploadedAt: new Date().toISOString()
+      uploadedAt: new Date().toISOString(),
     }, {
       attempts: 3,
       backoff: {

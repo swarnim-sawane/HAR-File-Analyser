@@ -29,6 +29,7 @@ interface HarJobData {
   fileType: string;
   hash: string;
   uploadedAt: string;
+  compressed?: string;
 }
 
 /**

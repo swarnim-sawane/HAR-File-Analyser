@@ -1,5 +1,6 @@
 import { createReadStream } from 'fs';
 import { createInterface } from 'readline';
+import { createGunzip } from 'zlib';
 import * as JSONStream from 'jsonstream';
 import { Transform } from 'stream';
 import { pipeline } from 'stream/promises';
@@ -30,47 +31,50 @@ export interface ParsedLogEntry {
  */
 export async function streamParseHar(
   filePath: string,
-  onEntry: (entry: ParsedHarEntry, index: number) => Promise<void>
+  onEntry: (entry: ParsedHarEntry, index: number) => Promise<void>,
+  options?: { compressed?: string }
 ): Promise<void> {
   let entryIndex = 0;
-  
-  try {
-    await pipeline(
-      createReadStream(filePath),
-      JSONStream.parse('log.entries.*'),
-      new Transform({
-        objectMode: true,
-        async transform(entry, encoding, callback) {
-          try {
-            const parsedEntry: ParsedHarEntry = {
-              index: entryIndex,
-              startedDateTime: entry.startedDateTime,
-              time: entry.time,
-              request: entry.request,
-              response: entry.response,
-              cache: entry.cache,
-              timings: entry.timings,
-              serverIPAddress: entry.serverIPAddress,
-              connection: entry.connection
-            };
-            
-            await onEntry(parsedEntry, entryIndex++);
-            
-            // Yield to event loop every 1000 entries.
-            // The original value of 100 caused ~500 forced context-switches for a
-            // 50 000-entry file. On a VM where the event loop is shared with Redis,
-            // MongoDB, and Ollama, each setImmediate pause is measurably costly.
-            if (entryIndex % 1000 === 0) {
-              await new Promise(resolve => setImmediate(resolve));
-            }
-            
-            callback();
-          } catch (error) {
-            callback(error as Error);
-          }
+  const fileStream = createReadStream(filePath);
+  const transformStage = new Transform({
+    objectMode: true,
+    async transform(entry, encoding, callback) {
+      try {
+        const parsedEntry: ParsedHarEntry = {
+          index: entryIndex,
+          startedDateTime: entry.startedDateTime,
+          time: entry.time,
+          request: entry.request,
+          response: entry.response,
+          cache: entry.cache,
+          timings: entry.timings,
+          serverIPAddress: entry.serverIPAddress,
+          connection: entry.connection
+        };
+
+        await onEntry(parsedEntry, entryIndex++);
+
+        // Yield to event loop every 1000 entries.
+        // The original value of 100 caused ~500 forced context-switches for a
+        // 50 000-entry file. On a VM where the event loop is shared with Redis,
+        // MongoDB, and Ollama, each setImmediate pause is measurably costly.
+        if (entryIndex % 1000 === 0) {
+          await new Promise(resolve => setImmediate(resolve));
         }
-      })
-    );
+
+        callback();
+      } catch (error) {
+        callback(error as Error);
+      }
+    }
+  });
+
+  try {
+    if (options?.compressed === 'gzip') {
+      await pipeline(fileStream, createGunzip(), JSONStream.parse('log.entries.*'), transformStage);
+    } else {
+      await pipeline(fileStream, JSONStream.parse('log.entries.*'), transformStage);
+    }
   } catch (error) {
     console.error('HAR parsing error:', error);
     throw error;

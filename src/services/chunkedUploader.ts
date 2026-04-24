@@ -3,11 +3,12 @@ import { apiClient } from './apiClient';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
-// ✅ Tuned for large files:
-// 10MB chunks → fewer round trips for GB-scale files
-// 4 parallel streams → saturates most connections without overloading the server
-const CHUNK_SIZE = 10 * 1024 * 1024; // 10 MB per chunk
-const PARALLEL_UPLOADS = 4;           // concurrent chunk uploads
+// Tuned for bandwidth-constrained deployments (corporate LAN ~0.8 MB/s):
+// 3MB chunks → cheaper retry cost on timeout vs 10MB chunks
+// 2 parallel streams → avoids bandwidth contention on slow links
+// Data compressed before chunking → 99MB HAR ≈ 10MB on wire
+const CHUNK_SIZE = 3 * 1024 * 1024;  // 3 MB per chunk
+const PARALLEL_UPLOADS = 2;           // concurrent chunk uploads
 const CHUNK_TIMEOUT_MS = 120_000;     // 2 min per chunk (large files on slow connections)
 // Assembly timeout scales with file size: base 30s + 1s per MB, capped at 30 min
 const assemblyTimeout = (fileSizeBytes: number) =>
@@ -32,32 +33,47 @@ export interface UploadResult {
 }
 
 class ChunkedUploader {
+  private async compressFile(file: File): Promise<{ blob: Blob; compressed: boolean }> {
+    if (typeof CompressionStream === 'undefined') {
+      return { blob: file, compressed: false };
+    }
+    try {
+      const stream = file.stream().pipeThrough(new CompressionStream('gzip'));
+      const response = new Response(stream);
+      const blob = await response.blob();
+      console.log(`Compressed: ${(file.size / 1024 / 1024).toFixed(1)} MB → ${(blob.size / 1024 / 1024).toFixed(1)} MB`);
+      return { blob, compressed: true };
+    } catch {
+      return { blob: file, compressed: false };
+    }
+  }
+
   async uploadFile(
     file: File,
     fileType: 'har' | 'log',
     onProgress?: (progress: UploadProgress) => void
   ): Promise<UploadResult> {
     const fileId = this.generateFileId();
-    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+
+    const { blob: uploadBlob, compressed } = await this.compressFile(file);
+    const totalChunks = Math.ceil(uploadBlob.size / CHUNK_SIZE);
 
     console.log(`Starting chunked upload: ${file.name}`);
-    console.log(`File size: ${(file.size / 1024 / 1024).toFixed(1)} MB, Chunks: ${totalChunks} × ${CHUNK_SIZE / 1024 / 1024}MB, Parallel: ${PARALLEL_UPLOADS}`);
+    console.log(`File size: ${(file.size / 1024 / 1024).toFixed(1)} MB → ${(uploadBlob.size / 1024 / 1024).toFixed(1)} MB compressed, Chunks: ${totalChunks} × ${CHUNK_SIZE / 1024 / 1024}MB, Parallel: ${PARALLEL_UPLOADS}`);
 
     let uploadedChunks = 0;
 
-    // ✅ Upload in parallel batches of PARALLEL_UPLOADS
     for (let batchStart = 0; batchStart < totalChunks; batchStart += PARALLEL_UPLOADS) {
       const batchEnd = Math.min(batchStart + PARALLEL_UPLOADS, totalChunks);
       const batch = [];
 
       for (let i = batchStart; i < batchEnd; i++) {
         const start = i * CHUNK_SIZE;
-        const end = Math.min(start + CHUNK_SIZE, file.size);
-        const chunk = file.slice(start, end);
+        const end = Math.min(start + CHUNK_SIZE, uploadBlob.size);
+        const chunk = uploadBlob.slice(start, end);
         batch.push(this.uploadChunk(fileId, i, totalChunks, chunk));
       }
 
-      // Wait for this batch of parallel uploads to complete
       await Promise.all(batch);
       uploadedChunks += batchEnd - batchStart;
 
@@ -72,9 +88,8 @@ class ChunkedUploader {
       }
     }
 
-    // Complete upload (stream-assemble on server)
     console.log(`All ${totalChunks} chunks uploaded, requesting assembly...`);
-    const result = await this.completeUpload(fileId, totalChunks, file.name, fileType, file.size);
+    const result = await this.completeUpload(fileId, totalChunks, file.name, fileType, file.size, compressed);
     return result;
   }
 
@@ -119,7 +134,8 @@ class ChunkedUploader {
     totalChunks: number,
     fileName: string,
     fileType: 'har' | 'log',
-    fileSizeBytes: number
+    fileSizeBytes: number,
+    compressed: boolean
   ): Promise<UploadResult> {
     try {
       const timeout = assemblyTimeout(fileSizeBytes);
@@ -127,7 +143,7 @@ class ChunkedUploader {
 
       const response = await axios.post(
         `${API_BASE_URL}/api/upload/complete`,
-        { fileId, totalChunks, fileName, fileType },
+        { fileId, totalChunks, fileName, fileType, ...(compressed ? { compressed: 'gzip' } : {}) },
         {
           headers: {
             'Content-Type': 'application/json',
