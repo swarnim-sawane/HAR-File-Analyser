@@ -49,6 +49,7 @@ export async function connectDatabases() {
     
     // Console Logs indexes (for fast queries and filtering)
     await db.collection('console_logs').createIndex({ fileId: 1 });
+    await db.collection('console_logs').createIndex({ fileId: 1, index: 1 }, { unique: true });
     await db.collection('console_logs').createIndex({ fileId: 1, level: 1 });
     await db.collection('console_logs').createIndex({ fileId: 1, source: 1 });
     await db.collection('console_logs').createIndex({ fileId: 1, timestamp: 1 });

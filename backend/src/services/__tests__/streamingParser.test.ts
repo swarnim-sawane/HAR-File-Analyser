@@ -112,15 +112,16 @@ describe('streamParseConsoleLog', () => {
     const path = writeTempFile(content, '.log');
     const collected: any[] = [];
     await streamParseConsoleLog(path, async (entry) => { collected.push(entry); });
-    expect(collected).toHaveLength(2);
+    expect(collected).toHaveLength(1);
+    expect(collected[0].rawText).toContain('line two');
   });
 
-  it('falls back to info level for unrecognised format lines', async () => {
+  it('falls back to log level for unrecognised format lines', async () => {
     const path = writeTempFile('random log text here', '.log');
     const collected: any[] = [];
     await streamParseConsoleLog(path, async (entry) => { collected.push(entry); });
     expect(collected).toHaveLength(1);
-    expect(collected[0].level).toBe('info');
+    expect(collected[0].level).toBe('log');
     expect(collected[0].message).toBe('random log text here');
   });
 
@@ -128,5 +129,56 @@ describe('streamParseConsoleLog', () => {
     await expect(
       streamParseConsoleLog('/tmp/does-not-exist-xyz-abc.log', async () => {})
     ).rejects.toThrow();
+  });
+
+  it('keeps multiline browser console errors as one parsed event', async () => {
+    const content = [
+      "TypeError: Cannot read properties of undefined (reading 'layoutTypes')",
+      'Object',
+      '    at resolveLayoutTypes (vbcs.min.js:299:17)',
+    ].join('\n');
+    const path = writeTempFile(content, '.log');
+    const collected: any[] = [];
+
+    await streamParseConsoleLog(path, async (entry) => {
+      collected.push(entry);
+    });
+
+    expect(collected).toHaveLength(1);
+    expect((collected[0] as any).rawText).toContain('Object');
+    expect((collected[0] as any).stackTrace).toContain('resolveLayoutTypes');
+    expect((collected[0] as any).inferredSeverity).toBe('error');
+    expect((collected[0] as any).issueTags).toContain('exception');
+  });
+
+  it('marks CORS-blocked browser events as inferred errors', async () => {
+    const content = [
+      "webapp/:1 Access to fetch at 'https://api.example.com/ords/test' from origin 'https://app.example.com' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    ].join('\n');
+    const path = writeTempFile(content, '.log');
+    const collected: any[] = [];
+
+    await streamParseConsoleLog(path, async (entry) => {
+      collected.push(entry);
+    });
+
+    expect(collected).toHaveLength(1);
+    expect(collected[0].level).toBe('log');
+    expect((collected[0] as any).inferredSeverity).toBe('error');
+    expect((collected[0] as any).issueTags).toEqual(expect.arrayContaining(['cors', 'network']));
+  });
+
+  it('marks browser policy violations as warnings', async () => {
+    const content = 'index.html?root=application:1 Autofocus processing was blocked because a document already has a focused element.';
+    const path = writeTempFile(content, '.log');
+    const collected: any[] = [];
+
+    await streamParseConsoleLog(path, async (entry) => {
+      collected.push(entry);
+    });
+
+    expect(collected).toHaveLength(1);
+    expect((collected[0] as any).inferredSeverity).toBe('warning');
+    expect((collected[0] as any).issueTags).toContain('browser-policy');
   });
 });
