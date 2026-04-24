@@ -1,1 +1,0 @@
-Never check any git commit or head pointer unless asked. You should always take permission before checking where the git head lies and if there is a need to rollback or restore any session as it is a concern of consent

@@ -241,6 +241,30 @@ router.post('/complete', async (req: Request, res: Response) => {
       console.log(`✓ Decompressed gzip → plain JSON: ${outputPath}`);
     }
 
+    // Normalize non-standard HAR formats (e.g. .oc files that are a bare JSON array
+    // of entries rather than { log: { entries: [...] } }).
+    if (fileType === 'har') {
+      try {
+        const fh = await fs.open(outputPath);
+        const peekBuf = Buffer.alloc(32);
+        await fh.read(peekBuf, 0, 32, 0);
+        await fh.close();
+        if (peekBuf.toString('utf8').trimStart()[0] === '[') {
+          console.log('🔄 Bare-array HAR detected — normalizing to standard { log: { entries } } format');
+          const raw = await fs.readFile(outputPath, 'utf-8');
+          const entries = JSON.parse(raw);
+          if (Array.isArray(entries)) {
+            await fs.writeFile(outputPath, JSON.stringify({
+              log: { version: '1.2', creator: { name: 'Oracle Capture', version: '1.0' }, entries }
+            }), 'utf-8');
+            console.log(`✓ Normalized bare-array HAR (${entries.length} entries)`);
+          }
+        }
+      } catch (normErr) {
+        console.warn('HAR normalization skipped:', normErr);
+      }
+    }
+
     // Hash was computed incrementally — no need to read file again
     const hash = hasher.digest('hex');
 

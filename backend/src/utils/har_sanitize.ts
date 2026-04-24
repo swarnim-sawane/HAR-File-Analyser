@@ -130,14 +130,14 @@ export function getHarInfo(input: string): PossibleScrubItems {
 
     for (const entry of entries) {
         const response = entry.response;
-        response.headers.map((header: any) => output.headers.add(header.name));
-        response.cookies.map((cookie: any) => output.cookies.add(cookie.name));
-        output.mimeTypes.add(response.content.mimeType);
+        response?.headers?.forEach((header: any) => output.headers.add(header.name));
+        response?.cookies?.forEach((cookie: any) => output.cookies.add(cookie.name));
+        if (response?.content?.mimeType) output.mimeTypes.add(response.content.mimeType);
 
         const request = entry.request;
-        request.headers.map((header: any) => output.headers.add(header.name));
-        request.queryString.map((arg: any) => output.queryArgs.add(arg.name));
-        request.cookies.map((cookie: any) => output.cookies.add(cookie.name));
+        request?.headers?.forEach((header: any) => output.headers.add(header.name));
+        request?.queryString?.forEach((arg: any) => output.queryArgs.add(arg.name));
+        request?.cookies?.forEach((cookie: any) => output.cookies.add(cookie.name));
 
         if (request.postData) {
             request.postData.params?.map((param: any) => output.postParams.add(param.name));

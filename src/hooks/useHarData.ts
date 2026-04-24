@@ -39,7 +39,7 @@ export const useHarData = (): UseHarDataReturn => {
 
   const parser = useMemo(() => new HarParser(), []);
   const searchIndex = useMemo(
-    () => (harData ? HarAnalyzer.buildSearchIndex(harData) : null),
+    () => (harData?.log?.entries ? HarAnalyzer.buildSearchIndex(harData) : null),
     [harData]
   );
 

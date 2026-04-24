@@ -84,7 +84,14 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
     if (!fileId) return;
     setIsLoadingFile(true);
     apiClient.getHarData(fileId)
-      .then(data => harState.loadHarData(data))
+      .then(data => {
+        if (!data?.log) {
+          const keys = data ? Object.keys(data).slice(0, 10).join(', ') : 'null/undefined';
+          console.error(`HAR data for ${fileId} missing log property. Top-level keys: [${keys}]`);
+          return;
+        }
+        return harState.loadHarData(data);
+      })
       .catch(err => {
         console.error(`Failed to load HAR tab ${tabId}:`, err);
       })
