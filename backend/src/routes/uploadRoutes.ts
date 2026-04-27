@@ -245,19 +245,23 @@ router.post('/complete', async (req: Request, res: Response) => {
     // of entries rather than { log: { entries: [...] } }).
     if (fileType === 'har') {
       try {
-        const fh = await fs.open(outputPath);
-        const peekBuf = Buffer.alloc(32);
-        await fh.read(peekBuf, 0, 32, 0);
-        await fh.close();
-        if (peekBuf.toString('utf8').trimStart()[0] === '[') {
-          console.log('🔄 Bare-array HAR detected — normalizing to standard { log: { entries } } format');
+        const fsSync = require('fs') as typeof import('fs');
+        const peek = await new Promise<string>((resolve, reject) => {
+          const bufs: Buffer[] = [];
+          fsSync.createReadStream(outputPath, { start: 0, end: 31 })
+            .on('data', (c: Buffer | string) => bufs.push(Buffer.isBuffer(c) ? c : Buffer.from(c as string)))
+            .on('end', () => resolve(Buffer.concat(bufs).toString('utf8')))
+            .on('error', reject);
+        });
+        if (peek.trimStart()[0] === '[') {
+          console.log('🔄 Bare-array HAR detected — normalizing to standard HAR format');
           const raw = await fs.readFile(outputPath, 'utf-8');
           const entries = JSON.parse(raw);
           if (Array.isArray(entries)) {
             await fs.writeFile(outputPath, JSON.stringify({
               log: { version: '1.2', creator: { name: 'Oracle Capture', version: '1.0' }, entries }
             }), 'utf-8');
-            console.log(`✓ Normalized bare-array HAR (${entries.length} entries)`);
+            console.log(`✓ Normalized bare-array HAR: ${entries.length} entries`);
           }
         }
       } catch (normErr) {
