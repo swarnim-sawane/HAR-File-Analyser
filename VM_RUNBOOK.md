@@ -35,9 +35,9 @@ pm2 restart har-backend --update-env
 
 ### Step 1 — Local machine (PowerShell)
 ```powershell
-# ALWAYS build from single-upload branch
-git checkout single-upload
-git pull origin single-upload
+# ALWAYS build from main branch
+git checkout main
+git pull origin main
 
 # Frontend build — .env.production MUST have both vars
 # C:\Users\ssawane\Downloads\har-analyzer\.env.production:
@@ -71,8 +71,9 @@ pm2 save
 ```
 
 > **Note:** Frontend must always be built on local machine (`npm run build`) and
-> deployed via `scp`. Running `npm run build` on the VM will fail because
-> `@rollup/rollup-linux-x64-gnu` is missing (node_modules came from Windows).
+> deployed via `scp`. Do not run `npm install` or frontend `npm run build` on the
+> VM: npm registry access is blocked by the corporate proxy setup, and copied
+> `node_modules` may also miss Linux-native optional packages such as Rollup.
 
 ***
 
@@ -200,7 +201,7 @@ db.har_files.find().sort({uploadedAt:-1}).limit(5)
 | `E11000 duplicate key` | Stale MongoDB record | `deleteMany({ fileId: "..." })` in mongosh |
 | `ConnectTimeoutError` on OCA | Node.js fetch ignores proxy | Ensure `setGlobalDispatcher` is in `server.ts` |
 | `fetch failed` in Node test | No proxy set | Proxy vars missing from `.env` |
-| AI chat shows old UI | Wrong branch built | `git checkout single-upload` before building |
+| AI chat shows old UI | Wrong branch built | `git checkout main` before building |
 | `OCA proxy error: fetch failed` | Token expired | Run `refresh-token` alias |
 | Worker processes stale jobs | PM2 in-memory retry | `pm2 flush` then `pm2 restart har-worker` |
 
