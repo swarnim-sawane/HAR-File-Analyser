@@ -1,4 +1,4 @@
-import express, { Request, Response } from 'express';
+import express, { NextFunction, Request, Response } from 'express';
 import multer from 'multer';
 import { promises as fs } from 'fs';
 import { createGunzip } from 'zlib';
@@ -8,6 +8,11 @@ import { getRedis } from '../config/database';
 import { Queue } from 'bullmq';
 import { HAR_QUEUE_NAME, LOG_QUEUE_NAME } from '../config/queueNames';
 import { publishGlobal } from '../utils/socketHelper';
+import {
+  MAX_UPLOAD_CHUNK_SIZE_BYTES,
+  buildChunkTooLargeResponse,
+  isMulterFileTooLargeError,
+} from '../config/uploadLimits';
 
 const router = express.Router();
 const redis = getRedis();
@@ -49,13 +54,13 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage: storage,
   limits: {
-    // Must match CHUNK_SIZE in chunkedUploader.ts (3MB) + headroom for multipart envelope
-    fileSize: 4 * 1024 * 1024
+    fileSize: MAX_UPLOAD_CHUNK_SIZE_BYTES
   }
 });
 
-// Upload chunk - FIXED
-router.post('/chunk', upload.single('chunk'), async (req: Request, res: Response) => {
+const uploadChunk = upload.single('chunk');
+
+const handleChunkUpload = async (req: Request, res: Response) => {
   try {
     const { fileId, chunkIndex, totalChunks } = req.body;
 
@@ -133,6 +138,25 @@ router.post('/chunk', upload.single('chunk'), async (req: Request, res: Response
       details: error instanceof Error ? error.message : 'Unknown error'
     });
   }
+};
+
+// Upload chunk - FIXED
+router.post('/chunk', (req: Request, res: Response, next: NextFunction) => {
+  uploadChunk(req, res, (error: unknown) => {
+    if (isMulterFileTooLargeError(error)) {
+      console.warn('Rejected oversized upload chunk', {
+        contentLength: req.headers['content-length'] ?? 'unknown',
+        maxChunkSize: MAX_UPLOAD_CHUNK_SIZE_BYTES,
+      });
+      return res.status(413).json(buildChunkTooLargeResponse());
+    }
+
+    if (error) {
+      return next(error);
+    }
+
+    void handleChunkUpload(req, res).catch(next);
+  });
 });
 
 // Complete upload (assemble chunks)
