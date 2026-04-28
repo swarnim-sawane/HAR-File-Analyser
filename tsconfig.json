@@ -12,16 +12,17 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "strict": true,
-"types": ["vite/client", "@testing-library/jest-dom"],
-"noUnusedLocals": false,        
-    "noUnusedParameters": false, 
+    "types": ["vite/client"],
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true
   },
   "include": ["src"],
   "exclude": [
     "src/**/*.test.ts",
     "src/**/*.test.tsx",
-    "src/**/__tests__/**"
+    "src/**/__tests__/**",
+    "src/test-utils/**"
   ],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
