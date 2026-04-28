@@ -6,6 +6,11 @@ import {
   detectOracleProductsFromContext,
   type DetectedOracleProduct,
 } from '../utils/oracleProductKb';
+import {
+  buildDeterministicInsights,
+  mergeDeterministicInsights,
+  normalizeInsightsSourceType,
+} from '../utils/insightRules';
 
 const router = Router();
 type FetchResponse = Awaited<ReturnType<typeof fetch>>;
@@ -86,14 +91,14 @@ const HARD_TIMEOUT_MS = 105000;
 const UPSTREAM_INACTIVITY_MS = 55000;
 const STATUS_UPDATE_INTERVAL_MS = 5000;
 
-const INSIGHTS_SYSTEM_PROMPT = `You are an Oracle Support Analyst helping L1/L2 engineers triage issues from HAR traces.
+const INSIGHTS_SYSTEM_PROMPT = `You are an Oracle Support Analyst helping L1/L2 engineers triage issues from HAR traces and browser console logs.
 Return ONLY a strict JSON object. No markdown. No prose outside JSON.
 
 Schema:
-{"overallHealth":"critical|degraded|warning|healthy","summary":"one sentence","sections":[{"type":"critical_issues|performance|security|recommendations","title":"string","findings":[{"severity":"critical|high|medium|low","title":"string","product":"ORDS|ADF|VBCS|Forms|OIC|Fusion Apps|IDCS|OAC|OCI|CPQ (omit if N/A)","component":"sub-component name (omit if N/A)","what":"what HAR shows — request counts, status codes, timings","why":"root cause referencing Oracle product internals","evidence":"URL path, status code, timing in ms, or header name","fix":"actionable step — reference Oracle config path, admin UI, or SQL","srGuidance":"logs/diagnostics to collect for SR: log file path, diagnostic level, SQL trace command (omit for low severity)"}]}]}
+{"overallHealth":"critical|degraded|warning|healthy","summary":"one sentence","sections":[{"type":"critical_issues|performance|security|recommendations","title":"string","findings":[{"severity":"critical|high|medium|low","title":"string","product":"ORDS|ADF|VBCS|Forms|OIC|Fusion Apps|IDCS|OAC|OCI|CPQ (omit if N/A)","component":"sub-component name (omit if N/A)","what":"what HAR or console evidence shows — request counts, status codes, timings, browser policy errors","why":"root cause referencing Oracle product internals","evidence":"URL path, status code, timing in ms, browser error, or header name","fix":"actionable step — reference Oracle config path, admin UI, proxy policy, or SQL","srGuidance":"logs/diagnostics to collect for SR: log file path, diagnostic level, SQL trace command (omit for low severity)"}]}]}
 
 Rules:
-- Only include findings with concrete HAR evidence (URL, status code, ms timing, header).
+- Only include findings with concrete HAR or console evidence (URL, status code, ms timing, browser policy error, header).
 - Fix must be specific — name Oracle config files, admin UI paths, or SQL. No vague "check logs".
 - srGuidance must name specific Oracle artifacts: WLS server log path, ORDS log, ADFLogger level, AWR/ASH, fmw_diag.
 - Name the Oracle product and component in every finding when products are detected.
@@ -103,6 +108,12 @@ Rules:
   2. 4XX CLIENT ERRORS second — 401/403 indicate auth/token failures (IDCS, OAM); 404 indicates missing Oracle module registration (ORDS, ADF, VB); 429 indicates rate limiting.
   3. 3XX REDIRECT ISSUES third — only flag if the chain is long (>3 hops), slow (>2 s total), or terminates on an error page.
   4. 2XX PERFORMANCE last — slow successful responses are lower priority than any error-tier finding.
+
+Console priority override:
+- CORS / PREFLIGHT BLOCKING ERRORS outrank generic JavaScript errors, connectivity summaries, performance issues, and deprecation warnings.
+- blocked by CORS policy, failed preflight access-control checks, and missing Access-Control-Allow-Origin are high-priority root-cause signals.
+- TypeError: Failed to fetch is a browser symptom when paired with CORS/preflight evidence, not the root cause.
+- For CORS evidence on /ords/ endpoints, name the owning layer as ORDS/proxy CORS, not generic VBCS. Recommend fixing OPTIONS/preflight headers and allowed origins.
 
 Context field guide:
 - 5XX SERVER ERRORS / HTTP 5XX SERVER ERRORS IN LOGS sections contain the highest-priority findings — always produce at least one finding for every distinct 5xx endpoint before reporting performance issues.
@@ -182,7 +193,7 @@ function normalizeSeverity(value: unknown): FindingSeverity | null {
 function hasConcreteEvidence(evidence: string): boolean {
   if (evidence.length < 8) return false;
   const evidencePattern =
-    /(https?:\/\/|\/[a-z0-9._~!$&'()*+,;=:@%/-]+|\bstatus\b[^0-9]{0,8}\d{3}\b|\b\d+(?:\.\d+)?\s*(ms|s|kb|mb|%)\b|\b[a-z_]+=(\d+(?:\.\d+)?)\b|\b(dns|connect|wait|receive|ssl|ttfb|latency|redirect)\b|\b(cache-control|content-type|content-encoding|strict-transport-security|content-security-policy|x-frame-options|x-content-type-options|set-cookie|authorization|etag|expires|pragma)\b)/i;
+    /(https?:\/\/|\/[a-z0-9._~!$&'()*+,;=:@%/-]+|\bstatus\b[^0-9]{0,8}\d{3}\b|\b\d+(?:\.\d+)?\s*(ms|s|kb|mb|%)\b|\b[a-z_]+=(\d+(?:\.\d+)?)\b|\b(dns|connect|wait|receive|ssl|ttfb|latency|redirect)\b|\b(access-control-allow-origin|access-control-allow-methods|access-control-allow-headers|cache-control|content-type|content-encoding|strict-transport-security|content-security-policy|x-frame-options|x-content-type-options|set-cookie|authorization|etag|expires|pragma)\b)/i;
   return evidencePattern.test(evidence);
 }
 
@@ -564,13 +575,14 @@ router.post('/chat', async (req: Request, res: ExpressResponse) => {
 });
 
 router.post('/insights', async (req: Request, res: ExpressResponse) => {
-  const { context } = req.body ?? {};
+  const { context, sourceType: rawSourceType } = req.body ?? {};
 
   if (!context || typeof context !== 'string' || !context.trim()) {
     return res.status(400).json({ error: 'context is required' });
   }
 
   const requestId = randomUUID();
+  const sourceType = normalizeInsightsSourceType(rawSourceType);
   const detectedProducts = detectOracleProductsFromContext(context);
   const oracleContext = buildOracleKbPrompt(detectedProducts);
   const oracleSpecificityTokens = buildOracleSpecificityTokens(detectedProducts);
@@ -588,14 +600,14 @@ router.post('/insights', async (req: Request, res: ExpressResponse) => {
   log(
     `request accepted | products_detected=${detectedProducts.length} (${
       detectedProducts.map(p => p.shortName).join(',') || 'none'
-    }) | context_chars=${context.length}`
+    }) | source=${sourceType} | context_chars=${context.length}`
   );
 
   const chatMessages = [
     { role: 'system', content: insightsSystemPrompt },
     {
       role: 'user',
-      content: `Analyze this HAR context and return strict JSON insights only.\n\n${context}`,
+      content: `Analyze this ${sourceType === 'console' ? 'browser console log' : 'HAR'} context and return strict JSON insights only.\n\n${context}`,
     },
   ];
 
@@ -693,16 +705,31 @@ router.post('/insights', async (req: Request, res: ExpressResponse) => {
       { oracleSpecificityRequired, oracleSpecificityTokens },
       detectedProducts
     );
+    const deterministicSections = buildDeterministicInsights(context, sourceType);
+    const mergedSections = mergeDeterministicInsights(
+      normalized.sections,
+      deterministicSections
+    );
+    const result: InsightsResult = {
+      ...normalized,
+      sections: mergedSections,
+      overallHealth: deterministicSections.length > 0
+        ? deriveOverallHealth(mergedSections)
+        : normalized.overallHealth,
+      summary: deterministicSections.length > 0
+        ? fallbackSummary(mergedSections)
+        : normalized.summary,
+    };
 
     log(
-      `done | sections=${normalized.sections.length} findings=${normalized.sections.reduce(
+      `done | sections=${result.sections.length} findings=${result.sections.reduce(
         (s, sec) => s + sec.findings.length, 0
-      )} health=${normalized.overallHealth}`
+      )} deterministic_sections=${deterministicSections.length} health=${result.overallHealth}`
     );
 
     // Return detected products in the response too
     const responsePayload = {
-      ...normalized,
+      ...result,
       detectedProducts: detectedProducts.map(p => ({
         product: p.product,
         shortName: p.shortName,
@@ -787,5 +814,4 @@ router.get('/status', async (_req: Request, res: ExpressResponse) => {
 });
 
 export default router;
-
 

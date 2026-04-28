@@ -267,7 +267,7 @@ export function useInsights(harData: HarFile, backendUrl: string): UseInsightsRe
       const res = await fetch(`${backendUrlRef.current}/api/ai/insights`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ context }),
+        body: JSON.stringify({ context, sourceType: 'har' }),
         signal: controller.signal,
       });
 

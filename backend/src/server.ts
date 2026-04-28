@@ -4,9 +4,14 @@ import cors from 'cors';
 import { Server as SocketIOServer } from 'socket.io';
 import dotenv from 'dotenv';
 import { connectDatabases, closeDatabases, getRedis } from './config/database';
+import { configureOutboundProxy } from './config/outboundProxy';
 import { setSocketIOInstance } from './utils/socketHelper';
 
 dotenv.config();
+const outboundProxyUrl = configureOutboundProxy();
+if (outboundProxyUrl) {
+  console.log(`🌐 Outbound OCA proxy configured: ${new URL(outboundProxyUrl).host}`);
+}
 
 const app = express();
 const server = http.createServer(app);

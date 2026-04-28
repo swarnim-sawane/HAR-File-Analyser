@@ -18,6 +18,27 @@ const insightsCache = new Map<string, InsightsResult>();
 // Regex that matches a 3-digit HTTP status code in a log message.
 // Looks for patterns like: "500", "status: 503", "HTTP/1.1 404", "statusCode=401", etc.
 const HTTP_STATUS_RE = /\b([45]\d{2})\b/;
+const CORS_SIGNAL_RE =
+  /\b(blocked by CORS policy|preflight request.*access control check|Access-Control-Allow-Origin|cross-origin request blocked)\b/i;
+const FAILED_FETCH_RE = /\bTypeError:\s*Failed to fetch\b|\bFailed to fetch\b/i;
+const LOW_PRIORITY_WARNING_RE = /\bArrayDataProvider\b.*\bdeprecated\b|\bdeprecated\b.*\bArrayDataProvider\b/i;
+
+function extractQuotedValue(message: string, pattern: RegExp): string | null {
+  const match = message.match(pattern);
+  return typeof match?.[1] === 'string' && match[1].trim() ? match[1].trim() : null;
+}
+
+function extractCorsEndpoint(message: string): string | null {
+  return (
+    extractQuotedValue(message, /\b(?:fetch|XMLHttpRequest)\s+at\s+['"]([^'"]+)['"]/i) ||
+    extractQuotedValue(message, /\bAccess to fetch at\s+['"]([^'"]+)['"]/i) ||
+    (message.match(/https?:\/\/[^\s'"<>]+/i)?.[0] ?? null)
+  );
+}
+
+function extractCorsOrigin(message: string): string | null {
+  return extractQuotedValue(message, /\bfrom origin\s+['"]([^'"]+)['"]/i);
+}
 
 export function buildConsoleLogContext(logData: ConsoleLogFile): string {
   const entries = logData.entries;
@@ -25,13 +46,13 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
   const getEvidenceText = (entry: { rawText?: string; message: string; stackTrace?: string }) =>
     entry.rawText || [entry.message, entry.stackTrace].filter(Boolean).join('\n');
 
-  // ── Level counts ────────────────────────────────────────────────────────────
+  // Level counts
   const levelCounts: Record<string, number> = {};
   for (const e of entries) {
     levelCounts[e.level] = (levelCounts[e.level] || 0) + 1;
   }
 
-  // ── Source module frequency ─────────────────────────────────────────────────
+  // Source module frequency
   const sourceCounts: Record<string, number> = {};
   for (const e of entries) {
     if (e.source) sourceCounts[e.source] = (sourceCounts[e.source] || 0) + 1;
@@ -41,7 +62,7 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
     .slice(0, 15)
     .map(([src, cnt]) => `${src}: ${cnt}`);
 
-  // ── HTTP status extraction from log messages (5xx → 4xx priority) ───────────
+  // HTTP status extraction from log messages (5xx -> 4xx priority)
   // Many Oracle products log HTTP status codes inside error/warn messages.
   // We surface these explicitly so the AI analyses server-side failures first.
   const errorAndWarnEntries = entries.filter((e) => e.level === 'error' || e.level === 'warn');
@@ -58,7 +79,7 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
     return code >= 400 && code < 500;
   });
 
-  // ── All errors: non-HTTP errors last (after HTTP-status-bearing ones) ───────
+  // All errors: non-HTTP errors last (after HTTP-status-bearing ones)
   const errorEntries = entries.filter((e) => e.level === 'error');
   // Entries that don't already appear in the 5xx/4xx buckets
   const http5xxSet = new Set(http5xxEntries.map((e) => getEvidenceText(e)));
@@ -83,19 +104,52 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
     return `${e.level.toUpperCase()}${src}${issueTags}: ${e.message}\n  Evidence: ${evidence}`;
   };
 
-  const http5xxLines  = http5xxEntries.slice(0, 10).map(formatError);
-  const http4xxLines  = http4xxEntries.slice(0, 10).map(formatError);
+  const http5xxLines = http5xxEntries.slice(0, 10).map(formatError);
+  const http4xxLines = http4xxEntries.slice(0, 10).map(formatError);
   const remainingErrorLines = remainingErrors.map(formatError);
 
-  // ── Warnings (up to 30) ─────────────────────────────────────────────────────
+  // Browser CORS failures can arrive as plain log rows; promote them explicitly.
+  const corsEntries = entries.filter((e) => CORS_SIGNAL_RE.test(getEvidenceText(e)));
+  const hasCorsBlocker = corsEntries.length > 0;
+  const failedFetchEntries = hasCorsBlocker
+    ? entries.filter((e) => FAILED_FETCH_RE.test(getEvidenceText(e))).slice(0, 5)
+    : [];
+  const corsLines = corsEntries.slice(0, 10).map((e) => {
+    const evidence = getEvidenceText(e);
+    const endpoint = extractCorsEndpoint(evidence) ?? 'unknown';
+    const origin = extractCorsOrigin(evidence) ?? 'unknown';
+    const missingHeader = /Access-Control-Allow-Origin/i.test(evidence)
+      ? 'Access-Control-Allow-Origin'
+      : 'unknown';
+    const preflight = /preflight/i.test(evidence) ? 'true' : 'false';
+    const src = e.source ? ` source=${e.source}` : '';
+    return `CORS_BLOCKED endpoint=${endpoint} origin=${origin} missing_header=${missingHeader} preflight=${preflight}${src} message=${evidence.substring(0, 500)}`;
+  });
+  const failedFetchLines = failedFetchEntries.map((e) => {
+    const src = e.source ? ` [${e.source}]` : '';
+    return `CORS_SYMPTOM${src}: ${getEvidenceText(e).substring(0, 240)} (client symptom paired with CORS/preflight evidence)`;
+  });
+
+  // Warnings (up to 30)
   const warnEntries = entries.filter((e) => e.level === 'warn');
-  const warnLines = warnEntries.slice(0, 30).map((e) => {
+  const lowPriorityWarnEntries = hasCorsBlocker
+    ? warnEntries.filter((e) => LOW_PRIORITY_WARNING_RE.test(getEvidenceText(e)))
+    : [];
+  const regularWarnEntries = hasCorsBlocker
+    ? warnEntries.filter((e) => !LOW_PRIORITY_WARNING_RE.test(getEvidenceText(e)))
+    : warnEntries;
+  const warnLines = regularWarnEntries.slice(0, 30).map((e) => {
+    const src = e.source ? ` [${e.source}]` : '';
+    const issueTags = e.issueTags.length > 0 ? ` [${e.issueTags.join(', ')}]` : '';
+    return `WARN${src}${issueTags}: ${getEvidenceText(e).substring(0, 260)}`;
+  });
+  const lowPriorityWarnLines = lowPriorityWarnEntries.slice(0, 30).map((e) => {
     const src = e.source ? ` [${e.source}]` : '';
     const issueTags = e.issueTags.length > 0 ? ` [${e.issueTags.join(', ')}]` : '';
     return `WARN${src}${issueTags}: ${getEvidenceText(e).substring(0, 260)}`;
   });
 
-  // ── Repeated message patterns ───────────────────────────────────────────────
+  // Repeated message patterns
   const msgCounts = new Map<string, number>();
   for (const e of entries) {
     const key = getEvidenceText(e).substring(0, 120);
@@ -107,7 +161,7 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
     .slice(0, 10)
     .map(([msg, count]) => `x${count}: ${msg}`);
 
-  // ── Action chain failures (VB-specific) ─────────────────────────────────────
+  // Action chain failures (VB-specific)
   const chainFailures = entries
     .filter((e) => {
       const evidence = getEvidenceText(e).toLowerCase();
@@ -116,7 +170,7 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
     .slice(0, 10)
     .map((e) => getEvidenceText(e).substring(0, 200));
 
-  // ── REST / API errors ────────────────────────────────────────────────────────
+  // REST / API errors
   const apiErrors = entries
     .filter((e) => {
       const evidence = getEvidenceText(e).toLowerCase();
@@ -141,12 +195,12 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
     return acc;
   }, {});
 
-  // ── Unique source modules ────────────────────────────────────────────────────
+  // Unique source modules
   const uniqueModules = [...new Set(
     entries.map((e) => e.source).filter(Boolean)
   )].slice(0, 30);
 
-  // ── Build context string — ordered: 5xx → 4xx → other errors → warnings ─────
+  // Build context string: error tiers first, warnings lower priority.
   const levelSummary = Object.entries(levelCounts)
     .map(([k, v]) => `${k}:${v}`)
     .join(' ');
@@ -171,14 +225,23 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
     parts.push(`INFERRED ISSUE TAGS:\n${issueLines.join('\n')}`);
   }
 
-  // HTTP 5xx — highest priority block
+  // HTTP 5xx: highest priority block
   if (http5xxLines.length > 0) {
-    parts.push(`HTTP 5XX SERVER ERRORS IN LOGS (${http5xxEntries.length} total — analyse first):\n${http5xxLines.join('\n')}`);
+    parts.push(`HTTP 5XX SERVER ERRORS IN LOGS (${http5xxEntries.length} total - analyse first):\n${http5xxLines.join('\n')}`);
   }
 
-  // HTTP 4xx — second priority block
+  // HTTP 4xx: second priority block
   if (http4xxLines.length > 0) {
     parts.push(`HTTP 4XX CLIENT ERRORS IN LOGS (${http4xxEntries.length} total):\n${http4xxLines.join('\n')}`);
+  }
+
+  if (corsLines.length > 0) {
+    parts.push(
+      `CORS / PREFLIGHT BLOCKING ERRORS (${corsEntries.length} total - analyse before warnings):\n${[
+        ...corsLines,
+        ...failedFetchLines,
+      ].join('\n')}`
+    );
   }
 
   // Remaining non-HTTP errors
@@ -187,7 +250,7 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
   }
 
   if (warnLines.length > 0) {
-    parts.push(`WARNINGS (${warnEntries.length} total, showing ${warnLines.length}):\n${warnLines.join('\n')}`);
+    parts.push(`WARNINGS (${regularWarnEntries.length} total, showing ${warnLines.length}):\n${warnLines.join('\n')}`);
   }
 
   if (chainFailures.length > 0) {
@@ -196,6 +259,12 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
 
   if (apiErrors.length > 0) {
     parts.push(`API / NETWORK ISSUES:\n${apiErrors.join('\n')}`);
+  }
+
+  if (lowPriorityWarnLines.length > 0) {
+    parts.push(
+      `LOW-PRIORITY WARNINGS (${lowPriorityWarnEntries.length} total, showing ${lowPriorityWarnLines.length} - do not outrank blocking errors):\n${lowPriorityWarnLines.join('\n')}`
+    );
   }
 
   if (repeatedMessages.length > 0) {
@@ -249,7 +318,7 @@ export function useConsoleLogInsights(
       const res = await fetch(`${backendUrlRef.current}/api/ai/insights`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ context }),
+        body: JSON.stringify({ context, sourceType: 'console' }),
         signal: controller.signal,
       });
 
