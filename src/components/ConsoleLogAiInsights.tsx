@@ -36,7 +36,7 @@ const ConsoleLogAiInsights: React.FC<Props> = ({
       variant="console"
       loadingMessage="OCA is analyzing your console log"
       loadingHint="This usually takes 15-30 seconds."
-      emptyDescription="Intelligent diagnostics for console errors, warnings, recurring patterns, and likely fixes in a calmer summary-first review."
+      emptyDescription="Intelligent diagnostics for console errors, warnings, recurring patterns, and suggested next steps in a calmer summary-first review."
       productsLabel="Detected products"
     />
   );

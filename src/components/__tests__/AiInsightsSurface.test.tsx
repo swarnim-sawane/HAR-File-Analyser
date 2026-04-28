@@ -42,6 +42,7 @@ const sampleInsights: InsightsResult = {
           why: 'Users cannot complete the login journey.',
           evidence: 'GET /login/error.jsp -> 500',
           fix: 'Trace the failing backend dependency and recover the redirect target.',
+          srGuidance: 'Collect access logs and diagnostic bundles for the operations team.',
         },
       ],
     },
@@ -190,4 +191,21 @@ describe('AiInsightsSurface icon clarity', () => {
       expect((healthGlyph as HTMLElement).classList.contains('ai-insights-health-icon-glyph--degraded')).toBe(expectsOpticalAlignmentHook);
     }
   );
+
+  it('labels actionable guidance as suggestions and ops handoff content', () => {
+    render(
+      <AiInsightsSurface
+        {...baseProps}
+        insights={sampleInsights}
+        isGenerating={false}
+        variant="har"
+        expanded={new Set(['critical_issues-0'])}
+      />
+    );
+
+    expect(screen.getByText('Suggestion')).toBeInTheDocument();
+    expect(screen.getByText('Operations Handoff')).toBeInTheDocument();
+    expect(screen.queryByText('Fix')).not.toBeInTheDocument();
+    expect(screen.queryByText('SR Data')).not.toBeInTheDocument();
+  });
 });

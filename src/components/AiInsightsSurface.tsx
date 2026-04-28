@@ -455,12 +455,12 @@ const AiInsightsSurface: React.FC<AiInsightsSurfaceProps> = ({
                                   <code className="ai-finding-evidence">{finding.evidence}</code>
                                 </div>
                                 <div className="ai-finding-detail-card is-wide tone-fix">
-                                  <span className="ai-finding-label">Fix</span>
+                                  <span className="ai-finding-label">Suggestion</span>
                                   <p className="ai-finding-value">{finding.fix}</p>
                                 </div>
                                 {finding.srGuidance && (
                                   <div className="ai-finding-detail-card is-wide tone-muted">
-                                    <span className="ai-finding-label">SR Data</span>
+                                    <span className="ai-finding-label">Operations Handoff</span>
                                     <p className="ai-finding-value">{finding.srGuidance}</p>
                                   </div>
                                 )}
