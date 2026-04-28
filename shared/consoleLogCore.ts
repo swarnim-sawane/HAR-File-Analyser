@@ -286,6 +286,25 @@ function determineSeverity(tags: ConsoleIssueTag[], textLower: string): ConsoleI
   return 'none';
 }
 
+export function resolveConsoleDisplayLevel(
+  level: SharedLogLevel,
+  inferredSeverity: ConsoleInferredSeverity,
+): SharedLogLevel {
+  if (inferredSeverity === 'error') {
+    return 'error';
+  }
+
+  if (
+    inferredSeverity === 'warning' &&
+    level !== 'error' &&
+    level !== 'warn'
+  ) {
+    return 'warn';
+  }
+
+  return level;
+}
+
 function findHttpIssueTag(text: string): ConsoleIssueTag | undefined {
   if (!HTTP_CONTEXT_PATTERN.test(text)) {
     return undefined;
@@ -359,6 +378,7 @@ export function classifyConsoleEvent<T extends CoreDraft>(
 
   return {
     ...entry,
+    level: resolveConsoleDisplayLevel(entry.level, inferredSeverity),
     rawText,
     inferredSeverity,
     issueTags,

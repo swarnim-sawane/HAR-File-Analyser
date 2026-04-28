@@ -1,10 +1,11 @@
 // src/utils/consoleLogAnalyzer.ts
 
 import { ConsoleLogEntry, ConsoleQuickFocus, LogLevel } from '../types/consolelog';
+import { getConsoleDisplayLevel } from './consoleLogSeverity';
 
 export class ConsoleLogAnalyzer {
   static filterByLevel(entries: ConsoleLogEntry[], levels: LogLevel[]): ConsoleLogEntry[] {
-    return entries.filter(entry => levels.includes(entry.level));
+    return entries.filter(entry => levels.includes(getConsoleDisplayLevel(entry)));
   }
 
   static filterByQuickFocus(entries: ConsoleLogEntry[], quickFocus: ConsoleQuickFocus): ConsoleLogEntry[] {
@@ -13,11 +14,11 @@ export class ConsoleLogAnalyzer {
     }
 
     if (quickFocus === 'errors') {
-      return entries.filter((entry) => entry.level === 'error' || entry.inferredSeverity === 'error');
+      return entries.filter((entry) => getConsoleDisplayLevel(entry) === 'error');
     }
 
     if (quickFocus === 'warnings') {
-      return entries.filter((entry) => entry.level === 'warn' || entry.inferredSeverity === 'warning');
+      return entries.filter((entry) => getConsoleDisplayLevel(entry) === 'warn');
     }
 
     return entries.filter((entry) => entry.issueTags.includes(quickFocus));
@@ -40,8 +41,9 @@ export class ConsoleLogAnalyzer {
     const grouped = new Map<LogLevel, ConsoleLogEntry[]>();
     
     entries.forEach(entry => {
-      const existing = grouped.get(entry.level) || [];
-      grouped.set(entry.level, [...existing, entry]);
+      const displayLevel = getConsoleDisplayLevel(entry);
+      const existing = grouped.get(displayLevel) || [];
+      grouped.set(displayLevel, [...existing, entry]);
     });
 
     return grouped;
@@ -74,7 +76,8 @@ export class ConsoleLogAnalyzer {
     let entriesWithStackTrace = 0;
 
     entries.forEach(entry => {
-      levelCounts[entry.level]++;
+      const displayLevel = getConsoleDisplayLevel(entry);
+      levelCounts[displayLevel]++;
       
       if (entry.source) {
         sourceCounts[entry.source] = (sourceCounts[entry.source] || 0) + 1;
@@ -118,7 +121,7 @@ export class ConsoleLogAnalyzer {
   }
 
   static getTopErrors(entries: ConsoleLogEntry[], limit: number = 10): Array<{ message: string; count: number }> {
-    const errorEntries = entries.filter(e => e.level === 'error');
+    const errorEntries = entries.filter(e => getConsoleDisplayLevel(e) === 'error');
     const messageCounts = new Map<string, number>();
 
     errorEntries.forEach(entry => {

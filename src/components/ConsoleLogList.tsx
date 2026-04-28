@@ -1,6 +1,7 @@
 import React, { useEffect, useId, useMemo, useState } from 'react';
 import { ConsoleLogEntry, ConsoleQuickFocus, LogLevel } from '../types/consolelog';
 import { formatDate } from '../utils/formatters';
+import { getConsoleDisplayLevel } from '../utils/consoleLogSeverity';
 
 interface ConsoleLogListProps {
   entries: ConsoleLogEntry[];
@@ -91,13 +92,12 @@ const ConsoleLogList: React.FC<ConsoleLogListProps> = ({
         }`
       : '';
     const urlText = entry.url ? `\nURL: ${entry.url}` : '';
-    const inferredText =
-      entry.inferredSeverity !== 'none' ? `\nInferred Severity: ${entry.inferredSeverity}` : '';
     const issueTagsText =
       entry.issueTags.length > 0 ? `\nIssue Tags: ${entry.issueTags.join(', ')}` : '';
     const rawText = entry.rawText?.trim() ? `\n\nRaw Event:\n${entry.rawText}` : '';
+    const displayLevel = getConsoleDisplayLevel(entry);
 
-    return `[${entry.level.toUpperCase()}] ${formatDate(entry.timestamp)}${sourceText}${urlText}${inferredText}${issueTagsText}\n\nMessage:\n${entry.message}${rawText}`;
+    return `[${displayLevel.toUpperCase()}] ${formatDate(entry.timestamp)}${sourceText}${urlText}${issueTagsText}\n\nMessage:\n${entry.message}${rawText}`;
   };
 
   const handleCopyEvent = async (entry: ConsoleLogEntry, event: React.MouseEvent) => {
@@ -147,14 +147,7 @@ const ConsoleLogList: React.FC<ConsoleLogListProps> = ({
       verbose: 1,
     };
 
-    const basePriority = priorities[entry.level] || 0;
-    if (entry.inferredSeverity === 'error') {
-      return Math.max(basePriority, 5);
-    }
-    if (entry.inferredSeverity === 'warning') {
-      return Math.max(basePriority, 4);
-    }
-    return basePriority;
+    return priorities[getConsoleDisplayLevel(entry)] || 0;
   };
 
   const sortEntries = (items: ConsoleLogEntry[]) =>
@@ -176,22 +169,17 @@ const ConsoleLogList: React.FC<ConsoleLogListProps> = ({
   const sortedEntries = useMemo(() => sortEntries(entries), [entries, sortDirection, sortField]);
 
   const overlayErrorCount = entries.filter(
-    (entry) => entry.level === 'error' || entry.inferredSeverity === 'error',
+    (entry) => getConsoleDisplayLevel(entry) === 'error',
   ).length;
   const overlayWarningCount = entries.filter(
-    (entry) =>
-      (entry.level === 'warn' || entry.inferredSeverity === 'warning') &&
-      entry.inferredSeverity !== 'error',
+    (entry) => getConsoleDisplayLevel(entry) === 'warn',
   ).length;
 
   const quickFocusCounts = useMemo(() => {
     return {
       all: entries.length,
-      errors: entries.filter((entry) => entry.level === 'error' || entry.inferredSeverity === 'error')
-        .length,
-      warnings: entries.filter(
-        (entry) => entry.level === 'warn' || entry.inferredSeverity === 'warning',
-      ).length,
+      errors: entries.filter((entry) => getConsoleDisplayLevel(entry) === 'error').length,
+      warnings: entries.filter((entry) => getConsoleDisplayLevel(entry) === 'warn').length,
       cors: entries.filter((entry) => entry.issueTags.includes('cors')).length,
       network: entries.filter((entry) => entry.issueTags.includes('network')).length,
       exception: entries.filter((entry) => entry.issueTags.includes('exception')).length,
@@ -240,6 +228,7 @@ const ConsoleLogList: React.FC<ConsoleLogListProps> = ({
       selectedEntry?.id === entry.id || (selectedEntry?.index !== undefined && selectedEntry.index === entry.index);
     const isChecked = selectedIds.has(entry.id);
     const sourceLabel = entry.source ? entry.source.split('/').pop() || entry.source : null;
+    const displayLevel = getConsoleDisplayLevel(entry);
 
     return (
       <div
@@ -268,14 +257,9 @@ const ConsoleLogList: React.FC<ConsoleLogListProps> = ({
 
         <div className="log-level-cell">
           <div className="console-level-stack">
-            <span className={`status-badge ${getLevelBadgeClass(entry.level)}`}>
-              {entry.level.toUpperCase()}
+            <span className={`status-badge ${getLevelBadgeClass(displayLevel)}`}>
+              {displayLevel.toUpperCase()}
             </span>
-            {entry.inferredSeverity !== 'none' && (
-              <span className={`console-inferred-pill ${entry.inferredSeverity}`}>
-                {entry.inferredSeverity === 'error' ? 'Error' : 'Warning'}
-              </span>
-            )}
           </div>
         </div>
 
@@ -329,12 +313,10 @@ const ConsoleLogList: React.FC<ConsoleLogListProps> = ({
     return Array.from(groupedEntries.entries()).map(([groupKey, groupEntries]) => {
       const sortedGroupEntries = sortEntries(groupEntries);
       const groupErrorCount = sortedGroupEntries.filter(
-        (entry) => entry.level === 'error' || entry.inferredSeverity === 'error',
+        (entry) => getConsoleDisplayLevel(entry) === 'error',
       ).length;
       const groupWarningCount = sortedGroupEntries.filter(
-        (entry) =>
-          (entry.level === 'warn' || entry.inferredSeverity === 'warning') &&
-          entry.inferredSeverity !== 'error',
+        (entry) => getConsoleDisplayLevel(entry) === 'warn',
       ).length;
 
       return (

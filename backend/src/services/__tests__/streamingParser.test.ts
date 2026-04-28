@@ -124,6 +124,21 @@ describe('streamParseConsoleLog', () => {
     expect(collected[0].message).toBe('random log text here');
   });
 
+  it('promotes CORS policy blocks to error entries', async () => {
+    const line =
+      "webapp/:1 Access to fetch at 'https://api.example.com/ords/test' from origin 'https://app.example.com' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.";
+    const path = writeTempFile(line, '.log');
+    const collected: any[] = [];
+
+    await streamParseConsoleLog(path, async (entry) => { collected.push(entry); });
+
+    expect(collected).toHaveLength(1);
+    expect(collected[0].level).toBe('error');
+    expect(collected[0].inferredSeverity).toBe('error');
+    expect(collected[0].issueTags).toEqual(expect.arrayContaining(['cors', 'network']));
+    expect(collected[0].primaryIssue).toBe('cors');
+  });
+
   it('throws on a non-existent file path', async () => {
     await expect(
       streamParseConsoleLog('/tmp/does-not-exist-xyz-abc.log', async () => {})

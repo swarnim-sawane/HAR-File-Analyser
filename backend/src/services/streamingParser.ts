@@ -24,7 +24,27 @@ export interface ParsedLogEntry {
   message: string;
   source?: string;
   stackTrace?: string;
+  rawText?: string;
+  inferredSeverity?: 'none' | 'warning' | 'error';
+  issueTags?: string[];
+  primaryIssue?: string;
 }
+
+const CORS_PATTERN =
+  /\b(cors policy|blocked by cors policy|cross-origin request blocked|access-control-allow-origin|preflight request)\b/i;
+const NETWORK_ERROR_PATTERN =
+  /\b(failed to fetch|network ?error|net::err_|request failed|load failed|connection (?:refused|reset|timed out)|preflight request|err_connection|err_failed)\b/i;
+const BROWSER_POLICY_PATTERN =
+  /\b(autofocus processing was blocked|permissions policy|feature policy|document already has a focused element|refused to (?:load|apply|execute|frame)|content security policy)\b/i;
+const EXCEPTION_PATTERN =
+  /\b(TypeError|ReferenceError|SyntaxError|RangeError|URIError|EvalError|AggregateError|DOMException|SecurityError|NetworkError|cannot read (?:properties|property) of undefined|is not defined|undefined is not|uncaught)\b/i;
+const PROMISE_PATTERN =
+  /\b(uncaught \(in promise\)|unhandled(?: promise)? rejection|unhandled promise|promise rejection)\b/i;
+const REACT_PATTERN =
+  /\b(react|react-dom|encountered two children with the same key|each child in a list should have a unique "key"|cannot update a component while rendering)\b/i;
+const HTTP_STATUS_PATTERN = /\b([45]\d{2})\b/g;
+const HTTP_CONTEXT_PATTERN =
+  /\b(http|status|response|request|fetch|xhr|resource|load resource|preflight|get|post|put|patch|delete|options)\b/i;
 
 /**
  * Stream parse HAR file without loading entire file into memory
@@ -160,14 +180,15 @@ function parseLogLine(line: string, index: number): ParsedLogEntry | null {
         
         // ✅ Validate that it's actually a log object
         if (typeof json === 'object' && json !== null) {
-          return {
+          return classifyParsedLogEntry({
             index,
             timestamp: json.timestamp || json.time || json.date || new Date().toISOString(),
             level: (json.level || json.severity || json.type || 'info').toString().toLowerCase(),
             message: json.message || json.msg || json.text || JSON.stringify(json),
             source: json.source || json.logger || json.name || 'console',
-            stackTrace: json.stack || json.stackTrace || json.error?.stack
-          };
+            stackTrace: json.stack || json.stackTrace || json.error?.stack,
+            rawText: line
+          });
         }
       } catch (jsonError) {
         // ✅ FIXED: If JSON parse fails, fall through to regex patterns
@@ -192,41 +213,114 @@ function parseLogLine(line: string, index: number): ParsedLogEntry | null {
       if (match) {
         if (match.length === 4) {
           // Pattern with timestamp and level
-          return {
+          return classifyParsedLogEntry({
             index,
             timestamp: match[1].trim(),
             level: match[2].toLowerCase(),
             message: match[3].trim(),
-            source: 'console'
-          };
+            source: 'console',
+            rawText: line
+          });
         } else if (match.length === 3) {
           // Pattern without timestamp
-          return {
+          return classifyParsedLogEntry({
             index,
             timestamp: new Date().toISOString(),
             level: match[1].toLowerCase(),
             message: match[2].trim(),
-            source: 'console'
-          };
+            source: 'console',
+            rawText: line
+          });
         }
       }
     }
     
     // ✅ FIXED: Fallback - treat entire line as info message
     // This ensures all lines are captured, even if format is unknown
-    return {
+    return classifyParsedLogEntry({
       index,
       timestamp: new Date().toISOString(),
       level: 'info',
       message: trimmedLine,
-      source: 'console'
-    };
+      source: 'console',
+      rawText: line
+    });
     
   } catch (error) {
     // ✅ FIXED: Return null instead of throwing - let caller decide what to do
     console.warn(`Error parsing log line ${index}:`, error);
     return null;
   }
+}
+
+function classifyParsedLogEntry(entry: ParsedLogEntry): ParsedLogEntry {
+  const rawText = entry.rawText || entry.message;
+  const text = `${entry.message}\n${rawText}\n${entry.stackTrace || ''}`;
+  const tags = new Set<string>();
+
+  if (CORS_PATTERN.test(text)) {
+    tags.add('cors');
+    tags.add('network');
+  }
+  if (NETWORK_ERROR_PATTERN.test(text)) tags.add('network');
+  if (BROWSER_POLICY_PATTERN.test(text)) tags.add('browser-policy');
+  if (EXCEPTION_PATTERN.test(text)) tags.add('exception');
+  if (PROMISE_PATTERN.test(text)) tags.add('promise');
+  if (REACT_PATTERN.test(text)) tags.add('react');
+
+  if (HTTP_CONTEXT_PATTERN.test(text)) {
+    const codes = Array.from(text.matchAll(HTTP_STATUS_PATTERN))
+      .map((match) => Number.parseInt(match[1], 10))
+      .filter((code) => Number.isFinite(code));
+
+    if (codes.some((code) => code >= 500)) tags.add('http-5xx');
+    else if (codes.some((code) => code >= 400)) tags.add('http-4xx');
+  }
+
+  const issueTags = Array.from(tags);
+  const inferredSeverity = getInferredSeverity(issueTags, text);
+
+  return {
+    ...entry,
+    level: resolveDisplayLevel(entry.level, inferredSeverity),
+    rawText,
+    inferredSeverity,
+    issueTags,
+    primaryIssue: getPrimaryIssue(issueTags),
+  };
+}
+
+function getInferredSeverity(issueTags: string[], text: string): 'none' | 'warning' | 'error' {
+  if (
+    issueTags.includes('cors') ||
+    issueTags.includes('exception') ||
+    issueTags.includes('promise') ||
+    issueTags.includes('http-5xx') ||
+    (issueTags.includes('network') && NETWORK_ERROR_PATTERN.test(text))
+  ) {
+    return 'error';
+  }
+
+  if (
+    issueTags.includes('browser-policy') ||
+    issueTags.includes('react') ||
+    issueTags.includes('http-4xx')
+  ) {
+    return 'warning';
+  }
+
+  return 'none';
+}
+
+function resolveDisplayLevel(level: string, inferredSeverity: 'none' | 'warning' | 'error'): string {
+  if (inferredSeverity === 'error') return 'error';
+  if (inferredSeverity === 'warning' && level !== 'error' && level !== 'warn') return 'warn';
+  return level;
+}
+
+function getPrimaryIssue(issueTags: string[]): string | undefined {
+  return ['cors', 'http-5xx', 'promise', 'exception', 'network', 'http-4xx', 'react', 'browser-policy']
+    .find((tag) => issueTags.includes(tag));
 }
 
 /**

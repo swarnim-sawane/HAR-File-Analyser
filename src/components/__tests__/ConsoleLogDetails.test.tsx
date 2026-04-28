@@ -24,8 +24,8 @@ describe('ConsoleLogDetails', () => {
       />,
     );
 
-    expect(screen.getByText(/inferred severity:/i)).toBeInTheDocument();
-    expect(screen.getByText('Error')).toBeInTheDocument();
+    expect(screen.getByText('ERROR')).toBeInTheDocument();
+    expect(screen.queryByText(/inferred severity:/i)).not.toBeInTheDocument();
     expect(screen.getByText('CORS')).toBeInTheDocument();
     expect(screen.getByText('Network')).toBeInTheDocument();
   });

@@ -23,7 +23,7 @@ describe('ConsoleLogParser', () => {
       expect(entry.issueTags).toContain('exception');
     });
 
-    it('marks a CORS-blocked fetch as inferred error while keeping the raw level', () => {
+    it('promotes a CORS-blocked fetch to an error level', () => {
       const parsed = ConsoleLogParser.parsePlainText(
         [
           "webapp/:1 Access to fetch at 'https://api.example.com/ords/test' from origin 'https://app.example.com' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
@@ -34,7 +34,7 @@ describe('ConsoleLogParser', () => {
       expect(parsed.entries).toHaveLength(1);
 
       const entry = parsed.entries[0] as any;
-      expect(entry.level).toBe('log');
+      expect(entry.level).toBe('error');
       expect(entry.inferredSeverity).toBe('error');
       expect(entry.issueTags).toEqual(expect.arrayContaining(['cors', 'network']));
       expect(entry.primaryIssue).toBe('cors');
@@ -49,7 +49,7 @@ describe('ConsoleLogParser', () => {
       );
 
       const entry = parsed.entries[0] as any;
-      expect(entry.level).toBe('log');
+      expect(entry.level).toBe('warn');
       expect(entry.inferredSeverity).toBe('warning');
       expect(entry.issueTags).toContain('browser-policy');
     });

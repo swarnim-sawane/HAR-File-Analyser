@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { ConsoleLogEntry } from '../types/consolelog';
 import { formatDate } from '../utils/formatters';
+import { getConsoleDisplayLevel } from '../utils/consoleLogSeverity';
 
 interface ConsoleLogDetailsProps {
   entry: ConsoleLogEntry;
@@ -26,7 +27,8 @@ function buildFullEventText(entry: ConsoleLogEntry): string {
     return entry.rawText;
   }
 
-  const lines = [`[${entry.level.toUpperCase()}] ${formatDate(entry.timestamp)}`];
+  const displayLevel = getConsoleDisplayLevel(entry);
+  const lines = [`[${displayLevel.toUpperCase()}] ${formatDate(entry.timestamp)}`];
 
   if (entry.source) {
     lines.push(
@@ -65,6 +67,7 @@ const ConsoleLogDetails: React.FC<ConsoleLogDetailsProps> = ({ entry, onClose, i
   const [copiedSection, setCopiedSection] = useState<string | null>(null);
 
   const fullEventText = useMemo(() => buildFullEventText(entry), [entry]);
+  const displayLevel = getConsoleDisplayLevel(entry);
 
   const getLevelColor = (level: string): string => {
     const colors: Record<string, string> = {
@@ -153,22 +156,11 @@ const ConsoleLogDetails: React.FC<ConsoleLogDetailsProps> = ({ entry, onClose, i
               <span
                 className="level-badge-glow"
                 style={{
-                  backgroundColor: getLevelColor(entry.level),
-                  boxShadow: `0 0 12px ${getLevelColor(entry.level)}40, 0 2px 4px ${getLevelColor(entry.level)}30`,
+                  backgroundColor: getLevelColor(displayLevel),
+                  boxShadow: `0 0 12px ${getLevelColor(displayLevel)}40, 0 2px 4px ${getLevelColor(displayLevel)}30`,
                 }}
               >
-                {entry.level.toUpperCase()}
-              </span>
-            </div>
-
-            <div className="detail-row">
-              <span className="detail-label">Inferred Severity:</span>
-              <span className={`console-inferred-pill ${entry.inferredSeverity}`}>
-                {entry.inferredSeverity === 'error'
-                  ? 'Error'
-                  : entry.inferredSeverity === 'warning'
-                    ? 'Warning'
-                    : 'None'}
+                {displayLevel.toUpperCase()}
               </span>
             </div>
 

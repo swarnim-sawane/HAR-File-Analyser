@@ -1,7 +1,8 @@
 // src/hooks/useConsoleLogInsights.ts
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ConsoleLogFile } from '../types/consolelog';
+import { ConsoleLogEntry, ConsoleLogFile } from '../types/consolelog';
 import { InsightFinding, InsightHealth, InsightSection, InsightsResult } from './useInsights';
+import { getConsoleDisplayLevel } from '../utils/consoleLogSeverity';
 
 export type { InsightFinding, InsightHealth, InsightSection, InsightsResult };
 
@@ -49,7 +50,8 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
   // Level counts
   const levelCounts: Record<string, number> = {};
   for (const e of entries) {
-    levelCounts[e.level] = (levelCounts[e.level] || 0) + 1;
+    const level = getConsoleDisplayLevel(e);
+    levelCounts[level] = (levelCounts[level] || 0) + 1;
   }
 
   // Source module frequency
@@ -65,7 +67,10 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
   // HTTP status extraction from log messages (5xx -> 4xx priority)
   // Many Oracle products log HTTP status codes inside error/warn messages.
   // We surface these explicitly so the AI analyses server-side failures first.
-  const errorAndWarnEntries = entries.filter((e) => e.level === 'error' || e.level === 'warn');
+  const errorAndWarnEntries = entries.filter((e) => {
+    const level = getConsoleDisplayLevel(e);
+    return level === 'error' || level === 'warn';
+  });
 
   const http5xxEntries = errorAndWarnEntries.filter((e) => {
     const match = HTTP_STATUS_RE.exec(getEvidenceText(e));
@@ -80,7 +85,7 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
   });
 
   // All errors: non-HTTP errors last (after HTTP-status-bearing ones)
-  const errorEntries = entries.filter((e) => e.level === 'error');
+  const errorEntries = entries.filter((e) => getConsoleDisplayLevel(e) === 'error');
   // Entries that don't already appear in the 5xx/4xx buckets
   const http5xxSet = new Set(http5xxEntries.map((e) => getEvidenceText(e)));
   const http4xxSet = new Set(http4xxEntries.map((e) => getEvidenceText(e)));
@@ -89,19 +94,15 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
   );
 
   const formatError = (
-    e: {
-      level: string;
-      source?: string;
-      message: string;
-      rawText?: string;
-      stackTrace?: string;
-      issueTags: string[];
-    },
+    e: Pick<
+      ConsoleLogEntry,
+      'level' | 'source' | 'message' | 'rawText' | 'stackTrace' | 'issueTags' | 'inferredSeverity'
+    >,
   ) => {
     const src = e.source ? ` [${e.source}]` : '';
     const issueTags = e.issueTags.length > 0 ? ` [${e.issueTags.join(', ')}]` : '';
     const evidence = getEvidenceText(e).substring(0, 320);
-    return `${e.level.toUpperCase()}${src}${issueTags}: ${e.message}\n  Evidence: ${evidence}`;
+    return `${getConsoleDisplayLevel(e).toUpperCase()}${src}${issueTags}: ${e.message}\n  Evidence: ${evidence}`;
   };
 
   const http5xxLines = http5xxEntries.slice(0, 10).map(formatError);
@@ -131,7 +132,7 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
   });
 
   // Warnings (up to 30)
-  const warnEntries = entries.filter((e) => e.level === 'warn');
+  const warnEntries = entries.filter((e) => getConsoleDisplayLevel(e) === 'warn');
   const lowPriorityWarnEntries = hasCorsBlocker
     ? warnEntries.filter((e) => LOW_PRIORITY_WARNING_RE.test(getEvidenceText(e)))
     : [];
@@ -165,7 +166,7 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
   const chainFailures = entries
     .filter((e) => {
       const evidence = getEvidenceText(e).toLowerCase();
-      return e.level === 'error' && evidence.includes('chain') && evidence.includes('fail');
+      return getConsoleDisplayLevel(e) === 'error' && evidence.includes('chain') && evidence.includes('fail');
     })
     .slice(0, 10)
     .map((e) => getEvidenceText(e).substring(0, 200));
@@ -175,7 +176,7 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
     .filter((e) => {
       const evidence = getEvidenceText(e).toLowerCase();
       return (
-        (e.level === 'error' || e.level === 'warn' || e.issueTags.includes('cors') || e.issueTags.includes('network')) &&
+        (getConsoleDisplayLevel(e) === 'error' || getConsoleDisplayLevel(e) === 'warn' || e.issueTags.includes('cors') || e.issueTags.includes('network')) &&
         (evidence.includes('fetch') ||
           evidence.includes('rest') ||
           evidence.includes('json') ||
@@ -186,7 +187,7 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
       );
     })
     .slice(0, 15)
-    .map((e) => `[${e.level.toUpperCase()}] ${getEvidenceText(e).substring(0, 240)}`);
+    .map((e) => `[${getConsoleDisplayLevel(e).toUpperCase()}] ${getEvidenceText(e).substring(0, 240)}`);
 
   const issueSummary = entries.reduce<Record<string, number>>((acc, entry) => {
     entry.issueTags.forEach((tag) => {

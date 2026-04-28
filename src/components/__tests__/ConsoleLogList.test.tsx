@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import ConsoleLogList from '../ConsoleLogList';
 
 describe('ConsoleLogList', () => {
-  it('renders the legacy request-list structure while keeping quick focus and inferred severity badges', async () => {
+  it('renders quick focus controls while promoting inferred failures to primary levels', async () => {
     const user = userEvent.setup();
     const onQuickFocusChange = vi.fn();
 
@@ -61,8 +61,9 @@ describe('ConsoleLogList', () => {
 
     const corsRow = screen.getByText(/blocked by cors policy/i).closest('.request-item');
     expect(corsRow).toHaveAttribute('data-inferred-severity', 'error');
-    expect(within(corsRow as HTMLElement).getByText('LOG')).toBeInTheDocument();
-    expect(within(corsRow as HTMLElement).getByText('Error')).toBeInTheDocument();
+    expect(within(corsRow as HTMLElement).getByText('ERROR')).toBeInTheDocument();
+    expect(within(corsRow as HTMLElement).queryByText('LOG')).not.toBeInTheDocument();
+    expect(within(corsRow as HTMLElement).queryByText('Error')).not.toBeInTheDocument();
     expect(within(corsRow as HTMLElement).getByText('CORS')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /^cors$/i }));
