@@ -146,7 +146,7 @@ function summarizeSection(findings: InsightFinding[]) {
 }
 
 function getSourceTitle(variant: 'har' | 'console') {
-  return variant === 'har' ? 'Oracle-aware session review' : 'Console log review';
+  return variant === 'har' ? 'Oracle-aware triage summary' : 'Console log triage summary';
 }
 
 function getSourceKicker(variant: 'har' | 'console') {
@@ -317,7 +317,7 @@ const AiInsightsSurface: React.FC<AiInsightsSurfaceProps> = ({
 
             <section className="ai-insights-rail-card ai-insights-rail-card-summary">
               <div className="ai-insights-rail-head is-compact">
-                <strong>Executive summary</strong>
+                <strong>Triage summary</strong>
                 <span>Top signals</span>
               </div>
               <div className="ai-insights-rail-metrics">
@@ -455,12 +455,12 @@ const AiInsightsSurface: React.FC<AiInsightsSurfaceProps> = ({
                                   <code className="ai-finding-evidence">{finding.evidence}</code>
                                 </div>
                                 <div className="ai-finding-detail-card is-wide tone-fix">
-                                  <span className="ai-finding-label">Fix</span>
+                                  <span className="ai-finding-label">Suggestion</span>
                                   <p className="ai-finding-value">{finding.fix}</p>
                                 </div>
                                 {finding.srGuidance && (
                                   <div className="ai-finding-detail-card is-wide tone-muted">
-                                    <span className="ai-finding-label">SR Data</span>
+                                    <span className="ai-finding-label">Operations</span>
                                     <p className="ai-finding-value">{finding.srGuidance}</p>
                                   </div>
                                 )}

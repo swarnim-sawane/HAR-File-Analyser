@@ -106,6 +106,8 @@ describe('AiInsightsSurface icon clarity', () => {
 
     expect(screen.getAllByText('AI HAR Review')).toHaveLength(2);
     expect(screen.getByText(/using oca gpt-5\.4/i)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /oracle-aware triage summary/i })).toBeInTheDocument();
+    expect(screen.getByText(sampleInsights.summary)).toBeInTheDocument();
 
     const railKicker = container.querySelector('.ai-insights-rail-kicker');
     const heroKicker = container.querySelector('.ai-insights-kicker');
@@ -124,6 +126,36 @@ describe('AiInsightsSurface icon clarity', () => {
     expect(within(recommendationsSection as HTMLElement).getByTestId('RouteIcon')).toBeInTheDocument();
     expect(within(regenerateButton).getByTestId('RefreshIcon')).toBeInTheDocument();
     expect(screen.queryByTestId('SparklesIcon')).not.toBeInTheDocument();
+  });
+
+  it('labels actionable and operations guidance without implementation jargon', () => {
+    render(
+      <AiInsightsSurface
+        {...baseProps}
+        insights={{
+          ...sampleInsights,
+          sections: [
+            {
+              ...sampleInsights.sections[0],
+              findings: [
+                {
+                  ...sampleInsights.sections[0].findings[0],
+                  srGuidance: 'Collect the ORDS access log and WebLogic diagnostic log for the failing request.',
+                },
+              ],
+            },
+          ],
+        }}
+        isGenerating={false}
+        variant="har"
+        expanded={new Set(['critical_issues-0'])}
+      />
+    );
+
+    expect(screen.getByText('Suggestion')).toBeInTheDocument();
+    expect(screen.getByText('Operations')).toBeInTheDocument();
+    expect(screen.queryByText('Fix')).not.toBeInTheDocument();
+    expect(screen.queryByText('SR Data')).not.toBeInTheDocument();
   });
 
   it('uses the console source icon and updated review label while loading', () => {

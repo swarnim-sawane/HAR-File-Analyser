@@ -1,6 +1,6 @@
 // src/hooks/useInsights.ts
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { HarFile } from '../types/har';
+import { Entry, HarFile, Header } from '../types/har';
 
 export type InsightSeverity = 'critical' | 'high' | 'medium' | 'low';
 export type InsightHealth = 'critical' | 'degraded' | 'warning' | 'healthy';
@@ -39,6 +39,382 @@ interface UseInsightsReturn {
 }
 
 const insightsCache = new Map<string, InsightsResult>();
+
+const TRIAGE_CONTEXT_LIMIT = 4000;
+const TRIAGE_SNIPPET_LIMIT = 240;
+const STATIC_ASSET_PATTERN = /\.(?:avif|bmp|css|gif|ico|jpe?g|js|map|mjs|mp4|otf|png|svg|ttf|webp|woff2?)(?:$|[?#])/i;
+
+function uniqueNonEmpty(values: Array<string | undefined | null>): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(trimmed);
+  }
+
+  return unique;
+}
+
+function getUrl(value: string): URL | null {
+  try {
+    return new URL(value);
+  } catch {
+    return null;
+  }
+}
+
+function endpointFromUrl(value: string): string {
+  const url = getUrl(value);
+  if (url) return `${url.hostname}${url.pathname}`;
+  return value.split(/[?#]/)[0] || value;
+}
+
+function requestKey(entry: Entry): string {
+  return `${entry.request.method.toUpperCase()} ${endpointFromUrl(entry.request.url)}`;
+}
+
+function startedAt(entry: Entry): number {
+  const parsed = new Date(entry.startedDateTime).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getHeader(headers: Header[] | undefined, name: string): string {
+  const lower = name.toLowerCase();
+  return headers?.find((header) => header.name.toLowerCase() === lower)?.value?.trim() ?? '';
+}
+
+function getRequestHeader(entry: Entry, name: string): string {
+  return getHeader(entry.request.headers, name);
+}
+
+function getResponseHeader(entry: Entry, name: string): string {
+  return getHeader(entry.response.headers, name);
+}
+
+function presence(value: string): 'present' | 'missing' {
+  return value ? 'present' : 'missing';
+}
+
+function authorizationPresence(entry: Entry): 'present' | 'missing' {
+  return presence(getRequestHeader(entry, 'authorization'));
+}
+
+function authorizationScheme(entry: Entry): string {
+  const authorization = getRequestHeader(entry, 'authorization');
+  if (!authorization) return 'none';
+  const [scheme] = authorization.split(/\s+/);
+  return /^[a-z][a-z0-9._-]{1,24}$/i.test(scheme) ? scheme : 'present';
+}
+
+function cookieNamesFromHeader(value: string): string[] {
+  if (!value) return [];
+
+  return uniqueNonEmpty(
+    value
+      .split(';')
+      .map((part) => part.trim().split('=')[0])
+  );
+}
+
+function requestCookieNames(entry: Entry): string[] {
+  return uniqueNonEmpty([
+    ...(entry.request.cookies ?? []).map((cookie) => cookie.name),
+    ...cookieNamesFromHeader(getRequestHeader(entry, 'cookie')),
+  ]);
+}
+
+function formatNameList(names: string[]): string {
+  return names.length > 0 ? names.join(',') : 'none';
+}
+
+function queryParamNames(entry: Entry): string[] {
+  const url = getUrl(entry.request.url);
+  const urlParams = url ? Array.from(url.searchParams.keys()) : [];
+  return uniqueNonEmpty([
+    ...(entry.request.queryString ?? []).map((param) => param.name),
+    ...urlParams,
+  ]);
+}
+
+function contentTypeFrom(value: string): string {
+  return value.split(';')[0]?.trim().toLowerCase() ?? '';
+}
+
+function requestContentType(entry: Entry): string {
+  return contentTypeFrom(getRequestHeader(entry, 'content-type') || entry.request.postData?.mimeType || '');
+}
+
+function responseContentType(entry: Entry): string {
+  return contentTypeFrom(getResponseHeader(entry, 'content-type') || entry.response.content?.mimeType || '');
+}
+
+function redactSensitiveText(value: string, limit = TRIAGE_SNIPPET_LIMIT): string {
+  let redacted = value
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/(Bearer\s+)(?!error=)[A-Za-z0-9._~+/=-]{12,}/gi, '$1[redacted]')
+    .replace(/("(?:access_token|refresh_token|id_token|password|passwd|secret|api[_-]?key|session|session_id)"\s*:\s*)"[^"]*"/gi, '$1"[redacted]"')
+    .replace(/\b((?:access_token|refresh_token|id_token|password|passwd|secret|api[_-]?key|session|sessionid)=)[^&\s,;]+/gi, '$1[redacted]');
+
+  if (redacted.length > limit) {
+    redacted = `${redacted.slice(0, limit)}...[truncated]`;
+  }
+
+  return redacted;
+}
+
+function responseSnippet(entry: Entry): string {
+  const text = entry.response.content?.text;
+  if (!text || typeof text !== 'string') return '';
+
+  const mime = entry.response.content?.mimeType?.toLowerCase() ?? responseContentType(entry);
+  const isTextLike =
+    mime.includes('json') ||
+    mime.includes('text') ||
+    mime.includes('xml') ||
+    mime.includes('html') ||
+    mime.includes('javascript');
+
+  if (entry.response.content?.encoding === 'base64' && !isTextLike) return '';
+  return redactSensitiveText(text);
+}
+
+function postBodyFieldNames(entry: Entry): string[] {
+  const postData = entry.request.postData;
+  if (!postData) return [];
+
+  if (postData.params?.length) {
+    return uniqueNonEmpty(postData.params.map((param) => param.name));
+  }
+
+  const text = postData.text?.trim();
+  if (!text) return [];
+
+  const contentType = requestContentType(entry) || contentTypeFrom(postData.mimeType);
+  if (contentType.includes('json')) {
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return uniqueNonEmpty(Object.keys(parsed));
+      }
+    } catch {
+      return [];
+    }
+  }
+
+  if (contentType.includes('x-www-form-urlencoded')) {
+    try {
+      return uniqueNonEmpty(Array.from(new URLSearchParams(text).keys()));
+    } catch {
+      return [];
+    }
+  }
+
+  return [];
+}
+
+function triageEntryLine(entry: Entry): string {
+  const wait = entry.timings?.wait ?? 0;
+  return `${entry.request.method.toUpperCase()} ${endpointFromUrl(entry.request.url)} status=${entry.response.status} totalms=${entry.time.toFixed(0)} wait=${wait.toFixed(0)}ms`;
+}
+
+function isStaticAsset(entry: Entry): boolean {
+  const url = getUrl(entry.request.url);
+  const path = url?.pathname ?? entry.request.url;
+  const mime = entry.response.content?.mimeType?.toLowerCase() ?? '';
+
+  return (
+    STATIC_ASSET_PATTERN.test(path) ||
+    mime.startsWith('image/') ||
+    mime.startsWith('font/') ||
+    mime.includes('javascript') ||
+    mime.includes('css')
+  );
+}
+
+function findPriorSuccess(entries: Entry[], failure: Entry): Entry | null {
+  const failureKey = requestKey(failure);
+  const failureStart = startedAt(failure);
+
+  return [...entries]
+    .filter((entry) =>
+      requestKey(entry) === failureKey &&
+      startedAt(entry) <= failureStart &&
+      entry.response.status >= 200 &&
+      entry.response.status < 400
+    )
+    .sort((a, b) => startedAt(b) - startedAt(a))[0] ?? null;
+}
+
+function successFailureDelta(success: Entry, failure: Entry): string {
+  const deltas: string[] = [];
+
+  const successAuth = authorizationPresence(success);
+  const failureAuth = authorizationPresence(failure);
+  if (successAuth !== failureAuth) {
+    deltas.push(`authorization:${successAuth}->${failureAuth}`);
+  }
+
+  const successCookies = formatNameList(requestCookieNames(success));
+  const failureCookies = formatNameList(requestCookieNames(failure));
+  if (successCookies !== failureCookies) {
+    deltas.push(`cookie_names:${successCookies}->${failureCookies}`);
+  }
+
+  const successContentType = requestContentType(success) || 'none';
+  const failureContentType = requestContentType(failure) || 'none';
+  if (successContentType !== failureContentType && (successContentType !== 'none' || failureContentType !== 'none')) {
+    deltas.push(`request_content_type:${successContentType}->${failureContentType}`);
+  }
+
+  return deltas.join(' ');
+}
+
+function safeLocationHeaderValue(value: string): string {
+  const trimmed = value.trim();
+  const absoluteUrl = getUrl(trimmed);
+
+  if (absoluteUrl) {
+    const queryNames = uniqueNonEmpty(Array.from(absoluteUrl.searchParams.keys()));
+    return [
+      `${absoluteUrl.hostname}${absoluteUrl.pathname}`,
+      queryNames.length ? `query_params=${queryNames.join(',')}` : null,
+    ].filter(Boolean).join(' ');
+  }
+
+  try {
+    const relativeUrl = new URL(trimmed, 'https://har.local');
+    const queryNames = uniqueNonEmpty(Array.from(relativeUrl.searchParams.keys()));
+    const safePath = trimmed.startsWith('/') ? relativeUrl.pathname : trimmed.split(/[?#]/)[0];
+    return [
+      safePath || '/',
+      queryNames.length ? `query_params=${queryNames.join(',')}` : null,
+    ].filter(Boolean).join(' ');
+  } catch {
+    return redactSensitiveText(trimmed.split(/[?#]/)[0], 180);
+  }
+}
+
+function safeResponseHeaderValue(name: string, value: string): string {
+  if (name.toLowerCase() === 'location') return safeLocationHeaderValue(value);
+  return redactSensitiveText(value, 180);
+}
+
+function responseHeaderEvidence(entry: Entry): string[] {
+  return [
+    ['WWW-Authenticate', getResponseHeader(entry, 'www-authenticate')],
+    ['Content-Type', getResponseHeader(entry, 'content-type')],
+    ['Location', getResponseHeader(entry, 'location')],
+    ['Access-Control-Allow-Origin', getResponseHeader(entry, 'access-control-allow-origin')],
+    ['Access-Control-Allow-Credentials', getResponseHeader(entry, 'access-control-allow-credentials')],
+  ]
+    .filter(([, value]) => Boolean(value))
+    .map(([name, value]) => `${name}=${safeResponseHeaderValue(name, value)}`);
+}
+
+function corsEvidence(entry: Entry): string {
+  const origin = getRequestHeader(entry, 'origin');
+  if (!origin) return '';
+
+  const allowOrigin = getResponseHeader(entry, 'access-control-allow-origin');
+  const method = entry.request.method.toUpperCase();
+  const status = entry.response.status;
+  const allowMethod = getResponseHeader(entry, 'access-control-allow-methods');
+  const allowHeaders = getResponseHeader(entry, 'access-control-allow-headers');
+  const parts = [
+    `origin=${redactSensitiveText(origin, 160)}`,
+    `access-control-allow-origin=${allowOrigin ? redactSensitiveText(allowOrigin, 160) : 'missing'}`,
+    method === 'OPTIONS' ? 'preflight=true' : null,
+    status ? `status=${status}` : null,
+    allowMethod ? `access-control-allow-methods=${redactSensitiveText(allowMethod, 160)}` : null,
+    allowHeaders ? `access-control-allow-headers=${redactSensitiveText(allowHeaders, 160)}` : null,
+  ].filter(Boolean);
+
+  return `CORS_POLICY_EVIDENCE ${parts.join(' ')}`;
+}
+
+function badRequestEvidence(entry: Entry): string {
+  const queryNames = queryParamNames(entry);
+  const fieldNames = postBodyFieldNames(entry);
+  const contentType = requestContentType(entry);
+  const snippet = responseSnippet(entry);
+  const parts = [
+    `BAD_REQUEST_EVIDENCE ${triageEntryLine(entry)}`,
+    queryNames.length ? `query_params=${queryNames.join(',')}` : null,
+    contentType ? `request_content_type=${contentType}` : null,
+    fieldNames.length ? `post_body_fields=${fieldNames.join(',')}` : null,
+    snippet ? `response_snippet=${snippet}` : null,
+  ].filter(Boolean);
+
+  return parts.join(' ');
+}
+
+export function buildHarTriageCaseFile(harData: HarFile): string {
+  const sortedEntries = [...harData.log.entries].sort((a, b) => startedAt(a) - startedAt(b));
+  const errors = sortedEntries.filter((entry) => entry.response.status >= 400);
+  if (errors.length === 0) return '';
+
+  const firstDecisiveFailure = errors.find((entry) => !isStaticAsset(entry)) ?? errors[0];
+  const priorSuccess = findPriorSuccess(sortedEntries, firstDecisiveFailure);
+  const sameEndpointFailures = errors.filter((entry) => requestKey(entry) === requestKey(firstDecisiveFailure));
+  const lines = [
+    'EXPERT TRIAGE CASE FILE (model priority: identify first decisive failure, separate symptoms, avoid blanket 400/401/500 summaries)',
+    `FIRST_DECISIVE_FAILURE ${triageEntryLine(firstDecisiveFailure)}`,
+  ];
+
+  const firstResponseHeaders = responseHeaderEvidence(firstDecisiveFailure);
+  if (firstResponseHeaders.length > 0) {
+    lines.push(`FIRST_FAILURE_RESPONSE_HEADERS ${firstResponseHeaders.join(' ')}`);
+  }
+
+  const firstSnippet = responseSnippet(firstDecisiveFailure);
+  if (firstSnippet) {
+    lines.push(`FIRST_FAILURE_RESPONSE_BODY response_snippet=${firstSnippet}`);
+  }
+
+  if (priorSuccess) {
+    const delta = successFailureDelta(priorSuccess, firstDecisiveFailure);
+    if (delta) {
+      lines.push(`SUCCESS_VS_FAILURE_DELTA prior_success=${triageEntryLine(priorSuccess)} failing_request=${triageEntryLine(firstDecisiveFailure)} ${delta}`);
+    }
+  }
+
+  if (firstDecisiveFailure.response.status === 401 || firstDecisiveFailure.response.status === 403) {
+    const wwwAuthenticate = getResponseHeader(firstDecisiveFailure, 'www-authenticate');
+    const parts = [
+      `authorization=${authorizationPresence(firstDecisiveFailure)}`,
+      `authorization_scheme=${authorizationScheme(firstDecisiveFailure)}`,
+      `cookie_names=${formatNameList(requestCookieNames(firstDecisiveFailure))}`,
+      wwwAuthenticate ? `WWW-Authenticate=${redactSensitiveText(wwwAuthenticate, 180)}` : null,
+    ].filter(Boolean);
+    lines.push(`AUTH_EVIDENCE ${parts.join(' ')}`);
+  }
+
+  const firstCorsEvidence = corsEvidence(firstDecisiveFailure);
+  if (firstCorsEvidence) {
+    lines.push(firstCorsEvidence);
+  }
+
+  const badRequests = errors.filter((entry) => entry.response.status === 400).slice(0, 3);
+  for (const entry of badRequests) {
+    lines.push(badRequestEvidence(entry));
+  }
+
+  if (sameEndpointFailures.length > 1) {
+    const statuses = uniqueNonEmpty(sameEndpointFailures.map((entry) => String(entry.response.status))).join(',');
+    lines.push(
+      `DOWNSTREAM_SYMPTOMS same_endpoint=${requestKey(firstDecisiveFailure)} repeated_failures=${sameEndpointFailures.length} after_first=${sameEndpointFailures.length - 1} statuses=${statuses}`
+    );
+  }
+
+  const raw = lines.join('\n');
+  return raw.length > TRIAGE_CONTEXT_LIMIT ? `${raw.slice(0, TRIAGE_CONTEXT_LIMIT)}\n[TRIAGE_CONTEXT_TRUNCATED]` : raw;
+}
 
 export function buildHarContext(harData: HarFile): string {
   const entries = harData.log.entries;
@@ -120,8 +496,7 @@ export function buildHarContext(harData: HarFile): string {
         try { path = new URL(e.request.url).hostname + new URL(e.request.url).pathname; } catch { path = e.request.url; }
 
         const loc = e.response.headers?.find((h) => h.name.toLowerCase() === 'location')?.value ?? '';
-        let locPath = '';
-        try { locPath = new URL(loc).pathname; } catch { locPath = loc; }
+        const locPath = loc ? safeLocationHeaderValue(loc) : '';
 
         const isError = ERROR_PATH_PATTERNS.test(path) || e.response.status >= 400;
         const errorFlag = isError ? ' ⚠ ERROR_DEST' : '';
@@ -204,7 +579,9 @@ export function buildHarContext(harData: HarFile): string {
     });
 
   // ── Assemble context: error tiers first, then performance ─────────────────
+  const triageCaseFile = buildHarTriageCaseFile(harData);
   const parts = [
+    ...(triageCaseFile ? [triageCaseFile] : []),
     `HAR SUMMARY: ${summary}`,
     ...(redirectChainSection ? [redirectChainSection] : []),
     // 5xx is highest priority — placed before slow-request analysis

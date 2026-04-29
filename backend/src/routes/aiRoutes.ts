@@ -93,6 +93,14 @@ Schema:
 {"overallHealth":"critical|degraded|warning|healthy","summary":"one sentence","sections":[{"type":"critical_issues|performance|security|recommendations","title":"string","findings":[{"severity":"critical|high|medium|low","title":"string","product":"ORDS|ADF|VBCS|Forms|OIC|Fusion Apps|IDCS|OAC|OCI|CPQ (omit if N/A)","component":"sub-component name (omit if N/A)","what":"what HAR shows — request counts, status codes, timings","why":"root cause referencing Oracle product internals","evidence":"URL path, status code, timing in ms, or header name","fix":"actionable step — reference Oracle config path, admin UI, or SQL","srGuidance":"logs/diagnostics to collect for SR: log file path, diagnostic level, SQL trace command (omit for low severity)"}]}]}
 
 Rules:
+- The summary must be a triage conclusion that names the most likely root cause and the exact evidence signal, not a generic health summary.
+- If EXPERT TRIAGE CASE FILE exists, treat it as curated forensic evidence and use it before broad 4xx/5xx buckets.
+- Case-file evidence overrides generic status-tier order when it points to a concrete root cause.
+- Do not write blanket explanations like "401 means unauthorized" or "400 means bad request". Explain what is different in this trace: missing auth/cookies, response auth challenge, request field names, response body clue, redirect target, or first failing endpoint.
+- Distinguish root cause from symptoms. Repeated 401/400/404 responses after FIRST_DECISIVE_FAILURE are symptoms unless they have a different endpoint or different evidence signature.
+- Do not bunch unrelated 401/400 responses into one generic finding. Create one finding per distinct failure signature, then mention repeated symptoms only as supporting evidence.
+- If TypeError/failed fetch, static asset warnings, slow 2xx, or deprecation warnings appear alongside hard error evidence, treat them as symptoms or lower-priority follow-up.
+- If CORS_POLICY_EVIDENCE shows missing Access-Control-Allow-Origin on an /ords/ endpoint, name ORDS/proxy CORS handling as the likely owning layer; failed fetch is only the client symptom.
 - Only include findings with concrete HAR evidence (URL, status code, ms timing, header).
 - Fix must be specific — name Oracle config files, admin UI paths, or SQL. No vague "check logs".
 - srGuidance must name specific Oracle artifacts: WLS server log path, ORDS log, ADFLogger level, AWR/ASH, fmw_diag.
@@ -105,6 +113,13 @@ Rules:
   4. 2XX PERFORMANCE last — slow successful responses are lower priority than any error-tier finding.
 
 Context field guide:
+- EXPERT TRIAGE CASE FILE is curated forensic evidence. Prefer it over broad status buckets when it exists.
+- FIRST_DECISIVE_FAILURE is the earliest meaningful failing request. Start the root-cause narrative there.
+- SUCCESS_VS_FAILURE_DELTA compares the nearest successful same endpoint with the failing request. Missing Authorization or cookie names are stronger auth/session evidence than the raw 401 count.
+- AUTH_EVIDENCE names auth headers/challenges without leaking secrets. Use WWW-Authenticate, authorization presence, and cookie_names to explain auth/session root cause.
+- CORS_POLICY_EVIDENCE with missing Access-Control-Allow-Origin means a browser policy block. For /ords/ endpoints, name ORDS/proxy CORS handling as the likely owning layer.
+- BAD_REQUEST_EVIDENCE gives query parameter names, request content type, POST body field names, and server response snippet. Use these to identify request-contract or validation failures instead of saying "400 bad request".
+- DOWNSTREAM_SYMPTOMS counts repeated failures after the first decisive failure. Mention them as blast radius, not the primary root cause.
 - 5XX SERVER ERRORS / HTTP 5XX SERVER ERRORS IN LOGS sections contain the highest-priority findings — always produce at least one finding for every distinct 5xx endpoint before reporting performance issues.
 - 4XX CLIENT ERRORS / HTTP 4XX CLIENT ERRORS IN LOGS sections should be analysed for auth flow failures, missing resource registrations, and repeated retry storms.
 - ERROR CLUSTERS section highlights the same endpoint failing multiple times — a cluster with ⚠ 5XX is a cascade failure candidate and should be rated "critical".
@@ -595,7 +610,7 @@ router.post('/insights', async (req: Request, res: ExpressResponse) => {
     { role: 'system', content: insightsSystemPrompt },
     {
       role: 'user',
-      content: `Analyze this HAR context and return strict JSON insights only.\n\n${context}`,
+      content: `Analyze this HAR triage context and return strict JSON insights only.\n\n${context}`,
     },
   ];
 

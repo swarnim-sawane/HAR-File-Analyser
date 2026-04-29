@@ -1,4 +1,5 @@
 import express, { Request, Response } from 'express';
+import type { Sort } from 'mongodb';
 import { getMongoDb, getRedis } from '../config/database';
 
 const router = express.Router();
@@ -58,14 +59,14 @@ function buildLogFilter(fileId: string, query: Request['query']) {
   return filter;
 }
 
-function buildSort(query: Request['query']) {
+function buildSort(query: Request['query']): Sort {
   const sortField =
     typeof query.sortBy === 'string' && ['timestamp', 'level', 'source', 'message', 'index'].includes(query.sortBy)
       ? query.sortBy
       : 'index';
   const sortDirection = query.sortDir === 'asc' ? 1 : -1;
 
-  return { [sortField]: sortField === 'index' ? 1 : sortDirection };
+  return { [sortField]: sortField === 'index' ? 1 : sortDirection } as Sort;
 }
 
 function listProjection() {
