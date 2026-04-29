@@ -1,13 +1,9 @@
 import React from 'react';
 import { render, screen, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import ConsoleLogList from '../ConsoleLogList';
 
 describe('ConsoleLogList', () => {
-  it('renders quick focus controls while promoting inferred failures to primary levels', async () => {
-    const user = userEvent.setup();
-    const onQuickFocusChange = vi.fn();
-
+  it('keeps middle panel filters removed while promoting inferred failures to primary levels', () => {
     const entries = [
       {
         id: 'cors-entry',
@@ -43,21 +39,16 @@ describe('ConsoleLogList', () => {
         groupedEntries: null,
         selectedEntry: null,
         onSelectEntry: vi.fn(),
-        quickFocus: 'all',
-        onQuickFocusChange,
       }),
     );
 
     expect(container.querySelector('.request-list-header')).not.toBeNull();
     expect(container.querySelector('.console-quick-focus-bar')).toBeNull();
-
-    expect(screen.getByRole('button', { name: /errors/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /warnings/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^cors$/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /network/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /exceptions/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^react$/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /browser policy/i })).toBeInTheDocument();
+    expect(screen.queryByRole('toolbar', { name: /console issue quick filters/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^all\s+\d+$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^cors\s+\d+$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^network\s+\d+$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^browser policy\s+\d+$/i })).not.toBeInTheDocument();
 
     const corsRow = screen.getByText(/blocked by cors policy/i).closest('.request-item');
     expect(corsRow).toHaveAttribute('data-inferred-severity', 'error');
@@ -65,8 +56,5 @@ describe('ConsoleLogList', () => {
     expect(within(corsRow as HTMLElement).queryByText('LOG')).not.toBeInTheDocument();
     expect(within(corsRow as HTMLElement).queryByText('Error')).not.toBeInTheDocument();
     expect(within(corsRow as HTMLElement).getByText('CORS')).toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: /^cors$/i }));
-    expect(onQuickFocusChange).toHaveBeenCalledWith('cors');
   });
 });

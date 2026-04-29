@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useMemo, useState } from 'react';
-import { ConsoleLogEntry, ConsoleQuickFocus, LogLevel } from '../types/consolelog';
+import { ConsoleLogEntry, LogLevel } from '../types/consolelog';
 import { formatDate } from '../utils/formatters';
 import { getConsoleDisplayLevel } from '../utils/consoleLogSeverity';
 
@@ -8,23 +8,10 @@ interface ConsoleLogListProps {
   groupedEntries: Map<string, ConsoleLogEntry[]> | null;
   selectedEntry: ConsoleLogEntry | null;
   onSelectEntry: (entry: ConsoleLogEntry) => void | Promise<void>;
-  quickFocus: ConsoleQuickFocus;
-  onQuickFocusChange: (quickFocus: ConsoleQuickFocus) => void;
 }
 
 type SortField = 'timestamp' | 'severity';
 type SortDirection = 'asc' | 'desc';
-
-const QUICK_FOCUS_OPTIONS: Array<{ key: ConsoleQuickFocus; label: string }> = [
-  { key: 'all', label: 'All' },
-  { key: 'errors', label: 'Errors' },
-  { key: 'warnings', label: 'Warnings' },
-  { key: 'cors', label: 'CORS' },
-  { key: 'network', label: 'Network' },
-  { key: 'exception', label: 'Exceptions' },
-  { key: 'react', label: 'React' },
-  { key: 'browser-policy', label: 'Browser Policy' },
-];
 
 const ISSUE_TAG_LABELS: Record<string, string> = {
   cors: 'CORS',
@@ -42,8 +29,6 @@ const ConsoleLogList: React.FC<ConsoleLogListProps> = ({
   groupedEntries,
   selectedEntry,
   onSelectEntry,
-  quickFocus,
-  onQuickFocusChange,
 }) => {
   const selectAllId = useId();
   const [sortField, setSortField] = useState<SortField>('timestamp');
@@ -174,22 +159,6 @@ const ConsoleLogList: React.FC<ConsoleLogListProps> = ({
   const overlayWarningCount = entries.filter(
     (entry) => getConsoleDisplayLevel(entry) === 'warn',
   ).length;
-
-  const quickFocusCounts = useMemo(() => {
-    return {
-      all: entries.length,
-      errors: entries.filter((entry) => getConsoleDisplayLevel(entry) === 'error').length,
-      warnings: entries.filter((entry) => getConsoleDisplayLevel(entry) === 'warn').length,
-      cors: entries.filter((entry) => entry.issueTags.includes('cors')).length,
-      network: entries.filter((entry) => entry.issueTags.includes('network')).length,
-      exception: entries.filter((entry) => entry.issueTags.includes('exception')).length,
-      promise: entries.filter((entry) => entry.issueTags.includes('promise')).length,
-      react: entries.filter((entry) => entry.issueTags.includes('react')).length,
-      'http-4xx': entries.filter((entry) => entry.issueTags.includes('http-4xx')).length,
-      'http-5xx': entries.filter((entry) => entry.issueTags.includes('http-5xx')).length,
-      'browser-policy': entries.filter((entry) => entry.issueTags.includes('browser-policy')).length,
-    } satisfies Record<ConsoleQuickFocus, number>;
-  }, [entries]);
 
   const getLevelBadgeClass = (level: LogLevel): string => {
     const classes: Record<LogLevel, string> = {
@@ -407,19 +376,6 @@ const ConsoleLogList: React.FC<ConsoleLogListProps> = ({
           </div>
         </div>
 
-        <div className="console-summary-inline-filters" role="toolbar" aria-label="Console issue quick filters">
-          {QUICK_FOCUS_OPTIONS.map((option) => (
-            <button
-              key={option.key}
-              type="button"
-              className={`console-quick-chip ${quickFocus === option.key ? 'active' : ''}`}
-              onClick={() => onQuickFocusChange(option.key)}
-            >
-              <span>{option.label}</span>
-              <strong aria-hidden="true">{quickFocusCounts[option.key]}</strong>
-            </button>
-          ))}
-        </div>
       </div>
 
       <div className="request-list-header">

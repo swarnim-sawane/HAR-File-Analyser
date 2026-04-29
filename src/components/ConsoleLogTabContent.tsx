@@ -247,8 +247,6 @@ const ConsoleLogTabContent: React.FC<ConsoleLogTabContentProps> = ({
                     groupedEntries={logGroupedEntries}
                     selectedEntry={logState.selectedEntry}
                     onSelectEntry={logState.setSelectedEntry}
-                    quickFocus={logState.filters.quickFocus}
-                    onQuickFocusChange={(quickFocus) => logState.updateFilters({ quickFocus })}
                   />
                 </div>
 
