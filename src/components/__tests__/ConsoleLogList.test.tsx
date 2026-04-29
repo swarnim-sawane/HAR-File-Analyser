@@ -50,6 +50,10 @@ describe('ConsoleLogList', () => {
     expect(screen.queryByRole('button', { name: /^network\s+\d+$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^browser policy\s+\d+$/i })).not.toBeInTheDocument();
 
+    const selectAllCheckbox = screen.getByRole('checkbox', { name: /select all/i });
+    expect(selectAllCheckbox.closest('label')).toHaveClass('console-select-all-label');
+    expect(selectAllCheckbox).toHaveClass('console-select-all-input');
+
     const corsRow = screen.getByText(/blocked by cors policy/i).closest('.request-item');
     expect(corsRow).toHaveAttribute('data-inferred-severity', 'error');
     expect(within(corsRow as HTMLElement).getByText('ERROR')).toBeInTheDocument();

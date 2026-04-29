@@ -9066,6 +9066,7 @@ html[data-theme='dark'] .sensitive-badge {
 }
 
 .console-request-list .console-select-all-label {
+  position: relative;
   padding: 5px 10px;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
@@ -9078,6 +9079,15 @@ html[data-theme='dark'] .sensitive-badge {
   border-color: var(--text-secondary);
 }
 
+.console-request-list .console-select-all-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .console-request-list .console-select-all-checkbox {
   width: 14px;
   height: 14px;
@@ -9085,20 +9095,17 @@ html[data-theme='dark'] .sensitive-badge {
   background: var(--bg-primary);
 }
 
-.console-request-list
-  .console-select-all-container
-  input[type="checkbox"]:checked
-  ~ .console-select-all-label
-  .console-select-all-checkbox {
+.console-request-list .console-select-all-input:focus-visible ~ .console-select-all-checkbox {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.console-request-list .console-select-all-input:checked ~ .console-select-all-checkbox {
   background: var(--accent);
   border-color: var(--accent);
 }
 
-.console-request-list
-  .console-select-all-container
-  input[type="checkbox"]:checked
-  ~ .console-select-all-label
-  .console-select-all-checkbox::after {
+.console-request-list .console-select-all-input:checked ~ .console-select-all-checkbox::after {
   content: "\2713";
   font-size: 9px;
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ConsoleLogEntry, LogLevel } from '../types/consolelog';
 import { formatDate } from '../utils/formatters';
 import { getConsoleDisplayLevel } from '../utils/consoleLogSeverity';
@@ -30,7 +30,6 @@ const ConsoleLogList: React.FC<ConsoleLogListProps> = ({
   selectedEntry,
   onSelectEntry,
 }) => {
-  const selectAllId = useId();
   const [sortField, setSortField] = useState<SortField>('timestamp');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -315,8 +314,14 @@ const ConsoleLogList: React.FC<ConsoleLogListProps> = ({
       <div className="log-summary-bar console-log-summary-bar">
         <div className="summary-left console-summary-left">
           <div className="console-select-all-container">
-            <input type="checkbox" id={selectAllId} checked={allSelected} onChange={handleSelectAll} />
-            <label htmlFor={selectAllId} className="select-all-label console-select-all-label">
+            <label className="select-all-label console-select-all-label">
+              <input
+                type="checkbox"
+                className="console-select-all-input"
+                checked={allSelected}
+                onChange={handleSelectAll}
+                aria-label={allSelected ? 'Deselect all visible log entries' : 'Select all visible log entries'}
+              />
               <span className="checkbox-custom console-select-all-checkbox" aria-hidden="true"></span>
               <span className="select-text console-select-text">
                 {selectedIds.size > 0 ? `${selectedIds.size} selected` : 'Select all'}
