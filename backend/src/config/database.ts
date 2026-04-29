@@ -1,4 +1,4 @@
-import { MongoClient, Db } from 'mongodb';
+import { MongoClient, Db, type CreateIndexesOptions, type IndexSpecification } from 'mongodb';
 import Redis from 'ioredis';
 import { QdrantClient } from '@qdrant/js-client-rest';
 
@@ -6,6 +6,76 @@ let mongoClient: MongoClient;
 let db: Db;
 let redisClient: Redis;
 let qdrantClient: QdrantClient;
+
+interface ExistingMongoIndex {
+  key?: Record<string, unknown>;
+  unique?: boolean;
+  sparse?: boolean;
+  expireAfterSeconds?: number;
+  partialFilterExpression?: unknown;
+}
+
+interface MongoIndexCollection {
+  indexes: () => Promise<ExistingMongoIndex[]>;
+  createIndex: (indexSpec: IndexSpecification, options?: CreateIndexesOptions) => Promise<string>;
+}
+
+function normalizeIndexKey(key: IndexSpecification | Record<string, unknown> | undefined): string {
+  if (typeof key === 'string') return JSON.stringify([[key, 1]]);
+  if (Array.isArray(key)) return JSON.stringify(key);
+  return JSON.stringify(Object.entries(key ?? {}));
+}
+
+function stableStringify(value: unknown): string {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return JSON.stringify(value);
+  }
+
+  return JSON.stringify(
+    Object.keys(value as Record<string, unknown>)
+      .sort()
+      .reduce<Record<string, unknown>>((acc, key) => {
+        acc[key] = (value as Record<string, unknown>)[key];
+        return acc;
+      }, {}),
+  );
+}
+
+function hasEquivalentIndex(
+  indexes: ExistingMongoIndex[],
+  indexSpec: IndexSpecification,
+  options: CreateIndexesOptions,
+): boolean {
+  const requestedKey = normalizeIndexKey(indexSpec);
+
+  return indexes.some((index) => {
+    if (normalizeIndexKey(index.key) !== requestedKey) return false;
+    if (Boolean(index.unique) !== Boolean(options.unique)) return false;
+    if (Boolean(index.sparse) !== Boolean(options.sparse)) return false;
+    if ((index.expireAfterSeconds ?? null) !== (options.expireAfterSeconds ?? null)) return false;
+    if (
+      stableStringify(index.partialFilterExpression ?? null) !==
+      stableStringify(options.partialFilterExpression ?? null)
+    ) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+export async function ensureMongoIndex(
+  collection: MongoIndexCollection,
+  indexSpec: IndexSpecification,
+  options: CreateIndexesOptions = {},
+): Promise<string | undefined> {
+  const indexes = await collection.indexes();
+  if (hasEquivalentIndex(indexes, indexSpec, options)) {
+    return undefined;
+  }
+
+  return collection.createIndex(indexSpec, options);
+}
 
 export async function connectDatabases() {
   try {
@@ -31,28 +101,28 @@ export async function connectDatabases() {
     console.log('📊 Creating MongoDB indexes...');
     
     // HAR Files metadata indexes
-    await db.collection('har_files').createIndex({ fileId: 1 }, { unique: true });
-    await db.collection('har_files').createIndex({ uploadedAt: -1 });
-    await db.collection('har_files').createIndex({ status: 1 });
+    await ensureMongoIndex(db.collection('har_files'), { fileId: 1 }, { unique: true });
+    await ensureMongoIndex(db.collection('har_files'), { uploadedAt: -1 });
+    await ensureMongoIndex(db.collection('har_files'), { status: 1 });
     
     // HAR Entries indexes (for fast queries and filtering)
-    await db.collection('har_entries').createIndex({ fileId: 1 });
-    await db.collection('har_entries').createIndex({ fileId: 1, 'request.method': 1 });
-    await db.collection('har_entries').createIndex({ fileId: 1, 'response.status': 1 });
-    await db.collection('har_entries').createIndex({ fileId: 1, 'request.url': 1 });
-    await db.collection('har_entries').createIndex({ fileId: 1, 'response.content.mimeType': 1 });
+    await ensureMongoIndex(db.collection('har_entries'), { fileId: 1 });
+    await ensureMongoIndex(db.collection('har_entries'), { fileId: 1, 'request.method': 1 });
+    await ensureMongoIndex(db.collection('har_entries'), { fileId: 1, 'response.status': 1 });
+    await ensureMongoIndex(db.collection('har_entries'), { fileId: 1, 'request.url': 1 });
+    await ensureMongoIndex(db.collection('har_entries'), { fileId: 1, 'response.content.mimeType': 1 });
     
     // Console Log Files metadata indexes
-    await db.collection('console_log_files').createIndex({ fileId: 1 }, { unique: true });
-    await db.collection('console_log_files').createIndex({ uploadedAt: -1 });
-    await db.collection('console_log_files').createIndex({ status: 1 });
+    await ensureMongoIndex(db.collection('console_log_files'), { fileId: 1 }, { unique: true });
+    await ensureMongoIndex(db.collection('console_log_files'), { uploadedAt: -1 });
+    await ensureMongoIndex(db.collection('console_log_files'), { status: 1 });
     
     // Console Logs indexes (for fast queries and filtering)
-    await db.collection('console_logs').createIndex({ fileId: 1 });
-    await db.collection('console_logs').createIndex({ fileId: 1, index: 1 }, { unique: true });
-    await db.collection('console_logs').createIndex({ fileId: 1, level: 1 });
-    await db.collection('console_logs').createIndex({ fileId: 1, source: 1 });
-    await db.collection('console_logs').createIndex({ fileId: 1, timestamp: 1 });
+    await ensureMongoIndex(db.collection('console_logs'), { fileId: 1 });
+    await ensureMongoIndex(db.collection('console_logs'), { fileId: 1, index: 1 }, { unique: true });
+    await ensureMongoIndex(db.collection('console_logs'), { fileId: 1, level: 1 });
+    await ensureMongoIndex(db.collection('console_logs'), { fileId: 1, source: 1 });
+    await ensureMongoIndex(db.collection('console_logs'), { fileId: 1, timestamp: 1 });
     
     console.log('✅ MongoDB indexes created');
     
