@@ -101,6 +101,8 @@ Rules:
 - Do not bunch unrelated 401/400 responses into one generic finding. Create one finding per distinct failure signature, then mention repeated symptoms only as supporting evidence.
 - If TypeError/failed fetch, static asset warnings, slow 2xx, or deprecation warnings appear alongside hard error evidence, treat them as symptoms or lower-priority follow-up.
 - If CORS_POLICY_EVIDENCE shows missing Access-Control-Allow-Origin on an /ords/ endpoint, name ORDS/proxy CORS handling as the likely owning layer; failed fetch is only the client symptom.
+- If CORS_PREFLIGHT_EVIDENCE shows an OPTIONS response without Access-Control-Allow-Origin, or a paired request with status=0, treat that as the root CORS/preflight failure before any favicon/static 401.
+- Never name favicon.ico, icons, fonts, maps, images, or other static asset 401/404 as the root cause of the user flow unless the context explicitly says no other application failure exists. If NO_DECISIVE_APPLICATION_FAILURE is present, say no decisive application failure is visible instead of inventing one.
 - Only include findings with concrete HAR evidence (URL, status code, ms timing, header).
 - Fix must be specific — name Oracle config files, admin UI paths, or SQL. No vague "check logs".
 - srGuidance must name specific Oracle artifacts: WLS server log path, ORDS log, ADFLogger level, AWR/ASH, fmw_diag.
@@ -118,8 +120,11 @@ Context field guide:
 - SUCCESS_VS_FAILURE_DELTA compares the nearest successful same endpoint with the failing request. Missing Authorization or cookie names are stronger auth/session evidence than the raw 401 count.
 - AUTH_EVIDENCE names auth headers/challenges without leaking secrets. Use WWW-Authenticate, authorization presence, and cookie_names to explain auth/session root cause.
 - CORS_POLICY_EVIDENCE with missing Access-Control-Allow-Origin means a browser policy block. For /ords/ endpoints, name ORDS/proxy CORS handling as the likely owning layer.
+- CORS_PREFLIGHT_EVIDENCE from HAR is hard browser policy evidence. status=0 on a paired request means the browser did not receive an application response; when paired with missing Access-Control-Allow-Origin, diagnose ORDS/proxy CORS/preflight handling.
+- NETWORK FAILURES / STATUS 0 indicates a browser-blocked, aborted, or otherwise response-less request. Correlate it with CORS_PREFLIGHT_EVIDENCE before calling it connectivity.
 - BAD_REQUEST_EVIDENCE gives query parameter names, request content type, POST body field names, and server response snippet. Use these to identify request-contract or validation failures instead of saying "400 bad request".
 - DOWNSTREAM_SYMPTOMS counts repeated failures after the first decisive failure. Mention them as blast radius, not the primary root cause.
+- STATIC_ASSET_FAILURES and LOW-PRIORITY STATIC ASSET ERRORS are explicitly demoted. They are supporting noise unless the main document, app bundle, or API call is affected.
 - 5XX SERVER ERRORS / HTTP 5XX SERVER ERRORS IN LOGS sections contain the highest-priority findings — always produce at least one finding for every distinct 5xx endpoint before reporting performance issues.
 - 4XX CLIENT ERRORS / HTTP 4XX CLIENT ERRORS IN LOGS sections should be analysed for auth flow failures, missing resource registrations, and repeated retry storms.
 - ERROR CLUSTERS section highlights the same endpoint failing multiple times — a cluster with ⚠ 5XX is a cascade failure candidate and should be rated "critical".

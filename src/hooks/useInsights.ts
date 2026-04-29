@@ -44,6 +44,15 @@ const TRIAGE_CONTEXT_LIMIT = 4000;
 const TRIAGE_SNIPPET_LIMIT = 240;
 const STATIC_ASSET_PATTERN = /\.(?:avif|bmp|css|gif|ico|jpe?g|js|map|mjs|mp4|otf|png|svg|ttf|webp|woff2?)(?:$|[?#])/i;
 
+interface CorsPreflightFinding {
+  preflight: Entry;
+  pairedRequest?: Entry;
+  origin: string;
+  requestedMethod: string;
+  requestedHeaders: string;
+  allowOrigin: string;
+}
+
 function uniqueNonEmpty(values: Array<string | undefined | null>): string[] {
   const seen = new Set<string>();
   const unique: string[] = [];
@@ -76,6 +85,10 @@ function endpointFromUrl(value: string): string {
 
 function requestKey(entry: Entry): string {
   return `${entry.request.method.toUpperCase()} ${endpointFromUrl(entry.request.url)}`;
+}
+
+function endpointKey(entry: Entry): string {
+  return endpointFromUrl(entry.request.url).toLowerCase();
 }
 
 function startedAt(entry: Entry): number {
@@ -237,6 +250,14 @@ function isStaticAsset(entry: Entry): boolean {
   );
 }
 
+function isNetworkFailure(entry: Entry): boolean {
+  return entry.response.status === 0;
+}
+
+function isFailedEntry(entry: Entry): boolean {
+  return entry.response.status >= 400 || isNetworkFailure(entry);
+}
+
 function findPriorSuccess(entries: Entry[], failure: Entry): Entry | null {
   const failureKey = requestKey(failure);
   const failureStart = startedAt(failure);
@@ -338,6 +359,71 @@ function corsEvidence(entry: Entry): string {
   return `CORS_POLICY_EVIDENCE ${parts.join(' ')}`;
 }
 
+function findPairedCorsRequest(entries: Entry[], preflight: Entry, requestedMethod: string): Entry | undefined {
+  const targetEndpoint = endpointKey(preflight);
+  const requestedMethodUpper = requestedMethod.toUpperCase();
+
+  return entries.find((entry) =>
+    entry !== preflight &&
+    entry.request.method.toUpperCase() === requestedMethodUpper &&
+    endpointKey(entry) === targetEndpoint &&
+    isNetworkFailure(entry)
+  );
+}
+
+function buildCorsPreflightFindings(entries: Entry[]): CorsPreflightFinding[] {
+  const findings: CorsPreflightFinding[] = [];
+
+  for (const preflight of entries) {
+    if (preflight.request.method.toUpperCase() !== 'OPTIONS') continue;
+
+    const origin = getRequestHeader(preflight, 'origin');
+    const requestedMethod = getRequestHeader(preflight, 'access-control-request-method');
+    if (!origin || !requestedMethod) continue;
+
+    const allowOrigin = getResponseHeader(preflight, 'access-control-allow-origin');
+    const allowOriginMatches =
+      allowOrigin === '*' ||
+      allowOrigin.toLowerCase() === origin.toLowerCase();
+    const pairedRequest = findPairedCorsRequest(entries, preflight, requestedMethod);
+    const hasCorsFailureSignal = !allowOrigin || !allowOriginMatches || Boolean(pairedRequest);
+    if (!hasCorsFailureSignal) continue;
+
+    findings.push({
+      preflight,
+      ...(pairedRequest ? { pairedRequest } : {}),
+      origin,
+      requestedMethod,
+      requestedHeaders: getRequestHeader(preflight, 'access-control-request-headers') || 'none',
+      allowOrigin,
+    });
+  }
+
+  return findings;
+}
+
+function corsPreflightEvidenceLine(finding: CorsPreflightFinding): string {
+  const pairedRequest = finding.pairedRequest
+    ? ` paired_request=${triageEntryLine(finding.pairedRequest)}`
+    : '';
+
+  return [
+    `CORS_PREFLIGHT_EVIDENCE ${triageEntryLine(finding.preflight)}`,
+    `origin=${redactSensitiveText(finding.origin, 160)}`,
+    `requested_method=${finding.requestedMethod.toUpperCase()}`,
+    `requested_headers=${redactSensitiveText(finding.requestedHeaders, 160)}`,
+    `access-control-allow-origin=${finding.allowOrigin ? redactSensitiveText(finding.allowOrigin, 160) : 'missing'}`,
+    pairedRequest.trim(),
+  ].filter(Boolean).join(' ');
+}
+
+function staticAssetFailureLines(entries: Entry[]): string[] {
+  return entries
+    .filter((entry) => entry.response.status >= 400 && isStaticAsset(entry))
+    .slice(0, 5)
+    .map((entry) => triageEntryLine(entry));
+}
+
 function badRequestEvidence(entry: Entry): string {
   const queryNames = queryParamNames(entry);
   const fieldNames = postBodyFieldNames(entry);
@@ -356,16 +442,39 @@ function badRequestEvidence(entry: Entry): string {
 
 export function buildHarTriageCaseFile(harData: HarFile): string {
   const sortedEntries = [...harData.log.entries].sort((a, b) => startedAt(a) - startedAt(b));
-  const errors = sortedEntries.filter((entry) => entry.response.status >= 400);
-  if (errors.length === 0) return '';
+  const failures = sortedEntries.filter(isFailedEntry);
+  const applicationFailures = failures.filter((entry) => !isStaticAsset(entry));
+  const corsPreflightFindings = buildCorsPreflightFindings(sortedEntries);
+  const staticFailures = staticAssetFailureLines(sortedEntries);
+  if (failures.length === 0 && corsPreflightFindings.length === 0) return '';
 
-  const firstDecisiveFailure = errors.find((entry) => !isStaticAsset(entry)) ?? errors[0];
-  const priorSuccess = findPriorSuccess(sortedEntries, firstDecisiveFailure);
-  const sameEndpointFailures = errors.filter((entry) => requestKey(entry) === requestKey(firstDecisiveFailure));
   const lines = [
     'EXPERT TRIAGE CASE FILE (model priority: identify first decisive failure, separate symptoms, avoid blanket 400/401/500 summaries)',
-    `FIRST_DECISIVE_FAILURE ${triageEntryLine(firstDecisiveFailure)}`,
   ];
+
+  const firstCorsPreflightFinding = corsPreflightFindings[0];
+  const firstDecisiveFailure = firstCorsPreflightFinding?.pairedRequest ?? applicationFailures[0];
+
+  if (firstCorsPreflightFinding) {
+    lines.push(`FIRST_DECISIVE_FAILURE CORS_PREFLIGHT ${triageEntryLine(firstCorsPreflightFinding.preflight)}`);
+    lines.push(corsPreflightEvidenceLine(firstCorsPreflightFinding));
+  } else if (firstDecisiveFailure) {
+    lines.push(`FIRST_DECISIVE_FAILURE ${triageEntryLine(firstDecisiveFailure)}`);
+  } else {
+    lines.push('NO_DECISIVE_APPLICATION_FAILURE only static asset failures are present; do not treat favicon/icon/static asset 401/404 as the root cause of the user flow');
+  }
+
+  if (!firstDecisiveFailure) {
+    if (staticFailures.length > 0) {
+      lines.push(`STATIC_ASSET_FAILURES low_priority_do_not_use_as_root_cause:\n${staticFailures.join('\n')}`);
+    }
+
+    const raw = lines.join('\n');
+    return raw.length > TRIAGE_CONTEXT_LIMIT ? `${raw.slice(0, TRIAGE_CONTEXT_LIMIT)}\n[TRIAGE_CONTEXT_TRUNCATED]` : raw;
+  }
+
+  const priorSuccess = findPriorSuccess(sortedEntries, firstDecisiveFailure);
+  const sameEndpointFailures = failures.filter((entry) => requestKey(entry) === requestKey(firstDecisiveFailure));
 
   const firstResponseHeaders = responseHeaderEvidence(firstDecisiveFailure);
   if (firstResponseHeaders.length > 0) {
@@ -400,7 +509,7 @@ export function buildHarTriageCaseFile(harData: HarFile): string {
     lines.push(firstCorsEvidence);
   }
 
-  const badRequests = errors.filter((entry) => entry.response.status === 400).slice(0, 3);
+  const badRequests = applicationFailures.filter((entry) => entry.response.status === 400).slice(0, 3);
   for (const entry of badRequests) {
     lines.push(badRequestEvidence(entry));
   }
@@ -412,16 +521,24 @@ export function buildHarTriageCaseFile(harData: HarFile): string {
     );
   }
 
+  if (staticFailures.length > 0) {
+    lines.push(`STATIC_ASSET_FAILURES low_priority_do_not_use_as_root_cause:\n${staticFailures.join('\n')}`);
+  }
+
   const raw = lines.join('\n');
   return raw.length > TRIAGE_CONTEXT_LIMIT ? `${raw.slice(0, TRIAGE_CONTEXT_LIMIT)}\n[TRIAGE_CONTEXT_TRUNCATED]` : raw;
 }
 
 export function buildHarContext(harData: HarFile): string {
   const entries = harData.log.entries;
-  const errors = entries.filter((e) => e.response.status >= 400);
+  const errors = entries.filter(isFailedEntry);
+  const httpErrors = entries.filter((e) => e.response.status >= 400);
+  const staticHttpErrors = httpErrors.filter(isStaticAsset);
+  const applicationErrors = errors.filter((e) => !isStaticAsset(e));
+  const networkFailures = entries.filter(isNetworkFailure);
   // Split errors by HTTP severity tier for priority-ordered analysis
-  const serverErrors = errors.filter((e) => e.response.status >= 500);          // 5xx
-  const clientErrors = errors.filter((e) => e.response.status >= 400 && e.response.status < 500); // 4xx
+  const serverErrors = applicationErrors.filter((e) => e.response.status >= 500);          // 5xx
+  const clientErrors = applicationErrors.filter((e) => e.response.status >= 400 && e.response.status < 500); // 4xx
   const totalMs = entries.reduce((s, e) => s + e.time, 0);
   const domains = [
     ...new Set(
@@ -446,7 +563,7 @@ export function buildHarContext(harData: HarFile): string {
   );
   const finalEntry = [...sortedByStart].reverse().find((e) => {
     const mime = e.response.content?.mimeType ?? '';
-    return mime.includes('html') || mime.includes('json') || e.response.status >= 400;
+    return !isStaticAsset(e) && (mime.includes('html') || mime.includes('json') || isFailedEntry(e));
   }) ?? sortedByStart[sortedByStart.length - 1];
   let finalUrl = '';
   try { finalUrl = new URL(finalEntry?.request.url ?? '').pathname; } catch { finalUrl = finalEntry?.request.url ?? ''; }
@@ -454,7 +571,10 @@ export function buildHarContext(harData: HarFile): string {
 
   // Known error page path patterns — used to flag chains ending on error pages
   const ERROR_PATH_PATTERNS = /servererror|errorpage|error\.jsp|\/error\b|\/oops|\/unavailable|\/fault/i;
-  const endsOnErrorPage = ERROR_PATH_PATTERNS.test(finalUrl) || finalStatus >= 400;
+  const endsOnErrorPage =
+    Boolean(finalEntry) &&
+    !isStaticAsset(finalEntry) &&
+    (ERROR_PATH_PATTERNS.test(finalUrl) || finalStatus >= 400 || finalStatus === 0);
 
   // ── Redirect chain detection ───────────────────────────────────────────────
   // Group sequential redirects into chains so the AI sees the compounding flow.
@@ -466,6 +586,8 @@ export function buildHarContext(harData: HarFile): string {
     `requests:${entries.length}`,
     serverErrors.length > 0 ? `5xx:${serverErrors.length}` : null,
     clientErrors.length > 0 ? `4xx:${clientErrors.length}` : null,
+    networkFailures.length > 0 ? `network_failures:${networkFailures.length}` : null,
+    staticHttpErrors.length > 0 ? `static_4xx:${staticHttpErrors.length}` : null,
     redirects.length > 0 ? `3xx:${redirects.length}` : null,
     `domains:${domains.length}`,
     `total_session:${sessionMs.toFixed(0)}ms`,
@@ -552,9 +674,23 @@ export function buildHarContext(harData: HarFile): string {
     return `${e.request.method} ${path} status:${e.response.status} totalms:${e.time.toFixed(0)}ms`;
   });
 
+  const networkFailureLines = networkFailures.slice(0, 10).map((e) => {
+    let path = e.request.url;
+    try { const u = new URL(e.request.url); path = u.hostname + u.pathname; } catch { /* keep raw */ }
+    const t = e.timings ?? {};
+    const blocked = (t.blocked ?? -1) >= 0 ? ` blocked=${(t.blocked ?? 0).toFixed(0)}ms` : '';
+    return `${e.request.method} ${path} status:0 totalms:${e.time.toFixed(0)}ms${blocked}`;
+  });
+
+  const staticAssetErrorLines = staticHttpErrors.slice(0, 10).map((e) => {
+    let path = e.request.url;
+    try { const u = new URL(e.request.url); path = u.hostname + u.pathname; } catch { /* keep raw */ }
+    return `${e.request.method} ${path} status:${e.response.status} totalms:${e.time.toFixed(0)}ms`;
+  });
+
   // ── Error Clusters: same endpoint failing repeatedly ────────────────────────
   const errorClusterMap = new Map<string, { count: number; statuses: number[] }>();
-  for (const e of errors) {
+  for (const e of applicationErrors) {
     let path = e.request.url;
     try { const u = new URL(e.request.url); path = u.hostname + u.pathname; } catch { /* keep raw */ }
     const key = `${e.request.method} ${path}`;
@@ -592,9 +728,15 @@ export function buildHarContext(harData: HarFile): string {
     ...(clientErrorLines.length
       ? [`4XX CLIENT ERRORS (${clientErrors.length} total):\n${clientErrorLines.join('\n')}`]
       : []),
+    ...(networkFailureLines.length
+      ? [`NETWORK FAILURES / STATUS 0 (${networkFailures.length} total — inspect CORS/preflight, blocked requests, or aborted browser fetches):\n${networkFailureLines.join('\n')}`]
+      : []),
     // Repeated failures on same endpoint
     ...(errorClusterLines.length
       ? [`ERROR CLUSTERS (same endpoint failing repeatedly — look for cascades):\n${errorClusterLines.join('\n')}`]
+      : []),
+    ...(staticAssetErrorLines.length
+      ? [`LOW-PRIORITY STATIC ASSET ERRORS (${staticHttpErrors.length} total — do not treat favicon/icon/static asset failures as root cause unless the main page/app bundle is affected):\n${staticAssetErrorLines.join('\n')}`]
       : []),
     // Performance slow-path last (2xx timing analysis)
     `TOP SLOW:\n${topSlow.join('\n')}`,
