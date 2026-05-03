@@ -1,7 +1,7 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import RequestFlowDiagram from '../RequestFlowDiagram';
-import { Entry } from '../../types/har';
+import { Entry, FilterOptions } from '../../types/har';
 
 const buildEntry = (overrides: Partial<Entry> = {}): Entry => ({
   startedDateTime: '2026-04-21T10:30:00.000Z',
@@ -42,6 +42,19 @@ const buildEntry = (overrides: Partial<Entry> = {}): Entry => ({
   },
   ...overrides,
 });
+
+const defaultFilters: FilterOptions = {
+  statusCodes: {
+    '0': false,
+    '1xx': false,
+    '2xx': true,
+    '3xx': true,
+    '4xx': true,
+    '5xx': true,
+  },
+  searchTerm: '',
+  timingType: 'relative',
+};
 
 describe('RequestFlowDiagram', () => {
   it('keeps domain zones visible when an external request filter narrows visible rows', () => {
@@ -134,5 +147,39 @@ describe('RequestFlowDiagram', () => {
 
     expect(screen.queryByText(/no requests match the current filters/i)).not.toBeInTheDocument();
     expect(screen.getByText('/api/progress')).toBeInTheDocument();
+  });
+
+  it('renders a shared request filter panel and forwards status and search changes', () => {
+    const onFiltersChange = vi.fn();
+    const entry = buildEntry({
+      request: {
+        ...buildEntry().request,
+        url: 'https://portal.example.com/api/orders',
+      },
+    });
+
+    render(
+      <RequestFlowDiagram
+        entries={[entry]}
+        visibleEntries={[entry]}
+        filters={defaultFilters}
+        onFiltersChange={onFiltersChange}
+      />
+    );
+
+    expect(screen.getByText('Request Filters')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /4xx/i }));
+    expect(onFiltersChange).toHaveBeenCalledWith({
+      statusCodes: {
+        ...defaultFilters.statusCodes,
+        '4xx': false,
+      },
+    });
+
+    fireEvent.change(screen.getByRole('searchbox', { name: /search/i }), {
+      target: { value: 'oraclecloud' },
+    });
+    expect(onFiltersChange).toHaveBeenCalledWith({ searchTerm: 'oraclecloud' });
   });
 });

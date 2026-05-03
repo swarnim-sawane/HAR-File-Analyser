@@ -2,7 +2,8 @@ import React from 'react';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import RequestFlowGraphView from '../RequestFlowGraphView';
-import { Entry } from '../../types/har';
+import { Entry, FilterOptions } from '../../types/har';
+import type { RequestFlowFocusMode } from '../../types/requestFlow';
 
 vi.mock('reactflow', async () => {
   const ReactModule = await import('react');
@@ -119,9 +120,52 @@ const makeEntry = (overrides: Partial<Entry> = {}): Entry => ({
   ...overrides,
 });
 
+const defaultFilters: FilterOptions = {
+  statusCodes: {
+    '0': false,
+    '1xx': false,
+    '2xx': true,
+    '3xx': true,
+    '4xx': true,
+    '5xx': true,
+  },
+  searchTerm: '',
+  timingType: 'relative',
+};
+
+function renderGraphView({
+  entries,
+  visibleEntries = entries,
+  filters = defaultFilters,
+  focusMode = 'all',
+  onFiltersChange = vi.fn(),
+  onFocusModeChange = vi.fn(),
+  onNodeClick = vi.fn(),
+}: {
+  entries: Entry[];
+  visibleEntries?: Entry[];
+  filters?: FilterOptions;
+  focusMode?: RequestFlowFocusMode;
+  onFiltersChange?: (filters: Partial<FilterOptions>) => void;
+  onFocusModeChange?: (mode: RequestFlowFocusMode) => void;
+  onNodeClick?: (entry: Entry) => void;
+}) {
+  return render(
+    <RequestFlowGraphView
+      entries={entries}
+      visibleEntries={visibleEntries}
+      filters={filters}
+      focusMode={focusMode}
+      onFiltersChange={onFiltersChange}
+      onFocusModeChange={onFocusModeChange}
+      onNodeClick={onNodeClick}
+    />
+  );
+}
+
 describe('RequestFlowGraphView', () => {
   it('renders the shared empty state when there are no entries', () => {
-    render(<RequestFlowGraphView entries={[]} onNodeClick={vi.fn()} />);
+    renderGraphView({ entries: [] });
 
     expect(screen.getByText(/no requests to display/i)).toBeInTheDocument();
     expect(screen.queryByTestId('react-flow-mock')).not.toBeInTheDocument();
@@ -160,7 +204,7 @@ describe('RequestFlowGraphView', () => {
       }),
     ];
 
-    render(<RequestFlowGraphView entries={entries} onNodeClick={vi.fn()} />);
+    renderGraphView({ entries });
 
     expect(screen.getByTestId('react-flow-mock')).toBeInTheDocument();
     expect(screen.getByTestId('react-flow-mock')).toHaveAttribute('data-nodes-draggable', 'true');
@@ -198,7 +242,7 @@ describe('RequestFlowGraphView', () => {
     ];
     const handleNodeClick = vi.fn();
 
-    render(<RequestFlowGraphView entries={entries} onNodeClick={handleNodeClick} />);
+    renderGraphView({ entries, onNodeClick: handleNodeClick });
 
     await user.click(screen.getByRole('button', { name: /open in analyzer/i }));
 
@@ -238,7 +282,7 @@ describe('RequestFlowGraphView', () => {
       }),
     ];
 
-    render(<RequestFlowGraphView entries={entries} onNodeClick={vi.fn()} />);
+    renderGraphView({ entries });
 
     const checkbox = screen.getByRole('checkbox', { name: /highlight critical path/i });
     expect(checkbox).not.toBeChecked();
@@ -261,5 +305,84 @@ describe('RequestFlowGraphView', () => {
       'false',
       'true',
     ]);
+  });
+
+  it('keeps analyzer-filtered requests in the scattered graph and dims nonmatching nodes', () => {
+    const entries: Entry[] = [
+      makeEntry({
+        startedDateTime: '2026-04-21T10:30:00.000Z',
+        request: { ...makeEntry().request, url: 'https://portal.example.com/' },
+        response: {
+          ...makeEntry().response,
+          status: 200,
+          content: { size: 2048, mimeType: 'text/html' },
+        },
+      }),
+      makeEntry({
+        startedDateTime: '2026-04-21T10:30:01.000Z',
+        request: { ...makeEntry().request, url: 'https://portal.example.com/api/error' },
+        response: {
+          ...makeEntry().response,
+          status: 404,
+          statusText: 'Not Found',
+          content: { size: 128, mimeType: 'application/json' },
+        },
+      }),
+    ];
+
+    renderGraphView({
+      entries,
+      visibleEntries: [entries[1]],
+      filters: {
+        ...defaultFilters,
+        statusCodes: {
+          '0': false,
+          '1xx': false,
+          '2xx': false,
+          '3xx': false,
+          '4xx': true,
+          '5xx': false,
+        },
+      },
+    });
+
+    expect(screen.getAllByTestId('react-flow-node')).toHaveLength(2);
+    expect(screen.getAllByTestId('react-flow-node').map((node) => node.getAttribute('data-node-dimmed'))).toEqual([
+      'true',
+      'false',
+    ]);
+  });
+
+  it('uses flow focus chips to dim nonmatching requests without changing analyzer filters', async () => {
+    const user = userEvent.setup();
+    const onFocusModeChange = vi.fn();
+    const onFiltersChange = vi.fn();
+    const entries: Entry[] = [
+      makeEntry({
+        request: { ...makeEntry().request, url: 'https://portal.example.com/' },
+        response: { ...makeEntry().response, status: 200 },
+      }),
+      makeEntry({
+        request: { ...makeEntry().request, url: 'https://portal.example.com/api/error' },
+        response: { ...makeEntry().response, status: 500, statusText: 'Server Error' },
+      }),
+    ];
+
+    renderGraphView({
+      entries,
+      focusMode: 'errors',
+      onFocusModeChange,
+      onFiltersChange,
+    });
+
+    expect(screen.getAllByTestId('react-flow-node').map((node) => node.getAttribute('data-node-dimmed'))).toEqual([
+      'true',
+      'false',
+    ]);
+
+    await user.click(screen.getByRole('button', { name: /slow/i }));
+
+    expect(onFocusModeChange).toHaveBeenCalledWith('slow');
+    expect(onFiltersChange).not.toHaveBeenCalled();
   });
 });

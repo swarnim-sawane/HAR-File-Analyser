@@ -16,6 +16,7 @@ import PerformanceScorecard from './PerformanceScorecard';
 import AiInsights from './AiInsights';
 import { apiClient } from '../services/apiClient';
 import { ChevronDownIcon, ClockIcon, FileIcon, NetworkIcon, RouteIcon, ServerIcon, TrashIcon, UploadIcon } from './Icons';
+import type { RequestFlowFocusMode } from '../types/requestFlow';
 
 type HarTab = 'analyzer' | 'flow' | 'scorecard' | 'insights';
 type FlowViewMode = 'diagram' | 'nodes' | 'trace';
@@ -52,6 +53,7 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
   const harState = useHarData();
   const [activeTab, setActiveTab] = useState<HarTab>('analyzer');
   const [flowViewMode, setFlowViewMode] = useState<FlowViewMode>('nodes');
+  const [requestFlowFocusMode, setRequestFlowFocusMode] = useState<RequestFlowFocusMode>('all');
   const [detailsWidth, setDetailsWidth] = useState(450);
   const [isLoadingFile, setIsLoadingFile] = useState(true);
   const [showStickyRecent, setShowStickyRecent] = useState(false);
@@ -353,6 +355,10 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
                   <RequestFlowDiagram
                     entries={flowSessionEntries}
                     visibleEntries={harState.filteredEntries}
+                    filters={harState.filters}
+                    onFiltersChange={harState.updateFilters}
+                    focusMode={requestFlowFocusMode}
+                    onFocusModeChange={setRequestFlowFocusMode}
                     onNodeClick={(entry: any) => {
                       harState.setSelectedEntry(entry);
                       setActiveTab('analyzer');
@@ -368,7 +374,12 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
                   />
                 ) : (
                   <RequestFlowGraphView
-                    entries={harState.filteredEntries}
+                    entries={flowSessionEntries}
+                    visibleEntries={harState.filteredEntries}
+                    filters={harState.filters}
+                    onFiltersChange={harState.updateFilters}
+                    focusMode={requestFlowFocusMode}
+                    onFocusModeChange={setRequestFlowFocusMode}
                     onNodeClick={(entry) => {
                       harState.setSelectedEntry(entry);
                       setActiveTab('analyzer');

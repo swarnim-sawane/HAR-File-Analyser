@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { Entry } from '../types/har';
+import React, { useCallback, useId, useMemo, useState } from 'react';
+import { Entry, FilterOptions } from '../types/har';
 import {
   analyzeFlow,
   DomainZone,
@@ -7,6 +7,11 @@ import {
   ZoneRequest,
   TYPE_COLOR,
 } from '../utils/requestFlowAnalyzer';
+import type { RequestFlowFocusMode } from '../types/requestFlow';
+import {
+  getVisibleRequestIndexes,
+  requestMatchesFlowFocus,
+} from '../utils/requestFlowFilters';
 import {
   AlertIcon,
   CheckIcon,
@@ -24,20 +29,46 @@ import {
   NetworkIcon,
   PackageIcon,
   RouteIcon,
+  SearchIcon,
   SparklesIcon,
 } from './Icons';
 
 interface RequestFlowDiagramProps {
   entries: Entry[];
   visibleEntries?: Entry[];
+  filters?: FilterOptions;
+  onFiltersChange?: (filters: Partial<FilterOptions>) => void;
+  focusMode?: RequestFlowFocusMode;
+  onFocusModeChange?: (mode: RequestFlowFocusMode) => void;
   onNodeClick?: (entry: Entry) => void;
 }
 
-type FilterMode = 'all' | 'errors' | 'slow';
 type ZoneHealthTone = 'error' | 'slow' | 'ok';
 type StatusTone = 'neutral' | 'success' | 'warning' | 'danger';
 
 const ALL_TYPES = ['document', 'script', 'xhr', 'stylesheet', 'image', 'font', 'other'] as const;
+
+const DEFAULT_FILTERS: FilterOptions = {
+  statusCodes: {
+    '0': false,
+    '1xx': false,
+    '2xx': true,
+    '3xx': true,
+    '4xx': true,
+    '5xx': true,
+  },
+  searchTerm: '',
+  timingType: 'relative',
+};
+
+const STATUS_FILTERS: Array<{ code: keyof FilterOptions['statusCodes']; label: string }> = [
+  { code: '0', label: '0' },
+  { code: '1xx', label: '1xx' },
+  { code: '2xx', label: '2xx' },
+  { code: '3xx', label: '3xx' },
+  { code: '4xx', label: '4xx' },
+  { code: '5xx', label: '5xx' },
+];
 
 const TYPE_LABEL: Record<string, string> = {
   document: 'Document',
@@ -79,16 +110,6 @@ function getPathLabel(url: string): string {
   } catch {
     return url;
   }
-}
-
-function getEntryIdentity(entry: Entry): string {
-  return [
-    entry.startedDateTime,
-    entry.request.method,
-    entry.request.url,
-    entry.response.status,
-    entry.time ?? 0,
-  ].join('|');
 }
 
 function getDomainMonogram(domain: string): string {
@@ -148,7 +169,7 @@ function getTypeIcon(type: string): React.ReactNode {
   }
 }
 
-function getFilterIcon(mode: FilterMode): React.ReactNode {
+function getFilterIcon(mode: RequestFlowFocusMode): React.ReactNode {
   if (mode === 'errors') return <AlertIcon />;
   if (mode === 'slow') return <FlameIcon />;
   return <SparklesIcon />;
@@ -170,7 +191,7 @@ const SummaryPill: React.FC<{
 );
 
 const ViewChip: React.FC<{
-  mode: FilterMode;
+  mode: RequestFlowFocusMode;
   active: boolean;
   onClick: () => void;
 }> = ({ mode, active, onClick }) => (
@@ -329,7 +350,7 @@ const ZoneCard: React.FC<{
   maxTime: number;
   visibleTypes: Set<string>;
   visibleRequestIndexes: Set<number> | null;
-  filterMode: FilterMode;
+  filterMode: RequestFlowFocusMode;
   collapsed: boolean;
   onToggle: () => void;
   onRequestClick: (index: number) => void;
@@ -349,9 +370,7 @@ const ZoneCard: React.FC<{
   const visibleRequests = zone.requests.filter((request) => {
     if (visibleRequestIndexes && !visibleRequestIndexes.has(request.index)) return false;
     if (!visibleTypes.has(request.type)) return false;
-    if (filterMode === 'errors') return request.failed;
-    if (filterMode === 'slow') return request.isSlow;
-    return true;
+    return requestMatchesFlowFocus(request, filterMode);
   });
 
   return (
@@ -423,42 +442,28 @@ const ZoneCard: React.FC<{
   );
 };
 
-const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({ entries, visibleEntries, onNodeClick }) => {
+const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({
+  entries,
+  visibleEntries,
+  filters,
+  onFiltersChange,
+  focusMode: controlledFocusMode,
+  onFocusModeChange,
+  onNodeClick,
+}) => {
+  const searchInputId = useId();
   const flowData = useMemo(() => analyzeFlow(entries), [entries]);
   const { zones, links, p90, maxRequestTime, totalMs } = flowData;
-  const visibleRequestIndexes = useMemo(() => {
-    if (!visibleEntries) return null;
+  const visibleRequestIndexes = useMemo(
+    () => getVisibleRequestIndexes(entries, visibleEntries),
+    [entries, visibleEntries]
+  );
 
-    const indexByEntry = new Map<Entry, number>();
-    const indexesByIdentity = new Map<string, number[]>();
-
-    entries.forEach((entry, index) => {
-      indexByEntry.set(entry, index);
-
-      const identity = getEntryIdentity(entry);
-      const indexes = indexesByIdentity.get(identity) ?? [];
-      indexes.push(index);
-      indexesByIdentity.set(identity, indexes);
-    });
-
-    const next = new Set<number>();
-
-    visibleEntries.forEach((entry) => {
-      const directIndex = indexByEntry.get(entry);
-      if (directIndex !== undefined) {
-        next.add(directIndex);
-        return;
-      }
-
-      indexesByIdentity.get(getEntryIdentity(entry))?.forEach((index) => next.add(index));
-    });
-
-    return next;
-  }, [entries, visibleEntries]);
-
-  const [filterMode, setFilterMode] = useState<FilterMode>('all');
+  const [localFocusMode, setLocalFocusMode] = useState<RequestFlowFocusMode>('all');
   const [visibleTypes, setVisibleTypes] = useState<Set<string>>(new Set(ALL_TYPES));
   const [collapsedZones, setCollapsedZones] = useState<Set<string>>(new Set());
+  const focusMode = controlledFocusMode ?? localFocusMode;
+  const activeFilters = filters ?? DEFAULT_FILTERS;
 
   const linkedZoneIds = new Set(links.flatMap((link) => [link.fromZoneId, link.toZoneId]));
   const linkedZones = zones.filter((zone) => linkedZoneIds.has(zone.id));
@@ -468,6 +473,19 @@ const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({ entries, visibl
   const allCollapsed = zones.length > 0 && collapsedZones.size === zones.length;
   const totalRequests = entries.length;
   const slowCount = entries.filter((entry) => (entry.time || 0) >= p90 && (entry.time || 0) > 500).length;
+  const focusedRequestCount = useMemo(
+    () =>
+      zones.reduce((count, zone) => {
+        const matchingRequests = zone.requests.filter((request) => {
+          if (visibleRequestIndexes && !visibleRequestIndexes.has(request.index)) return false;
+          if (!visibleTypes.has(request.type)) return false;
+          return requestMatchesFlowFocus(request, focusMode);
+        });
+
+        return count + matchingRequests.length;
+      }, 0),
+    [focusMode, visibleRequestIndexes, visibleTypes, zones]
+  );
 
   function toggleType(type: string) {
     setVisibleTypes((current) => {
@@ -480,6 +498,34 @@ const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({ entries, visibl
       return next;
     });
   }
+
+  function handleFocusModeChange(mode: RequestFlowFocusMode) {
+    if (onFocusModeChange) {
+      onFocusModeChange(mode);
+      return;
+    }
+
+    setLocalFocusMode(mode);
+  }
+
+  const handleStatusCodeChange = useCallback(
+    (code: keyof FilterOptions['statusCodes']) => {
+      onFiltersChange?.({
+        statusCodes: {
+          ...activeFilters.statusCodes,
+          [code]: !activeFilters.statusCodes[code],
+        },
+      });
+    },
+    [activeFilters.statusCodes, onFiltersChange]
+  );
+
+  const handleSearchTermChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      onFiltersChange?.({ searchTerm: event.target.value });
+    },
+    [onFiltersChange]
+  );
 
   function toggleCollapseAll() {
     if (allCollapsed) {
@@ -539,39 +585,82 @@ const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({ entries, visibl
             </div>
           </div>
 
-          <div className="request-flow-controls">
-            <div className="request-flow-control-group">
-              <span className="request-flow-control-label">View</span>
-              <div className="request-flow-view-list">
-                {(['all', 'errors', 'slow'] as const).map((mode) => (
-                  <ViewChip
-                    key={mode}
-                    mode={mode}
-                    active={filterMode === mode}
-                    onClick={() => setFilterMode(mode)}
-                  />
-                ))}
+          <div className="request-flow-controls request-flow-filter-panel">
+            <div className="request-flow-filter-panel-header">
+              <div className="request-flow-filter-panel-title-group">
+                <span className="request-flow-control-label">Request Filters</span>
+                <span className="request-flow-filter-panel-count">
+                  Focused <strong>{focusedRequestCount}</strong> / <strong>{totalRequests}</strong>
+                </span>
               </div>
+
+              <button type="button" className="request-flow-collapse-button" onClick={toggleCollapseAll}>
+                <span aria-hidden="true">{allCollapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}</span>
+                <span>{allCollapsed ? 'Expand All' : 'Collapse All'}</span>
+              </button>
             </div>
 
-            <div className="request-flow-control-group grow">
-              <span className="request-flow-control-label">Resource Types</span>
-              <div className="request-flow-type-list">
-                {ALL_TYPES.map((type) => (
-                  <TypePill
-                    key={type}
-                    type={type}
-                    active={visibleTypes.has(type)}
-                    onClick={() => toggleType(type)}
+            <div className="request-flow-filter-grid">
+              <div className="request-flow-filter-section request-flow-filter-section-status">
+                <span className="request-flow-control-label">Status</span>
+                <div className="request-flow-status-filter-list" aria-label="Status filters">
+                  {STATUS_FILTERS.map((item) => (
+                    <label key={item.code} className="request-flow-status-filter-toggle">
+                      <input
+                        type="checkbox"
+                        checked={activeFilters.statusCodes[item.code]}
+                        disabled={!onFiltersChange}
+                        onChange={() => handleStatusCodeChange(item.code)}
+                      />
+                      <span className={`status-badge status-${item.code}`}>{item.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <label className="request-flow-filter-section request-flow-search-filter" htmlFor={searchInputId}>
+                <span className="request-flow-control-label">Search</span>
+                <span className="request-flow-search-filter-box">
+                  <SearchIcon />
+                  <input
+                    id={searchInputId}
+                    type="search"
+                    value={activeFilters.searchTerm}
+                    disabled={!onFiltersChange}
+                    placeholder="URL, status, headers..."
+                    onChange={handleSearchTermChange}
                   />
-                ))}
+                </span>
+              </label>
+
+              <div className="request-flow-filter-section request-flow-filter-section-view">
+                <span className="request-flow-control-label">Focus</span>
+                <div className="request-flow-view-list">
+                  {(['all', 'errors', 'slow'] as const).map((mode) => (
+                    <ViewChip
+                      key={mode}
+                      mode={mode}
+                      active={focusMode === mode}
+                      onClick={() => handleFocusModeChange(mode)}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <div className="request-flow-filter-section request-flow-filter-section-types">
+                <span className="request-flow-control-label">Resource Types</span>
+                <div className="request-flow-type-list">
+                  {ALL_TYPES.map((type) => (
+                    <TypePill
+                      key={type}
+                      type={type}
+                      active={visibleTypes.has(type)}
+                      onClick={() => toggleType(type)}
+                    />
+                  ))}
+                </div>
               </div>
             </div>
-
-            <button type="button" className="request-flow-collapse-button" onClick={toggleCollapseAll}>
-              <span aria-hidden="true">{allCollapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}</span>
-              <span>{allCollapsed ? 'Expand All' : 'Collapse All'}</span>
-            </button>
           </div>
         </div>
       </header>
@@ -621,7 +710,7 @@ const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({ entries, visibl
                   maxTime={maxRequestTime}
                   visibleTypes={visibleTypes}
                   visibleRequestIndexes={visibleRequestIndexes}
-                  filterMode={filterMode}
+                  filterMode={focusMode}
                   collapsed={collapsedZones.has(zone.id)}
                   onToggle={() => toggleZone(zone.id)}
                   onRequestClick={handleRequestClick}
@@ -651,7 +740,7 @@ const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({ entries, visibl
               maxTime={maxRequestTime}
               visibleTypes={visibleTypes}
               visibleRequestIndexes={visibleRequestIndexes}
-              filterMode={filterMode}
+              filterMode={focusMode}
               collapsed={collapsedZones.has(zone.id)}
               onToggle={() => toggleZone(zone.id)}
               onRequestClick={handleRequestClick}

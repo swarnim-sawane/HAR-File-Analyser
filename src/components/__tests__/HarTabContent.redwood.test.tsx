@@ -3,7 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import HarTabContent from '../HarTabContent';
 
-const { getHarDataMock, mockHarState, requestFlowDiagramMock } = vi.hoisted(() => {
+const { getHarDataMock, mockHarState, requestFlowDiagramMock, requestFlowGraphViewMock } = vi.hoisted(() => {
   const sampleHarFile = {
     log: {
       version: '1.2',
@@ -86,6 +86,7 @@ const { getHarDataMock, mockHarState, requestFlowDiagramMock } = vi.hoisted(() =
   return {
     getHarDataMock: vi.fn().mockResolvedValue(sampleHarFile),
     requestFlowDiagramMock: vi.fn(),
+    requestFlowGraphViewMock: vi.fn(),
     mockHarState: {
       harData: sampleHarFile,
       filteredEntries: sampleHarFile.log.entries,
@@ -152,7 +153,10 @@ vi.mock('../RequestFlowDiagram', () => ({
 }));
 
 vi.mock('../RequestFlowGraphView', () => ({
-  default: () => <div>Scattered view mock</div>,
+  default: (props: any) => {
+    requestFlowGraphViewMock(props);
+    return <div>Scattered view mock</div>;
+  },
 }));
 
 vi.mock('../RequestFlowTraceView', () => ({
@@ -176,6 +180,7 @@ describe('HarTabContent Redwood theme smoke test', () => {
     mockHarState.filteredEntries = mockHarState.harData.log.entries;
     mockHarState.loadHarData.mockClear();
     requestFlowDiagramMock.mockClear();
+    requestFlowGraphViewMock.mockClear();
   });
 
   it('renders the HAR analyzer shell in Redwood mode', async () => {
@@ -282,6 +287,47 @@ describe('HarTabContent Redwood theme smoke test', () => {
       expect.objectContaining({
         entries: allEntries,
         visibleEntries: [allEntries[1]],
+        filters: mockHarState.filters,
+        onFiltersChange: mockHarState.updateFilters,
+        focusMode: 'all',
+      })
+    );
+  });
+
+  it('passes full HAR entries and shared filters to the scattered view while preserving the analyzer-filtered visible subset', async () => {
+    const user = userEvent.setup();
+    const allEntries = mockHarState.harData.log.entries;
+    mockHarState.filteredEntries = [allEntries[1]];
+
+    render(
+      <HarTabContent
+        tabId="tab-1"
+        fileId="file-1"
+        fileName="session.har"
+        isActive
+        backendUrl="http://localhost:4000"
+        recentFiles={[]}
+        onAddNewTab={vi.fn()}
+        onLoadRecentNewTab={vi.fn()}
+        onClearRecent={vi.fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(getHarDataMock).toHaveBeenCalledWith('file-1');
+      expect(mockHarState.loadHarData).toHaveBeenCalled();
+    });
+
+    await user.click(screen.getByRole('button', { name: /request flow/i }));
+
+    expect(requestFlowGraphViewMock).toHaveBeenCalled();
+    expect(requestFlowGraphViewMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        entries: allEntries,
+        visibleEntries: [allEntries[1]],
+        filters: mockHarState.filters,
+        onFiltersChange: mockHarState.updateFilters,
+        focusMode: 'all',
       })
     );
   });
