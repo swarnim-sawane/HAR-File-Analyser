@@ -1,4 +1,5 @@
-import React, { useCallback, useId, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Maximize2, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
 import { Entry, FilterOptions } from '../types/har';
 import {
   analyzeFlow,
@@ -28,7 +29,6 @@ import {
   LayersIcon,
   NetworkIcon,
   PackageIcon,
-  RouteIcon,
   SearchIcon,
   SparklesIcon,
 } from './Icons';
@@ -47,6 +47,10 @@ type ZoneHealthTone = 'error' | 'slow' | 'ok';
 type StatusTone = 'neutral' | 'success' | 'warning' | 'danger';
 
 const ALL_TYPES = ['document', 'script', 'xhr', 'stylesheet', 'image', 'font', 'other'] as const;
+const MIN_ZOOM_PERCENT = 55;
+const MAX_ZOOM_PERCENT = 125;
+const DEFAULT_ZOOM_PERCENT = 100;
+const ZOOM_STEP_PERCENT = 10;
 
 const DEFAULT_FILTERS: FilterOptions = {
   statusCodes: {
@@ -69,6 +73,10 @@ const STATUS_FILTERS: Array<{ code: keyof FilterOptions['statusCodes']; label: s
   { code: '4xx', label: '4xx' },
   { code: '5xx', label: '5xx' },
 ];
+
+function clampZoomPercent(value: number): number {
+  return Math.max(MIN_ZOOM_PERCENT, Math.min(MAX_ZOOM_PERCENT, Math.round(value)));
+}
 
 const TYPE_LABEL: Record<string, string> = {
   document: 'Document',
@@ -452,6 +460,9 @@ const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({
   onNodeClick,
 }) => {
   const searchInputId = useId();
+  const filterPanelId = useId();
+  const stageViewportRef = useRef<HTMLDivElement | null>(null);
+  const stageTrackRef = useRef<HTMLDivElement | null>(null);
   const flowData = useMemo(() => analyzeFlow(entries), [entries]);
   const { zones, links, p90, maxRequestTime, totalMs } = flowData;
   const visibleRequestIndexes = useMemo(
@@ -462,8 +473,15 @@ const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({
   const [localFocusMode, setLocalFocusMode] = useState<RequestFlowFocusMode>('all');
   const [visibleTypes, setVisibleTypes] = useState<Set<string>>(new Set(ALL_TYPES));
   const [collapsedZones, setCollapsedZones] = useState<Set<string>>(new Set());
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [zoomMode, setZoomMode] = useState<'fit' | 'manual'>('fit');
+  const [manualZoomPercent, setManualZoomPercent] = useState(DEFAULT_ZOOM_PERCENT);
+  const [fitZoomPercent, setFitZoomPercent] = useState(DEFAULT_ZOOM_PERCENT);
+  const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
   const focusMode = controlledFocusMode ?? localFocusMode;
   const activeFilters = filters ?? DEFAULT_FILTERS;
+  const activeZoomPercent = zoomMode === 'fit' ? fitZoomPercent : manualZoomPercent;
+  const activeZoom = Number((activeZoomPercent / 100).toFixed(2));
 
   const linkedZoneIds = new Set(links.flatMap((link) => [link.fromZoneId, link.toZoneId]));
   const linkedZones = zones.filter((zone) => linkedZoneIds.has(zone.id));
@@ -486,6 +504,80 @@ const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({
       }, 0),
     [focusMode, visibleRequestIndexes, visibleTypes, zones]
   );
+  const zoomLayerStyle = useMemo(
+    () =>
+      ({
+        ['--request-flow-zoom' as string]: activeZoom,
+        transform: `scale(${activeZoom})`,
+      } as React.CSSProperties),
+    [activeZoom]
+  );
+  const zoomFrameStyle = useMemo(() => {
+    if (stageSize.width <= 0 || stageSize.height <= 0) return undefined;
+
+    return {
+      width: `${Math.ceil(stageSize.width * activeZoom)}px`,
+      height: `${Math.ceil(stageSize.height * activeZoom)}px`,
+    } as React.CSSProperties;
+  }, [activeZoom, stageSize.height, stageSize.width]);
+
+  const measureStage = useCallback(() => {
+    const viewport = stageViewportRef.current;
+    const track = stageTrackRef.current;
+    if (!viewport || !track) return;
+
+    const contentWidth = Math.ceil(track.scrollWidth || track.getBoundingClientRect().width);
+    const contentHeight = Math.ceil(track.scrollHeight || track.getBoundingClientRect().height);
+    const availableWidth = Math.max(1, viewport.clientWidth - 24);
+    const availableHeight = Math.max(1, viewport.clientHeight - 58);
+
+    if (contentWidth > 0 && contentHeight > 0) {
+      const nextFit = clampZoomPercent(
+        Math.min(
+          DEFAULT_ZOOM_PERCENT,
+          (availableWidth / contentWidth) * 100,
+          (availableHeight / contentHeight) * 100
+        )
+      );
+      setFitZoomPercent((current) => (current === nextFit ? current : nextFit));
+    }
+
+    if (contentWidth > 0 && contentHeight > 0) {
+      setStageSize((current) =>
+        current.width === contentWidth && current.height === contentHeight
+          ? current
+          : { width: contentWidth, height: contentHeight }
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    const viewport = stageViewportRef.current;
+    const track = stageTrackRef.current;
+    if (!viewport || !track) return;
+
+    measureStage();
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', measureStage);
+      return () => window.removeEventListener('resize', measureStage);
+    }
+
+    const observer = new ResizeObserver(measureStage);
+    observer.observe(viewport);
+    observer.observe(track);
+    window.addEventListener('resize', measureStage);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', measureStage);
+    };
+  }, [measureStage, focusedRequestCount, zones.length]);
+
+  function setManualZoom(nextZoomPercent: number) {
+    setZoomMode('manual');
+    setManualZoomPercent(clampZoomPercent(nextZoomPercent));
+  }
 
   function toggleType(type: string) {
     setVisibleTypes((current) => {
@@ -506,6 +598,28 @@ const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({
     }
 
     setLocalFocusMode(mode);
+  }
+
+  function handleZoomOut() {
+    setManualZoom(activeZoomPercent - ZOOM_STEP_PERCENT);
+  }
+
+  function handleZoomIn() {
+    setManualZoom(activeZoomPercent + ZOOM_STEP_PERCENT);
+  }
+
+  function handleFitZoom() {
+    measureStage();
+    setZoomMode('fit');
+  }
+
+  function handleResetZoom() {
+    setZoomMode('manual');
+    setManualZoomPercent(DEFAULT_ZOOM_PERCENT);
+  }
+
+  function toggleFilters() {
+    setFiltersOpen((current) => !current);
   }
 
   const handleStatusCodeChange = useCallback(
@@ -562,6 +676,56 @@ const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({
   }
 
   let visualIndex = 0;
+  const zoomControls = (
+    <div className="request-flow-zoom-controls" aria-label="Journey map zoom controls">
+      <button
+        type="button"
+        className="request-flow-zoom-icon-button"
+        aria-label="Zoom out journey map"
+        title="Zoom out"
+        disabled={activeZoomPercent <= MIN_ZOOM_PERCENT}
+        onClick={handleZoomOut}
+      >
+        <ZoomOut aria-hidden="true" size={15} strokeWidth={2.2} />
+      </button>
+
+      <output className="request-flow-zoom-value" aria-label="Journey map zoom level" aria-live="polite">
+        {activeZoomPercent}%
+      </output>
+
+      <button
+        type="button"
+        className="request-flow-zoom-icon-button"
+        aria-label="Zoom in journey map"
+        title="Zoom in"
+        disabled={activeZoomPercent >= MAX_ZOOM_PERCENT}
+        onClick={handleZoomIn}
+      >
+        <ZoomIn aria-hidden="true" size={15} strokeWidth={2.2} />
+      </button>
+
+      <button
+        type="button"
+        className={`request-flow-zoom-text-button ${zoomMode === 'fit' ? 'is-active' : ''}`}
+        aria-label="Fit journey map"
+        aria-pressed={zoomMode === 'fit'}
+        title="Fit"
+        onClick={handleFitZoom}
+      >
+        <Maximize2 aria-hidden="true" size={14} strokeWidth={2.2} />
+      </button>
+
+      <button
+        type="button"
+        className="request-flow-zoom-text-button"
+        aria-label="Reset journey map zoom to 100%"
+        title="Reset to 100%"
+        onClick={handleResetZoom}
+      >
+        <RotateCcw aria-hidden="true" size={14} strokeWidth={2.2} />
+      </button>
+    </div>
+  );
 
   return (
     <section className="request-flow-shell">
@@ -569,12 +733,7 @@ const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({
         <div className="request-flow-toolbar-inner">
           <div className="request-flow-toolbar-top">
             <div className="request-flow-summary">
-              <div className="request-flow-kicker">
-                <RouteIcon />
-                <span>Request Journey</span>
-              </div>
-              <h3>Cross-domain session map</h3>
-              <p>Follow cross-domain redirects and request groups in this HAR session.</p>
+              <h3>Cross domain journey</h3>
             </div>
 
             <div className="request-flow-summary-grid">
@@ -585,7 +744,7 @@ const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({
             </div>
           </div>
 
-          <div className="request-flow-controls request-flow-filter-panel">
+          <div className={`request-flow-controls request-flow-filter-panel ${filtersOpen ? 'is-open' : 'is-collapsed'}`}>
             <div className="request-flow-filter-panel-header">
               <div className="request-flow-filter-panel-title-group">
                 <span className="request-flow-control-label">Request Filters</span>
@@ -594,13 +753,27 @@ const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({
                 </span>
               </div>
 
-              <button type="button" className="request-flow-collapse-button" onClick={toggleCollapseAll}>
-                <span aria-hidden="true">{allCollapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}</span>
-                <span>{allCollapsed ? 'Expand All' : 'Collapse All'}</span>
-              </button>
+              <div className="request-flow-filter-panel-actions">
+                <button
+                  type="button"
+                  className={`request-flow-filter-toggle-button ${filtersOpen ? 'is-active' : ''}`}
+                  aria-controls={filterPanelId}
+                  aria-expanded={filtersOpen}
+                  aria-label={filtersOpen ? 'Hide request filters' : 'Show request filters'}
+                  onClick={toggleFilters}
+                >
+                  <span aria-hidden="true"><LayersIcon /></span>
+                  <span>Filters</span>
+                </button>
+
+                <button type="button" className="request-flow-collapse-button" onClick={toggleCollapseAll}>
+                  <span aria-hidden="true">{allCollapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}</span>
+                  <span>{allCollapsed ? 'Expand All' : 'Collapse All'}</span>
+                </button>
+              </div>
             </div>
 
-            <div className="request-flow-filter-grid">
+            <div className="request-flow-filter-grid" id={filterPanelId} hidden={!filtersOpen}>
               <div className="request-flow-filter-section request-flow-filter-section-status">
                 <span className="request-flow-control-label">Status</span>
                 <div className="request-flow-status-filter-list" aria-label="Status filters">
@@ -697,15 +870,54 @@ const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({
         </div>
       )}
 
-      <div className="request-flow-stage">
-        <div className="request-flow-stage-track">
-          {linkedZones.map((zone, index) => {
-            const nextZone = linkedZones[index + 1];
-            const link = nextZone ? journeyLinksByKey.get(`${zone.id}->${nextZone.id}`) : undefined;
+      <div className="request-flow-stage" ref={stageViewportRef}>
+        <div className="request-flow-stage-controls">
+          {zoomControls}
+        </div>
+        <div className="request-flow-stage-zoom-frame" style={zoomFrameStyle}>
+          <div
+            className="request-flow-stage-zoom-layer"
+            data-testid="request-flow-zoom-layer"
+            style={zoomLayerStyle}
+          >
+            <div className="request-flow-stage-track" ref={stageTrackRef}>
+              {linkedZones.map((zone, index) => {
+                const nextZone = linkedZones[index + 1];
+                const link = nextZone ? journeyLinksByKey.get(`${zone.id}->${nextZone.id}`) : undefined;
 
-            return (
-              <React.Fragment key={`${zone.id}-stage`}>
+                return (
+                  <React.Fragment key={`${zone.id}-stage`}>
+                    <ZoneCard
+                      zone={zone}
+                      maxTime={maxRequestTime}
+                      visibleTypes={visibleTypes}
+                      visibleRequestIndexes={visibleRequestIndexes}
+                      filterMode={focusMode}
+                      collapsed={collapsedZones.has(zone.id)}
+                      onToggle={() => toggleZone(zone.id)}
+                      onRequestClick={handleRequestClick}
+                      index={visualIndex++}
+                    />
+                    {link && <ZoneConnector link={link} index={visualIndex++} />}
+                  </React.Fragment>
+                );
+              })}
+
+              {isolatedZones.length > 0 && linkedZones.length > 0 && (
+                <div className="request-flow-separator">
+                  <span />
+                  <div>
+                    <GlobeIcon />
+                    <strong>Independent</strong>
+                    <p>Domains outside the main handoff chain.</p>
+                  </div>
+                  <span />
+                </div>
+              )}
+
+              {isolatedZones.map((zone) => (
                 <ZoneCard
+                  key={zone.id}
                   zone={zone}
                   maxTime={maxRequestTime}
                   visibleTypes={visibleTypes}
@@ -716,37 +928,9 @@ const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({
                   onRequestClick={handleRequestClick}
                   index={visualIndex++}
                 />
-                {link && <ZoneConnector link={link} index={visualIndex++} />}
-              </React.Fragment>
-            );
-          })}
-
-          {isolatedZones.length > 0 && linkedZones.length > 0 && (
-            <div className="request-flow-separator">
-              <span />
-              <div>
-                <GlobeIcon />
-                <strong>Independent</strong>
-                <p>Domains outside the main handoff chain.</p>
-              </div>
-              <span />
+              ))}
             </div>
-          )}
-
-          {isolatedZones.map((zone) => (
-            <ZoneCard
-              key={zone.id}
-              zone={zone}
-              maxTime={maxRequestTime}
-              visibleTypes={visibleTypes}
-              visibleRequestIndexes={visibleRequestIndexes}
-              filterMode={focusMode}
-              collapsed={collapsedZones.has(zone.id)}
-              onToggle={() => toggleZone(zone.id)}
-              onRequestClick={handleRequestClick}
-              index={visualIndex++}
-            />
-          ))}
+          </div>
         </div>
       </div>
 

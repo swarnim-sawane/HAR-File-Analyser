@@ -57,7 +57,50 @@ const defaultFilters: FilterOptions = {
 };
 
 describe('RequestFlowDiagram', () => {
-  it('keeps domain zones visible when an external request filter narrows visible rows', () => {
+  it('renders a phase timeline for the cross-domain journey', () => {
+    const portalEntry = buildEntry({
+      request: {
+        ...buildEntry().request,
+        url: 'https://portal.example.com/app',
+      },
+    });
+    const authEntry = buildEntry({
+      startedDateTime: '2026-04-21T10:30:00.500Z',
+      request: {
+        ...buildEntry().request,
+        url: 'https://idcs.example.com/oauth2/v1/authorize',
+      },
+      response: {
+        ...buildEntry().response,
+        status: 302,
+        statusText: 'Found',
+        redirectURL: 'https://portal.example.com/callback',
+      },
+    });
+    const callbackEntry = buildEntry({
+      startedDateTime: '2026-04-21T10:30:01.000Z',
+      request: {
+        ...buildEntry().request,
+        url: 'https://portal.example.com/cloudgate/v1/oauth2/callback',
+      },
+      response: {
+        ...buildEntry().response,
+        status: 302,
+        statusText: 'Found',
+        redirectURL: '/app',
+      },
+    });
+
+    render(<RequestFlowDiagram entries={[portalEntry, authEntry, callbackEntry]} />);
+
+    expect(screen.getByRole('heading', { name: /cross domain journey/i })).toBeInTheDocument();
+    expect(screen.getByText('Initial app request')).toBeInTheDocument();
+    expect(screen.getByText('Identity / authentication')).toBeInTheDocument();
+    expect(screen.getByText('OAuth callback')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /zoom/i })).not.toBeInTheDocument();
+  });
+
+  it('keeps journey phases visible when an external request filter narrows visible rows', () => {
     const portalEntry = buildEntry({
       request: {
         ...buildEntry().request,
@@ -96,6 +139,9 @@ describe('RequestFlowDiagram', () => {
       />
     );
 
+    expect(screen.getByText('Initial app request')).toBeInTheDocument();
+    expect(screen.getByText('Identity / authentication')).toBeInTheDocument();
+    expect(screen.getByText('Static dependencies')).toBeInTheDocument();
     expect(screen.getAllByText('portal.example.com').length).toBeGreaterThan(0);
     expect(screen.getAllByText('idcs.example.com').length).toBeGreaterThan(0);
     expect(screen.getAllByText('static.example.com').length).toBeGreaterThan(0);
@@ -149,6 +195,25 @@ describe('RequestFlowDiagram', () => {
     expect(screen.getByText('/api/progress')).toBeInTheDocument();
   });
 
+  it('forwards request row clicks to the Analyzer', () => {
+    const onNodeClick = vi.fn();
+    const entry = buildEntry({
+      request: {
+        ...buildEntry().request,
+        method: 'POST',
+        url: 'https://portal.example.com/api/orders',
+      },
+    });
+
+    (entry as Entry & { _resourceType: string })._resourceType = 'fetch';
+
+    render(<RequestFlowDiagram entries={[entry]} onNodeClick={onNodeClick} />);
+
+    fireEvent.click(screen.getByText('/api/orders'));
+
+    expect(onNodeClick).toHaveBeenCalledWith(entry);
+  });
+
   it('renders a shared request filter panel and forwards status and search changes', () => {
     const onFiltersChange = vi.fn();
     const entry = buildEntry({
@@ -168,6 +233,14 @@ describe('RequestFlowDiagram', () => {
     );
 
     expect(screen.getByText('Request Filters')).toBeInTheDocument();
+    expect(screen.queryByRole('searchbox', { name: /search/i })).not.toBeInTheDocument();
+
+    const filtersButton = screen.getByRole('button', { name: /show request filters/i });
+    expect(filtersButton).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(filtersButton);
+
+    expect(screen.getByRole('button', { name: /hide request filters/i })).toHaveAttribute('aria-expanded', 'true');
 
     fireEvent.click(screen.getByRole('checkbox', { name: /4xx/i }));
     expect(onFiltersChange).toHaveBeenCalledWith({
