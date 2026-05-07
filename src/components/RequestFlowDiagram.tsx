@@ -1,13 +1,8 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Maximize2, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
 import { Entry, FilterOptions } from '../types/har';
-import {
-  analyzeFlow,
-  DomainZone,
-  ZoneLink,
-  ZoneRequest,
-  TYPE_COLOR,
-} from '../utils/requestFlowAnalyzer';
+import { TYPE_COLOR } from '../utils/requestFlowAnalyzer';
+import { analyzeJourney } from '../utils/requestJourneyAnalyzer';
+import type { JourneyIssue, JourneyPhase, JourneyRequest } from '../utils/requestJourneyAnalyzer';
 import type { RequestFlowFocusMode } from '../types/requestFlow';
 import {
   getVisibleRequestIndexes,
@@ -43,14 +38,10 @@ interface RequestFlowDiagramProps {
   onNodeClick?: (entry: Entry) => void;
 }
 
-type ZoneHealthTone = 'error' | 'slow' | 'ok';
+type PhaseTone = 'danger' | 'warning' | 'info' | 'ok';
 type StatusTone = 'neutral' | 'success' | 'warning' | 'danger';
 
 const ALL_TYPES = ['document', 'script', 'xhr', 'stylesheet', 'image', 'font', 'other'] as const;
-const MIN_ZOOM_PERCENT = 55;
-const MAX_ZOOM_PERCENT = 125;
-const DEFAULT_ZOOM_PERCENT = 100;
-const ZOOM_STEP_PERCENT = 10;
 
 const DEFAULT_FILTERS: FilterOptions = {
   statusCodes: {
@@ -74,10 +65,6 @@ const STATUS_FILTERS: Array<{ code: keyof FilterOptions['statusCodes']; label: s
   { code: '5xx', label: '5xx' },
 ];
 
-function clampZoomPercent(value: number): number {
-  return Math.max(MIN_ZOOM_PERCENT, Math.min(MAX_ZOOM_PERCENT, Math.round(value)));
-}
-
 const TYPE_LABEL: Record<string, string> = {
   document: 'Document',
   script: 'Script',
@@ -88,16 +75,11 @@ const TYPE_LABEL: Record<string, string> = {
   other: 'Other',
 };
 
-const HEALTH_COLOR: Record<ZoneHealthTone, string> = {
-  error: '#f97316',
-  slow: '#f59e0b',
+const PHASE_ACCENT: Record<PhaseTone, string> = {
+  danger: '#ef4444',
+  warning: '#f59e0b',
+  info: '#5b8def',
   ok: '#10b981',
-};
-
-const HEALTH_SURFACE: Record<ZoneHealthTone, string> = {
-  error: 'rgba(249, 115, 22, 0.08)',
-  slow: 'rgba(245, 158, 11, 0.08)',
-  ok: 'rgba(16, 185, 129, 0.08)',
 };
 
 function formatTime(ms: number): string {
@@ -118,22 +100,6 @@ function getPathLabel(url: string): string {
   } catch {
     return url;
   }
-}
-
-function getDomainMonogram(domain: string): string {
-  return domain.trim().charAt(0).toUpperCase() || '?';
-}
-
-function getZoneHealth(zone: DomainZone): ZoneHealthTone {
-  if (zone.stats.failed > 0) return 'error';
-  if (zone.requests.some((request) => request.isSlow)) return 'slow';
-  return 'ok';
-}
-
-function getHealthLabel(tone: ZoneHealthTone): string {
-  if (tone === 'error') return 'Errors detected';
-  if (tone === 'slow') return 'Latency observed';
-  return 'Healthy flow';
 }
 
 function getStatusTone(status: number): StatusTone {
@@ -181,6 +147,79 @@ function getFilterIcon(mode: RequestFlowFocusMode): React.ReactNode {
   if (mode === 'errors') return <AlertIcon />;
   if (mode === 'slow') return <FlameIcon />;
   return <SparklesIcon />;
+}
+
+function getPhaseTone(phase: JourneyPhase): PhaseTone {
+  if (phase.stats.errorCount > 0) return 'danger';
+  if (phase.stats.status0Count > 0 || phase.stats.slowCount > 0) return 'warning';
+  if (phase.kind === 'persistent' || phase.issues.some((issue) => issue.level === 'info')) return 'info';
+  return 'ok';
+}
+
+function getTopIssue(phase: JourneyPhase): JourneyIssue | null {
+  return (
+    phase.issues.find((issue) => issue.level === 'danger') ||
+    phase.issues.find((issue) => issue.level === 'warning') ||
+    phase.issues.find((issue) => issue.level === 'info') ||
+    null
+  );
+}
+
+function formatPhaseRange(phase: JourneyPhase): string {
+  return `+${formatTime(phase.startMs)} - +${formatTime(phase.endMs)}`;
+}
+
+function formatConfidence(confidence: JourneyPhase['confidence']): string {
+  return `${confidence.charAt(0).toUpperCase()}${confidence.slice(1)} confidence`;
+}
+
+function compactDomainLabel(domain: string): string {
+  if (/identity\.oraclecloud\.com/i.test(domain)) return 'IDCS';
+  if (/login\.oci\.oraclecloud\.com/i.test(domain)) return 'login.oci';
+  if (/static\.oracle\.com/i.test(domain)) return 'static.oracle';
+  if (/consent\.truste\.com/i.test(domain)) return 'consent.truste';
+  if (/oracleoutsourcing\.com/i.test(domain)) return 'App host';
+  return domain;
+}
+
+function getPrimaryDomainLabel(phase: JourneyPhase): string {
+  const labels = Array.from(new Set(phase.domains.map(compactDomainLabel)));
+  if (labels.length === 0) return 'Unknown domain';
+  if (labels.length === 1) return labels[0];
+  return labels.slice(0, 2).join(' + ');
+}
+
+function getPhaseSignal(phase: JourneyPhase): string {
+  const logout404 = phase.issues.find((issue) => /logout endpoint returned 404/i.test(issue.title));
+  if (logout404) return '404 logout';
+  if (phase.stats.errorCount > 0) return `${phase.stats.errorCount} error${phase.stats.errorCount === 1 ? '' : 's'}`;
+  if (phase.stats.status0Count > 0) return `${phase.stats.status0Count} cancelled`;
+  if (phase.kind === 'callback') return 'callback';
+  if (phase.kind === 'persistent') return 'keeps open';
+  if (phase.kind === 'static' && phase.stats.bytes > 0) return formatBytes(phase.stats.bytes);
+  if (phase.stats.redirectCount > 0) return 'redirect';
+  return `${phase.stats.requestCount} req`;
+}
+
+function getPhaseStoryLabel(phase: JourneyPhase, nextPhase?: JourneyPhase): string {
+  const domainLabel = getPrimaryDomainLabel(phase);
+  const nextDomainLabel = nextPhase ? getPrimaryDomainLabel(nextPhase) : '';
+  const signal = getPhaseSignal(phase);
+
+  if (phase.kind === 'initial' && nextDomainLabel) return `${domainLabel} -> ${nextDomainLabel}`;
+  return `${domainLabel} | ${signal}`;
+}
+
+function getConnectorLabel(currentPhase: JourneyPhase, nextPhase: JourneyPhase): string {
+  if (nextPhase.kind === 'auth') return 'redirect';
+  if (nextPhase.kind === 'callback') return 'callback';
+  if (nextPhase.kind === 'app-boot') return 'returns';
+  if (nextPhase.kind === 'static') return 'loads assets';
+  if (nextPhase.kind === 'persistent') return 'keeps open';
+  if (nextPhase.kind === 'logout') return 'logout';
+  if (nextPhase.kind === 'consent') return 'background';
+  if (currentPhase.stats.redirectCount > 0) return 'redirect';
+  return 'then';
 }
 
 const SummaryPill: React.FC<{
@@ -233,73 +272,8 @@ const TypePill: React.FC<{
   );
 };
 
-const ProductBadge: React.FC<{ label: string }> = ({ label }) => (
-  <span className="request-flow-product-badge">{label}</span>
-);
-
-const JourneyStep: React.FC<{ zone: DomainZone }> = ({ zone }) => {
-  const tone = getZoneHealth(zone);
-
-  return (
-    <div
-      className={`request-flow-journey-step tone-${tone}`}
-      style={{ ['--journey-accent' as string]: HEALTH_COLOR[tone] } as React.CSSProperties}
-    >
-      <span className="request-flow-journey-step-dot" aria-hidden="true" />
-      <span className="request-flow-journey-step-label">{zone.product || zone.shortLabel}</span>
-    </div>
-  );
-};
-
-const JourneyLink: React.FC<{ link: ZoneLink }> = ({ link }) => (
-  <div className={`request-flow-journey-link ${link.type === 'redirect' ? 'is-redirect' : 'is-cascade'}`}>
-    <span className="request-flow-journey-link-icon" aria-hidden="true">
-      <svg width="18" height="10" viewBox="0 0 18 10" fill="none" style={{ display: 'block' }}>
-        <line x1="0" y1="5" x2="13" y2="5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-        <polyline points="9,1.5 13.5,5 9,8.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-      </svg>
-    </span>
-    <span className="request-flow-journey-link-copy">
-      {link.type === 'redirect'
-        ? `HTTP ${link.statusCode}`
-        : `${link.count} handoff${link.count === 1 ? '' : 's'}`}
-    </span>
-  </div>
-);
-
-const ZoneConnector: React.FC<{ link: ZoneLink; index: number }> = ({ link, index }) => {
-  const accent = link.type === 'redirect' ? '#f59e0b' : '#9ca3af';
-
-  return (
-    <div
-      className={`request-flow-connector ${link.type === 'redirect' ? 'is-redirect' : 'is-cascade'}`}
-      style={{
-        ['--connector-accent' as string]: accent,
-        ['--flow-delay' as string]: `${index * 70}ms`,
-      } as React.CSSProperties}
-    >
-      <svg className="request-flow-connector-svg" viewBox="0 0 120 58" aria-hidden="true">
-        <path className="request-flow-connector-line" d="M10 29 H102" />
-        <path className="request-flow-connector-glow" d="M10 29 H102" />
-        <circle className="request-flow-connector-node" cx="12" cy="29" r="3.5" />
-        <path className="request-flow-connector-arrow" d="M98 22 110 29 98 36" />
-      </svg>
-      <div className="request-flow-connector-copy">
-        <span className="request-flow-connector-title">
-          {link.type === 'redirect' ? 'Redirect' : 'Cascade'}
-        </span>
-        <span className="request-flow-connector-meta">
-          {link.type === 'redirect'
-            ? `HTTP ${link.statusCode}`
-            : `${link.count} handoff${link.count !== 1 ? 's' : ''}`}
-        </span>
-      </div>
-    </div>
-  );
-};
-
 const RequestRow: React.FC<{
-  request: ZoneRequest;
+  request: JourneyRequest;
   maxTime: number;
   onClick: () => void;
 }> = ({ request, maxTime, onClick }) => {
@@ -312,7 +286,7 @@ const RequestRow: React.FC<{
   return (
     <button
       type="button"
-      className={`request-flow-request-row tone-${statusTone} ${request.isSlow ? 'is-slow' : ''} ${request.failed ? 'is-error' : ''}`}
+      className={`request-flow-request-row tone-${statusTone} ${request.isSlow ? 'is-slow' : ''} ${request.failed ? 'is-error' : ''} ${request.status0Warning ? 'is-warning' : ''} ${request.isPersistent ? 'is-persistent' : ''}`}
       title={request.url}
       onClick={onClick}
       style={{
@@ -334,6 +308,10 @@ const RequestRow: React.FC<{
             <span>{TYPE_LABEL[request.type] ?? request.type}</span>
           </span>
           <span className="request-flow-request-start">+{formatTime(request.startMs)}</span>
+          <span className="request-flow-request-domain">{request.domainLabel}</span>
+          {request.redirectTarget && <span className="request-flow-request-redirect">Redirect</span>}
+          {request.status0Warning && <span className="request-flow-request-redirect">Cancelled</span>}
+          {request.isPersistent && <span className="request-flow-request-redirect">Persistent</span>}
           {request.size > 0 && <span className="request-flow-request-bytes">{formatBytes(request.size)}</span>}
         </div>
       </div>
@@ -353,89 +331,142 @@ const RequestRow: React.FC<{
   );
 };
 
-const ZoneCard: React.FC<{
-  zone: DomainZone;
+const PhaseCard: React.FC<{
+  phase: JourneyPhase;
   maxTime: number;
   visibleTypes: Set<string>;
   visibleRequestIndexes: Set<number> | null;
   filterMode: RequestFlowFocusMode;
+  revealed: boolean;
   collapsed: boolean;
   onToggle: () => void;
+  onReveal: () => void;
   onRequestClick: (index: number) => void;
   index: number;
 }> = ({
-  zone,
+  phase,
   maxTime,
   visibleTypes,
   visibleRequestIndexes,
   filterMode,
+  revealed,
   collapsed,
   onToggle,
+  onReveal,
   onRequestClick,
   index,
 }) => {
-  const tone = getZoneHealth(zone);
-  const visibleRequests = zone.requests.filter((request) => {
+  const tone = getPhaseTone(phase);
+  const topIssue = getTopIssue(phase);
+  const titleId = `${phase.id}-title`;
+  const visibleRequests = phase.requests.filter((request) => {
     if (visibleRequestIndexes && !visibleRequestIndexes.has(request.index)) return false;
     if (!visibleTypes.has(request.type)) return false;
     return requestMatchesFlowFocus(request, filterMode);
   });
+  const hiddenByFilters = visibleRequests.length === 0 && phase.requests.length > 0 && !revealed;
+  const requestsToRender = revealed ? phase.requests : visibleRequests;
+  const hiddenRequestCopy = `${phase.requests.length} request${phase.requests.length === 1 ? '' : 's'} in this phase ${phase.requests.length === 1 ? 'is' : 'are'} hidden by current filters.`;
 
   return (
     <article
-      className={`request-flow-zone-card tone-${tone} ${collapsed ? 'is-collapsed' : ''}`}
+      className={`request-flow-phase-card tone-${tone} ${collapsed ? 'is-collapsed' : ''}`}
+      aria-labelledby={titleId}
       style={{
-        ['--zone-accent' as string]: HEALTH_COLOR[tone],
-        ['--zone-surface' as string]: HEALTH_SURFACE[tone],
-        ['--flow-delay' as string]: `${index * 70}ms`,
+        ['--phase-accent' as string]: PHASE_ACCENT[tone],
+        ['--flow-delay' as string]: `${index * 45}ms`,
       } as React.CSSProperties}
     >
+      <div className="request-flow-phase-marker" aria-hidden="true">
+        <span className="request-flow-phase-marker-dot">{index + 1}</span>
+      </div>
+
       <button
         type="button"
-        className="request-flow-zone-header"
+        className="request-flow-phase-header"
         onClick={onToggle}
         aria-expanded={!collapsed}
       >
-        <div className="request-flow-zone-heading">
-          <span className="request-flow-zone-monogram" aria-hidden="true">
-            {getDomainMonogram(zone.domain)}
-          </span>
-
-          <div className="request-flow-zone-title-group">
-            <div className="request-flow-zone-title-row">
-              <strong title={zone.domain}>{zone.shortLabel}</strong>
-              {zone.product && <ProductBadge label={zone.product} />}
-            </div>
-            <div className="request-flow-zone-subtitle-row">
-              <span className={`request-flow-zone-health tone-${tone}`}>
-                {tone === 'ok' ? <CheckIcon /> : tone === 'slow' ? <FlameIcon /> : <AlertIcon />}
-                <span>{getHealthLabel(tone)}</span>
-              </span>
-              <span className="request-flow-zone-domain" title={zone.domain}>{zone.domain}</span>
-            </div>
-            <div className="request-flow-zone-meta">
-              <span>{zone.stats.total} req</span>
-              <span>{formatTime(zone.stats.avgTime)} avg</span>
-              {zone.stats.totalBytes > 0 && <span>{formatBytes(zone.stats.totalBytes)}</span>}
-              {zone.stats.failed > 0 && <span className="is-danger">{zone.stats.failed} err</span>}
-            </div>
+        <div className="request-flow-phase-heading">
+          <div className="request-flow-phase-title-row">
+            <strong id={titleId}>{phase.title}</strong>
+            <span className={`request-flow-phase-state tone-${tone}`}>
+              {tone === 'ok' ? <CheckIcon /> : tone === 'danger' ? <AlertIcon /> : tone === 'warning' ? <FlameIcon /> : <InfoIcon />}
+              <span>{tone === 'ok' ? 'No issue' : tone === 'danger' ? 'Action needed' : tone === 'warning' ? 'Review' : 'Context'}</span>
+            </span>
           </div>
 
-          <span className="request-flow-zone-chevron" aria-hidden="true">
-            {collapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}
-          </span>
+          <div className="request-flow-phase-meta">
+            <span>{formatPhaseRange(phase)}</span>
+            <span>{formatTime(phase.durationMs)}</span>
+            <span>{formatConfidence(phase.confidence)}</span>
+          </div>
         </div>
+
+        <span className="request-flow-phase-chevron" aria-hidden="true">
+          {collapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}
+        </span>
       </button>
 
+      <div className="request-flow-phase-summary-row">
+        <p>{phase.summary}</p>
+
+        <div className={`request-flow-phase-issue tone-${topIssue?.level ?? 'ok'}`}>
+          {topIssue ? (
+            <>
+              {topIssue.level === 'danger' ? <AlertIcon /> : topIssue.level === 'warning' ? <FlameIcon /> : <InfoIcon />}
+              <span>{topIssue.title}</span>
+            </>
+          ) : (
+            <>
+              <CheckIcon />
+              <span>No actionable issue in this phase</span>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="request-flow-phase-domain-list" aria-label={`${phase.title} domains`}>
+        {phase.domains.slice(0, 5).map((domain) => (
+          <span key={domain} className="request-flow-phase-domain-chip" title={domain}>
+            {domain}
+          </span>
+        ))}
+        {phase.domains.length > 5 && (
+          <span className="request-flow-phase-domain-chip">+{phase.domains.length - 5}</span>
+        )}
+      </div>
+
+      <div className="request-flow-phase-stats" aria-label={`${phase.title} metrics`}>
+        <span><strong>{phase.stats.requestCount}</strong> req</span>
+        <span><strong>{phase.stats.redirectCount}</strong> redirects</span>
+        <span><strong>{phase.stats.errorCount}</strong> errors</span>
+        <span><strong>{phase.stats.status0Count}</strong> cancelled</span>
+        <span><strong>{formatBytes(phase.stats.bytes)}</strong></span>
+      </div>
+
       {!collapsed && (
-        <div className="request-flow-zone-body">
-          {visibleRequests.length === 0 ? (
-            <div className="request-flow-zone-empty">
+        <div className={`request-flow-phase-body ${hiddenByFilters ? 'is-filter-hidden' : ''}`}>
+          {hiddenByFilters ? (
+            <div className="request-flow-phase-empty request-flow-phase-empty--filters">
               <InfoIcon />
-              <span>No requests match the current filters.</span>
+              <span>{hiddenRequestCopy}</span>
+              <button
+                type="button"
+                className="request-flow-phase-reveal-button"
+                aria-label={`Show ${phase.title} requests`}
+                onClick={onReveal}
+              >
+                Show phase requests
+              </button>
+            </div>
+          ) : requestsToRender.length === 0 ? (
+            <div className="request-flow-phase-empty">
+              <InfoIcon />
+              <span>No request evidence is available for this phase.</span>
             </div>
           ) : (
-            visibleRequests.map((request) => (
+            requestsToRender.map((request) => (
               <RequestRow
                 key={`${request.index}-${request.url}-${request.startMs}`}
                 request={request}
@@ -450,6 +481,46 @@ const ZoneCard: React.FC<{
   );
 };
 
+const PhaseOverview: React.FC<{
+  phases: JourneyPhase[];
+  activePhaseId: string | null;
+  onPhaseSelect: (phaseId: string) => void;
+}> = ({ phases, activePhaseId, onPhaseSelect }) => (
+  <nav className="request-flow-phase-overview" aria-label="Journey phase overview">
+    <div className="request-flow-phase-overview-track">
+      {phases.map((phase, index) => {
+        const tone = getPhaseTone(phase);
+        const nextPhase = phases[index + 1];
+        const storyText = getPhaseStoryLabel(phase, nextPhase);
+
+        return (
+          <React.Fragment key={phase.id}>
+            <button
+              type="button"
+              className={`request-flow-phase-overview-step tone-${tone} ${activePhaseId === phase.id ? 'is-active' : ''}`}
+              aria-label={`Go to ${phase.title} phase`}
+              aria-current={activePhaseId === phase.id ? 'step' : undefined}
+              onClick={() => onPhaseSelect(phase.id)}
+            >
+              <span className="request-flow-phase-overview-index" aria-hidden="true">{index + 1}</span>
+              <span className="request-flow-phase-overview-copy">
+                <strong>{phase.title}</strong>
+                <span>{storyText}</span>
+              </span>
+            </button>
+
+            {index < phases.length - 1 && (
+              <span className="request-flow-phase-overview-connector" aria-hidden="true">
+                <span>{getConnectorLabel(phase, phases[index + 1])}</span>
+              </span>
+            )}
+          </React.Fragment>
+        );
+      })}
+    </div>
+  </nav>
+);
+
 const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({
   entries,
   visibleEntries,
@@ -461,10 +532,15 @@ const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({
 }) => {
   const searchInputId = useId();
   const filterPanelId = useId();
-  const stageViewportRef = useRef<HTMLDivElement | null>(null);
-  const stageTrackRef = useRef<HTMLDivElement | null>(null);
-  const flowData = useMemo(() => analyzeFlow(entries), [entries]);
-  const { zones, links, p90, maxRequestTime, totalMs } = flowData;
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const phaseRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const journeyData = useMemo(() => analyzeJourney(entries), [entries]);
+  const { phases, totalMs } = journeyData;
+  const phaseIds = useMemo(() => phases.map((phase) => phase.id), [phases]);
+  const maxRequestTime = useMemo(
+    () => Math.max(1, ...phases.flatMap((phase) => phase.requests.map((request) => request.time))),
+    [phases]
+  );
   const visibleRequestIndexes = useMemo(
     () => getVisibleRequestIndexes(entries, visibleEntries),
     [entries, visibleEntries]
@@ -472,29 +548,21 @@ const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({
 
   const [localFocusMode, setLocalFocusMode] = useState<RequestFlowFocusMode>('all');
   const [visibleTypes, setVisibleTypes] = useState<Set<string>>(new Set(ALL_TYPES));
-  const [collapsedZones, setCollapsedZones] = useState<Set<string>>(new Set());
+  const [collapsedPhases, setCollapsedPhases] = useState<Set<string>>(new Set());
+  const [revealedPhaseIds, setRevealedPhaseIds] = useState<Set<string>>(new Set());
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [zoomMode, setZoomMode] = useState<'fit' | 'manual'>('fit');
-  const [manualZoomPercent, setManualZoomPercent] = useState(DEFAULT_ZOOM_PERCENT);
-  const [fitZoomPercent, setFitZoomPercent] = useState(DEFAULT_ZOOM_PERCENT);
-  const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
+  const [activePhaseId, setActivePhaseId] = useState<string | null>(phaseIds[0] ?? null);
   const focusMode = controlledFocusMode ?? localFocusMode;
   const activeFilters = filters ?? DEFAULT_FILTERS;
-  const activeZoomPercent = zoomMode === 'fit' ? fitZoomPercent : manualZoomPercent;
-  const activeZoom = Number((activeZoomPercent / 100).toFixed(2));
-
-  const linkedZoneIds = new Set(links.flatMap((link) => [link.fromZoneId, link.toZoneId]));
-  const linkedZones = zones.filter((zone) => linkedZoneIds.has(zone.id));
-  const isolatedZones = zones.filter((zone) => !linkedZoneIds.has(zone.id));
-  const journeyLinksByKey = new Map(links.map((link) => [`${link.fromZoneId}->${link.toZoneId}`, link]));
-
-  const allCollapsed = zones.length > 0 && collapsedZones.size === zones.length;
-  const totalRequests = entries.length;
-  const slowCount = entries.filter((entry) => (entry.time || 0) >= p90 && (entry.time || 0) > 500).length;
+  const allCollapsed = phases.length > 0 && collapsedPhases.size === phases.length;
+  const attentionCount = phases.reduce(
+    (count, phase) => count + phase.issues.filter((issue) => issue.level !== 'info').length,
+    0
+  );
   const focusedRequestCount = useMemo(
     () =>
-      zones.reduce((count, zone) => {
-        const matchingRequests = zone.requests.filter((request) => {
+      phases.reduce((count, phase) => {
+        const matchingRequests = phase.requests.filter((request) => {
           if (visibleRequestIndexes && !visibleRequestIndexes.has(request.index)) return false;
           if (!visibleTypes.has(request.type)) return false;
           return requestMatchesFlowFocus(request, focusMode);
@@ -502,82 +570,43 @@ const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({
 
         return count + matchingRequests.length;
       }, 0),
-    [focusMode, visibleRequestIndexes, visibleTypes, zones]
+    [focusMode, phases, visibleRequestIndexes, visibleTypes]
   );
-  const zoomLayerStyle = useMemo(
-    () =>
-      ({
-        ['--request-flow-zoom' as string]: activeZoom,
-        transform: `scale(${activeZoom})`,
-      } as React.CSSProperties),
-    [activeZoom]
-  );
-  const zoomFrameStyle = useMemo(() => {
-    if (stageSize.width <= 0 || stageSize.height <= 0) return undefined;
-
-    return {
-      width: `${Math.ceil(stageSize.width * activeZoom)}px`,
-      height: `${Math.ceil(stageSize.height * activeZoom)}px`,
-    } as React.CSSProperties;
-  }, [activeZoom, stageSize.height, stageSize.width]);
-
-  const measureStage = useCallback(() => {
-    const viewport = stageViewportRef.current;
-    const track = stageTrackRef.current;
-    if (!viewport || !track) return;
-
-    const contentWidth = Math.ceil(track.scrollWidth || track.getBoundingClientRect().width);
-    const contentHeight = Math.ceil(track.scrollHeight || track.getBoundingClientRect().height);
-    const availableWidth = Math.max(1, viewport.clientWidth - 24);
-    const availableHeight = Math.max(1, viewport.clientHeight - 58);
-
-    if (contentWidth > 0 && contentHeight > 0) {
-      const nextFit = clampZoomPercent(
-        Math.min(
-          DEFAULT_ZOOM_PERCENT,
-          (availableWidth / contentWidth) * 100,
-          (availableHeight / contentHeight) * 100
-        )
-      );
-      setFitZoomPercent((current) => (current === nextFit ? current : nextFit));
-    }
-
-    if (contentWidth > 0 && contentHeight > 0) {
-      setStageSize((current) =>
-        current.width === contentWidth && current.height === contentHeight
-          ? current
-          : { width: contentWidth, height: contentHeight }
-      );
-    }
-  }, []);
 
   useEffect(() => {
-    const viewport = stageViewportRef.current;
-    const track = stageTrackRef.current;
-    if (!viewport || !track) return;
+    setActivePhaseId((current) => (current && phaseIds.includes(current) ? current : phaseIds[0] ?? null));
+    setRevealedPhaseIds((current) => {
+      const next = new Set(Array.from(current).filter((phaseId) => phaseIds.includes(phaseId)));
+      return next.size === current.size ? current : next;
+    });
+  }, [phaseIds]);
 
-    measureStage();
+  useEffect(() => {
+    const root = stageRef.current;
+    if (!root || typeof IntersectionObserver === 'undefined') return;
 
-    if (typeof ResizeObserver === 'undefined') {
-      window.addEventListener('resize', measureStage);
-      return () => window.removeEventListener('resize', measureStage);
-    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visibleEntry = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
+        const phaseId = visibleEntry?.target.getAttribute('data-phase-id');
 
-    const observer = new ResizeObserver(measureStage);
-    observer.observe(viewport);
-    observer.observe(track);
-    window.addEventListener('resize', measureStage);
+        if (phaseId) setActivePhaseId(phaseId);
+      },
+      {
+        root,
+        threshold: [0.24, 0.42, 0.68],
+      }
+    );
 
-    return () => {
-      observer.disconnect();
-      window.removeEventListener('resize', measureStage);
-    };
-  }, [measureStage, focusedRequestCount, zones.length]);
+    phaseIds.forEach((phaseId) => {
+      const element = phaseRefs.current.get(phaseId);
+      if (element) observer.observe(element);
+    });
 
-  function setManualZoom(nextZoomPercent: number) {
-    setZoomMode('manual');
-    setManualZoomPercent(clampZoomPercent(nextZoomPercent));
-  }
+    return () => observer.disconnect();
+  }, [phaseIds]);
 
   function toggleType(type: string) {
     setVisibleTypes((current) => {
@@ -598,24 +627,6 @@ const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({
     }
 
     setLocalFocusMode(mode);
-  }
-
-  function handleZoomOut() {
-    setManualZoom(activeZoomPercent - ZOOM_STEP_PERCENT);
-  }
-
-  function handleZoomIn() {
-    setManualZoom(activeZoomPercent + ZOOM_STEP_PERCENT);
-  }
-
-  function handleFitZoom() {
-    measureStage();
-    setZoomMode('fit');
-  }
-
-  function handleResetZoom() {
-    setZoomMode('manual');
-    setManualZoomPercent(DEFAULT_ZOOM_PERCENT);
   }
 
   function toggleFilters() {
@@ -643,24 +654,47 @@ const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({
 
   function toggleCollapseAll() {
     if (allCollapsed) {
-      setCollapsedZones(new Set());
+      setCollapsedPhases(new Set());
       return;
     }
 
-    setCollapsedZones(new Set(zones.map((zone) => zone.id)));
+    setCollapsedPhases(new Set(phases.map((phase) => phase.id)));
   }
 
-  function toggleZone(zoneId: string) {
-    setCollapsedZones((current) => {
+  function togglePhase(phaseId: string) {
+    setCollapsedPhases((current) => {
       const next = new Set(current);
-      if (next.has(zoneId)) next.delete(zoneId);
-      else next.add(zoneId);
+      if (next.has(phaseId)) next.delete(phaseId);
+      else next.add(phaseId);
+      return next;
+    });
+  }
+
+  function revealPhaseRequests(phaseId: string) {
+    setRevealedPhaseIds((current) => {
+      if (current.has(phaseId)) return current;
+      const next = new Set(current);
+      next.add(phaseId);
       return next;
     });
   }
 
   function handleRequestClick(index: number) {
     if (onNodeClick && entries[index]) onNodeClick(entries[index]);
+  }
+
+  function registerPhaseElement(phaseId: string, element: HTMLDivElement | null) {
+    if (element) {
+      phaseRefs.current.set(phaseId, element);
+      return;
+    }
+
+    phaseRefs.current.delete(phaseId);
+  }
+
+  function handlePhaseOverviewSelect(phaseId: string) {
+    setActivePhaseId(phaseId);
+    phaseRefs.current.get(phaseId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   if (entries.length === 0) {
@@ -675,58 +709,6 @@ const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({
     );
   }
 
-  let visualIndex = 0;
-  const zoomControls = (
-    <div className="request-flow-zoom-controls" aria-label="Journey map zoom controls">
-      <button
-        type="button"
-        className="request-flow-zoom-icon-button"
-        aria-label="Zoom out journey map"
-        title="Zoom out"
-        disabled={activeZoomPercent <= MIN_ZOOM_PERCENT}
-        onClick={handleZoomOut}
-      >
-        <ZoomOut aria-hidden="true" size={15} strokeWidth={2.2} />
-      </button>
-
-      <output className="request-flow-zoom-value" aria-label="Journey map zoom level" aria-live="polite">
-        {activeZoomPercent}%
-      </output>
-
-      <button
-        type="button"
-        className="request-flow-zoom-icon-button"
-        aria-label="Zoom in journey map"
-        title="Zoom in"
-        disabled={activeZoomPercent >= MAX_ZOOM_PERCENT}
-        onClick={handleZoomIn}
-      >
-        <ZoomIn aria-hidden="true" size={15} strokeWidth={2.2} />
-      </button>
-
-      <button
-        type="button"
-        className={`request-flow-zoom-text-button ${zoomMode === 'fit' ? 'is-active' : ''}`}
-        aria-label="Fit journey map"
-        aria-pressed={zoomMode === 'fit'}
-        title="Fit"
-        onClick={handleFitZoom}
-      >
-        <Maximize2 aria-hidden="true" size={14} strokeWidth={2.2} />
-      </button>
-
-      <button
-        type="button"
-        className="request-flow-zoom-text-button"
-        aria-label="Reset journey map zoom to 100%"
-        title="Reset to 100%"
-        onClick={handleResetZoom}
-      >
-        <RotateCcw aria-hidden="true" size={14} strokeWidth={2.2} />
-      </button>
-    </div>
-  );
-
   return (
     <section className="request-flow-shell">
       <header className="request-flow-toolbar">
@@ -737,10 +719,10 @@ const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({
             </div>
 
             <div className="request-flow-summary-grid">
-              <SummaryPill icon={<GlobeIcon />} label="Domains" value={`${zones.length}`} />
-              <SummaryPill icon={<NetworkIcon />} label="Requests" value={`${totalRequests}`} />
+              <SummaryPill icon={<GlobeIcon />} label="Domains" value={`${journeyData.domainCount}`} />
+              <SummaryPill icon={<NetworkIcon />} label="Requests" value={`${journeyData.requestCount}`} />
               <SummaryPill icon={<ClockIcon />} label="Session" value={totalMs > 0 ? formatTime(totalMs) : '0ms'} />
-              <SummaryPill icon={<FlameIcon />} label="Slow" value={`${slowCount}`} tone={slowCount > 0 ? 'warning' : 'neutral'} />
+              <SummaryPill icon={<AlertIcon />} label="Issues" value={`${attentionCount}`} tone={attentionCount > 0 ? 'warning' : 'neutral'} />
             </div>
           </div>
 
@@ -749,7 +731,7 @@ const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({
               <div className="request-flow-filter-panel-title-group">
                 <span className="request-flow-control-label">Request Filters</span>
                 <span className="request-flow-filter-panel-count">
-                  Focused <strong>{focusedRequestCount}</strong> / <strong>{totalRequests}</strong>
+                  Focused <strong>{focusedRequestCount}</strong> / <strong>{journeyData.requestCount}</strong>
                 </span>
               </div>
 
@@ -838,137 +820,61 @@ const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({
         </div>
       </header>
 
-      {(linkedZones.length > 0 || isolatedZones.length > 0) && (
-        <div className="request-flow-journey-strip">
-          <span className="request-flow-journey-label">
-            <NetworkIcon />
-            <span>Journey</span>
-          </span>
-
-          <div className="request-flow-journey-track">
-            {linkedZones.map((zone, index) => {
-              const nextZone = linkedZones[index + 1];
-              const link = nextZone ? journeyLinksByKey.get(`${zone.id}->${nextZone.id}`) : undefined;
-
-              return (
-                <React.Fragment key={zone.id}>
-                  <JourneyStep zone={zone} />
-                  {link && <JourneyLink link={link} />}
-                </React.Fragment>
-              );
-            })}
-
-            {isolatedZones.length > 0 && (
-              <>
-                {linkedZones.length > 0 && <span className="request-flow-journey-divider">Independent</span>}
-                {isolatedZones.map((zone) => (
-                  <JourneyStep key={zone.id} zone={zone} />
-                ))}
-              </>
-            )}
-          </div>
-        </div>
+      {phases.length > 1 && (
+        <PhaseOverview
+          phases={phases}
+          activePhaseId={activePhaseId}
+          onPhaseSelect={handlePhaseOverviewSelect}
+        />
       )}
 
-      <div className="request-flow-stage" ref={stageViewportRef}>
-        <div className="request-flow-stage-controls">
-          {zoomControls}
-        </div>
-        <div className="request-flow-stage-zoom-frame" style={zoomFrameStyle}>
-          <div
-            className="request-flow-stage-zoom-layer"
-            data-testid="request-flow-zoom-layer"
-            style={zoomLayerStyle}
-          >
-            <div className="request-flow-stage-track" ref={stageTrackRef}>
-              {linkedZones.map((zone, index) => {
-                const nextZone = linkedZones[index + 1];
-                const link = nextZone ? journeyLinksByKey.get(`${zone.id}->${nextZone.id}`) : undefined;
-
-                return (
-                  <React.Fragment key={`${zone.id}-stage`}>
-                    <ZoneCard
-                      zone={zone}
-                      maxTime={maxRequestTime}
-                      visibleTypes={visibleTypes}
-                      visibleRequestIndexes={visibleRequestIndexes}
-                      filterMode={focusMode}
-                      collapsed={collapsedZones.has(zone.id)}
-                      onToggle={() => toggleZone(zone.id)}
-                      onRequestClick={handleRequestClick}
-                      index={visualIndex++}
-                    />
-                    {link && <ZoneConnector link={link} index={visualIndex++} />}
-                  </React.Fragment>
-                );
-              })}
-
-              {isolatedZones.length > 0 && linkedZones.length > 0 && (
-                <div className="request-flow-separator">
-                  <span />
-                  <div>
-                    <GlobeIcon />
-                    <strong>Independent</strong>
-                    <p>Domains outside the main handoff chain.</p>
-                  </div>
-                  <span />
-                </div>
-              )}
-
-              {isolatedZones.map((zone) => (
-                <ZoneCard
-                  key={zone.id}
-                  zone={zone}
-                  maxTime={maxRequestTime}
-                  visibleTypes={visibleTypes}
-                  visibleRequestIndexes={visibleRequestIndexes}
-                  filterMode={focusMode}
-                  collapsed={collapsedZones.has(zone.id)}
-                  onToggle={() => toggleZone(zone.id)}
-                  onRequestClick={handleRequestClick}
-                  index={visualIndex++}
-                />
-              ))}
+      <div className="request-flow-stage request-flow-stage--journey" ref={stageRef}>
+        <div className="request-flow-phase-timeline" role="list" aria-label="Journey phases">
+          {phases.map((phase, index) => (
+            <div
+              key={phase.id}
+              role="listitem"
+              data-phase-id={phase.id}
+              ref={(element) => registerPhaseElement(phase.id, element)}
+            >
+              <PhaseCard
+                phase={phase}
+                maxTime={maxRequestTime}
+                visibleTypes={visibleTypes}
+                visibleRequestIndexes={visibleRequestIndexes}
+                filterMode={focusMode}
+                revealed={revealedPhaseIds.has(phase.id)}
+                collapsed={collapsedPhases.has(phase.id)}
+                onToggle={() => togglePhase(phase.id)}
+                onReveal={() => revealPhaseRequests(phase.id)}
+                onRequestClick={handleRequestClick}
+                index={index}
+              />
             </div>
-          </div>
+          ))}
         </div>
       </div>
 
       <footer className="request-flow-footer">
         <div className="request-flow-legend-group">
-          <span className="request-flow-legend-title">Status</span>
+          <span className="request-flow-legend-title">Phase cues</span>
           <span className="request-flow-legend-item">
-            <span className="request-flow-legend-dot tone-success" />
-            <span>2xx</span>
+            <span className="request-flow-legend-dot tone-danger" />
+            <span>Action needed</span>
           </span>
           <span className="request-flow-legend-item">
             <span className="request-flow-legend-dot tone-warning" />
-            <span>3xx</span>
+            <span>Review</span>
           </span>
           <span className="request-flow-legend-item">
-            <span className="request-flow-legend-dot tone-danger" />
-            <span>4xx / 5xx</span>
+            <span className="request-flow-legend-dot tone-success" />
+            <span>No issue</span>
           </span>
-        </div>
-
-        <div className="request-flow-legend-group">
-          <span className="request-flow-legend-title">Timing</span>
-          {[
-            { label: 'Fast', color: '#5b8def' },
-            { label: '>1s', color: '#fbbf24' },
-            { label: '>2s', color: '#f59e0b' },
-            { label: '>5s', color: '#ef4444' },
-          ].map((item) => (
-            <span key={item.label} className="request-flow-legend-item">
-              <span className="request-flow-legend-bar" style={{ ['--legend-color' as string]: item.color } as React.CSSProperties} />
-              <span>{item.label}</span>
-            </span>
-          ))}
         </div>
 
         <div className="request-flow-footer-note">
           <InfoIcon />
-          <span>Select any request row to inspect it in the Analyzer.</span>
+          <span>Phases are inferred from HAR timing, redirects, initiators, status codes, and URL patterns.</span>
         </div>
       </footer>
     </section>

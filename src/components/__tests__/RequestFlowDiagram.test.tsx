@@ -94,10 +94,62 @@ describe('RequestFlowDiagram', () => {
     render(<RequestFlowDiagram entries={[portalEntry, authEntry, callbackEntry]} />);
 
     expect(screen.getByRole('heading', { name: /cross domain journey/i })).toBeInTheDocument();
-    expect(screen.getByText('Initial app request')).toBeInTheDocument();
-    expect(screen.getByText('Identity / authentication')).toBeInTheDocument();
-    expect(screen.getByText('OAuth callback')).toBeInTheDocument();
+    expect(screen.getAllByText('Initial app request').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Identity / authentication').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('OAuth callback').length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: /zoom/i })).not.toBeInTheDocument();
+  });
+
+  it('renders a horizontal phase overview and jumps to a phase from it', () => {
+    const scrollIntoView = vi.fn();
+    window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    const portalEntry = buildEntry({
+      request: {
+        ...buildEntry().request,
+        url: 'https://portal.example.com/app',
+      },
+    });
+    const authEntry = buildEntry({
+      startedDateTime: '2026-04-21T10:30:00.500Z',
+      request: {
+        ...buildEntry().request,
+        url: 'https://idcs.example.com/oauth2/v1/authorize',
+      },
+      response: {
+        ...buildEntry().response,
+        status: 302,
+        statusText: 'Found',
+        redirectURL: 'https://portal.example.com/cloudgate/v1/oauth2/callback',
+      },
+    });
+    const callbackEntry = buildEntry({
+      startedDateTime: '2026-04-21T10:30:01.000Z',
+      request: {
+        ...buildEntry().request,
+        url: 'https://portal.example.com/cloudgate/v1/oauth2/callback',
+      },
+      response: {
+        ...buildEntry().response,
+        status: 302,
+        statusText: 'Found',
+        redirectURL: '/app',
+      },
+    });
+
+    render(<RequestFlowDiagram entries={[portalEntry, authEntry, callbackEntry]} />);
+
+    expect(screen.getByLabelText(/journey phase overview/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /go to initial app request phase/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /go to identity \/ authentication phase/i })).toBeInTheDocument();
+    expect(screen.getByText('portal.example.com -> idcs.example.com')).toBeInTheDocument();
+    expect(screen.getByText('idcs.example.com | redirect')).toBeInTheDocument();
+    expect(screen.getByText('portal.example.com | callback')).toBeInTheDocument();
+    expect(screen.getAllByText('redirect').length).toBeGreaterThan(0);
+    expect(screen.getByText('callback')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /go to oauth callback phase/i }));
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
   });
 
   it('keeps journey phases visible when an external request filter narrows visible rows', () => {
@@ -139,16 +191,21 @@ describe('RequestFlowDiagram', () => {
       />
     );
 
-    expect(screen.getByText('Initial app request')).toBeInTheDocument();
-    expect(screen.getByText('Identity / authentication')).toBeInTheDocument();
-    expect(screen.getByText('Static dependencies')).toBeInTheDocument();
+    expect(screen.getAllByText('Initial app request').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Identity / authentication').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Static dependencies').length).toBeGreaterThan(0);
     expect(screen.getAllByText('portal.example.com').length).toBeGreaterThan(0);
     expect(screen.getAllByText('idcs.example.com').length).toBeGreaterThan(0);
     expect(screen.getAllByText('static.example.com').length).toBeGreaterThan(0);
     expect(screen.getByText('/favicon.ico')).toBeInTheDocument();
     expect(screen.queryByText('/app')).not.toBeInTheDocument();
     expect(screen.queryByText('/app.js')).not.toBeInTheDocument();
-    expect(screen.getAllByText(/no requests match the current filters/i)).toHaveLength(2);
+    expect(screen.getAllByText('1 request in this phase is hidden by current filters.')).toHaveLength(2);
+    expect(screen.queryByText(/no requests match the current filters/i)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /show initial app request requests/i }));
+
+    expect(screen.getByText('/app')).toBeInTheDocument();
   });
 
   it('shows fetch-based 5xx requests in the zone body', () => {
