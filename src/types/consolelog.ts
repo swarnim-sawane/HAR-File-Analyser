@@ -1,12 +1,13 @@
 // src/types/consolelog.ts
 
 import type {
+  ConsoleClassificationReason,
   ConsoleInferredSeverity,
   ConsoleIssueTag,
 } from '../../shared/consoleLogCore';
 
 export type LogLevel = 'log' | 'info' | 'warn' | 'error' | 'debug' | 'trace' | 'verbose';
-export type { ConsoleInferredSeverity, ConsoleIssueTag };
+export type { ConsoleClassificationReason, ConsoleInferredSeverity, ConsoleIssueTag };
 
 export type ConsoleQuickFocus =
   | 'all'
@@ -19,6 +20,7 @@ export interface ConsoleLogEntry {
   index?: number;
   timestamp: string;
   level: LogLevel;
+  originalLevel?: LogLevel;
   message: string;
   source?: string;
   lineNumber?: number;
@@ -31,6 +33,7 @@ export interface ConsoleLogEntry {
   inferredSeverity: ConsoleInferredSeverity;
   issueTags: ConsoleIssueTag[];
   primaryIssue?: ConsoleIssueTag;
+  classificationReasons?: ConsoleClassificationReason[];
   fileId?: string;
   _id?: string;
 }
@@ -85,6 +88,7 @@ export interface ConsoleLogEntriesResponse {
     hasMore: boolean;
     limit: number;
   };
+  facets?: ConsoleLogFacets;
 }
 
 export interface ConsoleLogQuery {
@@ -92,8 +96,15 @@ export interface ConsoleLogQuery {
   limit?: number;
   search?: string;
   levels?: LogLevel[];
+  quickFocus?: ConsoleQuickFocus;
   startTime?: string | null;
   endTime?: string | null;
   sortBy?: ConsoleLogSortField;
   sortDir?: 'asc' | 'desc';
+}
+
+export interface ConsoleLogFacets {
+  levelCounts: Partial<Record<LogLevel, number>>;
+  issueTagCounts: Record<string, number>;
+  topSources: Array<{ source: string; count: number }>;
 }

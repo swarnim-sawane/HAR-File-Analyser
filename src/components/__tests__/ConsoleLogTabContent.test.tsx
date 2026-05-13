@@ -1,12 +1,12 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import ConsoleLogTabContent from '../ConsoleLogTabContent';
 
 const apiClientMocks = vi.hoisted(() => ({
   getLogStatus: vi.fn(),
   getLogEntries: vi.fn(),
   getLogEntry: vi.fn(),
+  getLogStats: vi.fn(),
 }));
 
 vi.mock('../../services/apiClient', () => ({
@@ -14,6 +14,7 @@ vi.mock('../../services/apiClient', () => ({
     getLogStatus: apiClientMocks.getLogStatus,
     getLogEntries: apiClientMocks.getLogEntries,
     getLogEntry: apiClientMocks.getLogEntry,
+    getLogStats: apiClientMocks.getLogStats,
   },
 }));
 
@@ -42,6 +43,7 @@ describe('ConsoleLogTabContent', () => {
     apiClientMocks.getLogStatus.mockReset();
     apiClientMocks.getLogEntries.mockReset();
     apiClientMocks.getLogEntry.mockReset();
+    apiClientMocks.getLogStats.mockReset();
 
     apiClientMocks.getLogStatus.mockResolvedValue({
       fileId: 'file-1',
@@ -71,8 +73,22 @@ describe('ConsoleLogTabContent', () => {
         totalPages: 1,
         totalEntries: 1,
         hasMore: false,
-        limit: 1000,
+        limit: 200,
       },
+      facets: {
+        levelCounts: { error: 1 },
+        issueTagCounts: { cors: 1, network: 1 },
+        topSources: [{ source: 'webapp/', count: 1 }],
+      },
+    });
+
+    apiClientMocks.getLogStats.mockResolvedValue({
+      totalLogs: 1,
+      levels: { error: 1 },
+      sources: { 'webapp/': 1 },
+      errors: 1,
+      warnings: 0,
+      infos: 0,
     });
 
     apiClientMocks.getLogEntry.mockResolvedValue({
@@ -94,8 +110,6 @@ describe('ConsoleLogTabContent', () => {
   });
 
   it('loads the full backend detail payload when a row is selected', async () => {
-    const user = userEvent.setup();
-
     const { container } = render(
       <ConsoleLogTabContent
         tabId="console-tab-1"
@@ -113,16 +127,53 @@ describe('ConsoleLogTabContent', () => {
 
     const rowMessage = await screen.findByText(/blocked by cors policy/i);
     expect(container.querySelector('.request-list-header')).not.toBeNull();
-    await user.click(rowMessage);
+    expect(apiClientMocks.getLogEntries).toHaveBeenCalledWith(
+      'file-1',
+      expect.objectContaining({
+        limit: 200,
+        sortBy: 'timestamp',
+      }),
+    );
+    fireEvent.click(rowMessage.closest('.request-item') as HTMLElement);
 
     await waitFor(() => {
       expect(apiClientMocks.getLogEntry).toHaveBeenCalledWith('file-1', 0);
     });
 
     const rawEventTab = await screen.findByRole('tab', { name: /raw event/i });
-    await user.click(rawEventTab);
+    fireEvent.click(rawEventTab);
 
     expect(screen.getByText(/TypeError: Failed to fetch/i)).toBeInTheDocument();
+  });
+
+  it('uses the backend-paged query path for server processed logs', async () => {
+    render(
+      <ConsoleLogTabContent
+        tabId="console-tab-1"
+        fileId="file-1"
+        fileName="console.log"
+        initialData={null}
+        isActive={true}
+        backendUrl="http://localhost:4000"
+        recentFiles={[]}
+        onAddNewTab={vi.fn()}
+        onLoadRecentNewTab={vi.fn()}
+        onClearRecent={vi.fn()}
+      />,
+    );
+
+    await screen.findByText(/blocked by cors policy/i);
+
+    expect(apiClientMocks.getLogEntries).toHaveBeenCalledWith(
+      'file-1',
+      expect.objectContaining({
+        page: 1,
+        limit: 200,
+        sortBy: 'timestamp',
+        sortDir: 'desc',
+      }),
+    );
+    expect(screen.getByText(/matching full file/i)).toBeInTheDocument();
   });
 
   it('does not mount AI Insights while the analyzer tab is active', async () => {

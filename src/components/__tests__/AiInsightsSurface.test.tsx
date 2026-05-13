@@ -208,4 +208,104 @@ describe('AiInsightsSurface icon clarity', () => {
     expect(screen.queryByText('Fix')).not.toBeInTheDocument();
     expect(screen.queryByText('SR Data')).not.toBeInTheDocument();
   });
+
+  it('shows a source-specific completed fallback when console insights have no findings', () => {
+    render(
+      <AiInsightsSurface
+        {...baseProps}
+        insights={{
+          overallHealth: 'warning',
+          summary:
+            'No high-confidence, evidence-backed console findings were identified in the analyzed log context.',
+          sections: [],
+          detectedProducts: [{ product: 'Visual Builder Cloud Service', shortName: 'VBCS' }],
+        }}
+        isGenerating={false}
+        variant="console"
+      />
+    );
+
+    expect(screen.getByText('No high-confidence console findings')).toBeInTheDocument();
+    expect(screen.getByText(/log was parsed/i)).toBeInTheDocument();
+    expect(screen.getByText(/generic or unsupported ai statements/i)).toBeInTheDocument();
+    expect(screen.getByText('VBCS')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /regenerate/i })).toBeInTheDocument();
+
+    expect(screen.queryByText('Overall health')).not.toBeInTheDocument();
+    expect(screen.queryByText('Jump to section')).not.toBeInTheDocument();
+    expect(screen.queryByText('Review Areas')).not.toBeInTheDocument();
+    expect(screen.queryByText(/HAR context/i)).not.toBeInTheDocument();
+  });
+
+  it('shows analyzer evidence instead of no-findings wording when empty AI results still have log signals', () => {
+    render(
+      <AiInsightsSurface
+        {...baseProps}
+        insights={{
+          overallHealth: 'warning',
+          summary:
+            'No high-confidence, evidence-backed console findings were identified in the analyzed log context.',
+          sections: [],
+        }}
+        isGenerating={false}
+        variant="console"
+        observedSignals={{
+          errorCount: 12,
+          warningCount: 4,
+          topIssueTags: [{ tag: 'exception', count: 12 }],
+          topRepeatedSignal: {
+            count: 12,
+            source: 'oracle.adf.model.log.Jpx@2240',
+            message:
+              'JPX Namespace /sitedef does not have a writable MetadataStore, forcing mMergedJpxPersisted to DISABLE',
+          },
+        }}
+      />
+    );
+
+    expect(screen.getByText('Analyzer signals found')).toBeInTheDocument();
+    expect(screen.getByText(/AI did not produce a validated root cause/i)).toBeInTheDocument();
+    expect(screen.getByText('12 errors')).toBeInTheDocument();
+    expect(screen.getByText('4 warnings')).toBeInTheDocument();
+    expect(screen.getByText(/oracle\.adf\.model\.log\.Jpx@2240/i)).toBeInTheDocument();
+    expect(screen.getByText(/writable MetadataStore/i)).toBeInTheDocument();
+    expect(screen.queryByText('No high-confidence console findings')).not.toBeInTheDocument();
+  });
+
+  it('renders analyzer evidence as its own section instead of a critical issue label', () => {
+    render(
+      <AiInsightsSurface
+        {...baseProps}
+        insights={{
+          overallHealth: 'warning',
+          summary: 'Repeated server-side analyzer evidence was found.',
+          sections: [
+            {
+              type: 'analyzer_evidence',
+              title: 'Analyzer Evidence',
+              findings: [
+                {
+                  severity: 'medium',
+                  title: 'Repeated ADF metadata-store error signal',
+                  product: 'Visual Builder',
+                  component: 'ADF metadata store',
+                  what: 'The analyzer found 3022 server error signals.',
+                  why: 'This is analyzer evidence, not an AI-confirmed root cause.',
+                  evidence: 'JPX Namespace /sitedef does not have a writable MetadataStore',
+                  fix: 'Review the metadata-store configuration and surrounding server logs.',
+                },
+              ],
+            },
+          ],
+        }}
+        isGenerating={false}
+        variant="console"
+      />,
+    );
+
+    expect(screen.getAllByText('Analyzer Evidence').length).toBeGreaterThan(0);
+    expect(screen.getByText(/3022 server error signals/i)).toBeInTheDocument();
+    expect(screen.queryByText('Critical Issues')).not.toBeInTheDocument();
+    expect(screen.getByText('0')).toBeInTheDocument();
+  });
 });

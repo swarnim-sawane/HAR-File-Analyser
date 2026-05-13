@@ -19,6 +19,17 @@ import './AiInsights.css';
 
 type Tone = 'critical' | 'degraded' | 'warning' | 'healthy' | 'neutral';
 
+export interface AiObservedSignals {
+  errorCount: number;
+  warningCount: number;
+  topIssueTags: Array<{ tag: string; count: number }>;
+  topRepeatedSignal?: {
+    count: number;
+    source?: string;
+    message: string;
+  };
+}
+
 interface AiInsightsSurfaceProps {
   insights: InsightsResult | null;
   isGenerating: boolean;
@@ -32,6 +43,7 @@ interface AiInsightsSurfaceProps {
   loadingHint: string;
   emptyDescription: string;
   productsLabel: string;
+  observedSignals?: AiObservedSignals;
 }
 
 const HEALTH_META: Record<
@@ -92,6 +104,12 @@ const SECTION_META: Record<
     Icon: React.FC;
   }
 > = {
+  analyzer_evidence: {
+    kind: 'Analyzer Evidence',
+    label: 'Deterministic signals found by the analyzer before AI root-cause validation.',
+    railLabel: 'Server-side and analyzer signals',
+    Icon: InfoIcon,
+  },
   critical_issues: {
     kind: 'Critical Issues',
     label: 'Issues that can block or materially degrade the session.',
@@ -157,6 +175,64 @@ function getSourceIcon(variant: 'har' | 'console') {
   return variant === 'har' ? NetworkIcon : ConsoleIcon;
 }
 
+function getNoFindingsCopy(variant: 'har' | 'console') {
+  if (variant === 'console') {
+    return {
+      title: 'No high-confidence console findings',
+      fallbackSummary:
+        'No high-confidence, evidence-backed console findings were identified in the analyzed log context.',
+      notes: [
+        {
+          label: 'What happened',
+          body: 'The log was parsed and OCA returned a completed response, but no finding had enough concrete evidence and actionable remediation to display.',
+        },
+        {
+          label: 'Why findings are withheld',
+          body: 'Generic or unsupported AI statements are intentionally suppressed, so the tool does not show guesses as findings.',
+        },
+        {
+          label: 'Next review step',
+          body: 'If a failure is expected, filter the Analyzer to the relevant time window or regenerate after narrowing the log sample.',
+        },
+      ],
+    };
+  }
+
+  return {
+    title: 'No high-confidence HAR findings',
+    fallbackSummary:
+      'No high-confidence, evidence-backed HAR findings were identified in the analyzed request context.',
+    notes: [
+      {
+        label: 'What happened',
+        body: 'The HAR was parsed and OCA returned a completed response, but no finding had enough concrete request evidence and actionable remediation to display.',
+      },
+      {
+        label: 'Why findings are withheld',
+        body: 'Generic or unsupported AI statements are intentionally suppressed, so the tool does not show guesses as findings.',
+      },
+      {
+        label: 'Next review step',
+        body: 'If a failure is expected, focus the Analyzer filters on the relevant status bucket, domain, or slow request group and regenerate.',
+      },
+    ],
+  };
+}
+
+function hasObservedSignals(signals?: AiObservedSignals): signals is AiObservedSignals {
+  return Boolean(
+    signals &&
+      (signals.errorCount > 0 ||
+        signals.warningCount > 0 ||
+        signals.topIssueTags.length > 0 ||
+        signals.topRepeatedSignal)
+  );
+}
+
+function pluralize(count: number, singular: string, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
 function getSectionId(sectionType: string) {
   return `ai-insights-section-${sectionType}`;
 }
@@ -174,6 +250,7 @@ const AiInsightsSurface: React.FC<AiInsightsSurfaceProps> = ({
   loadingHint,
   emptyDescription,
   productsLabel,
+  observedSignals,
 }) => {
   const SourceIcon = getSourceIcon(variant);
   const sourceKicker = getSourceKicker(variant);
@@ -249,11 +326,112 @@ const AiInsightsSurface: React.FC<AiInsightsSurfaceProps> = ({
     );
   }
 
-  const health = HEALTH_META[insights.overallHealth] ?? HEALTH_META.warning;
   const totalFindings = insights.sections.reduce(
     (sum, section) => sum + section.findings.length,
     0
   );
+
+  if (totalFindings === 0) {
+    const noFindingsCopy = getNoFindingsCopy(variant);
+    const shouldShowObservedSignals = hasObservedSignals(observedSignals);
+    const title = shouldShowObservedSignals ? 'Analyzer signals found' : noFindingsCopy.title;
+    const summary = shouldShowObservedSignals
+      ? 'AI did not produce a validated root cause from these signals. Review the evidence below.'
+      : insights.summary || noFindingsCopy.fallbackSummary;
+
+    return (
+      <div className="ai-insights ai-insights-empty-result">
+        <section className="ai-insights-empty-result-card">
+          <div className="ai-insights-empty-result-head">
+            <div className="ai-insights-state-icon tone-accent" aria-hidden="true">
+              <SourceIcon />
+            </div>
+            <div className="ai-insights-empty-result-copy">
+              <div className="ai-insights-hero-meta">
+                <span className="ai-insights-kicker">
+                  <span className="ai-insights-kicker-icon" aria-hidden="true">
+                    <SourceIcon />
+                  </span>
+                  <span>{sourceKicker}</span>
+                </span>
+                <span className="ai-insights-model-badge">{MODEL_BADGE_LABEL}</span>
+              </div>
+              <h2>{title}</h2>
+              <p>{summary}</p>
+            </div>
+            <button className="ai-insights-regen-btn" onClick={generate} type="button">
+              <span className="ai-insights-button-icon" aria-hidden="true">
+                <RefreshIcon />
+              </span>
+              <span>Regenerate</span>
+            </button>
+          </div>
+
+          {shouldShowObservedSignals ? (
+            <div className="ai-insights-empty-result-notes ai-insights-observed-signals">
+              <article className="ai-insights-empty-result-note">
+                <span>Analyzer counts</span>
+                <p>
+                  <strong>{pluralize(observedSignals.errorCount, 'error')}</strong>
+                  {' | '}
+                  <strong>{pluralize(observedSignals.warningCount, 'warning')}</strong>
+                </p>
+              </article>
+              <article className="ai-insights-empty-result-note">
+                <span>Top issue tags</span>
+                <p>
+                  {observedSignals.topIssueTags.length > 0
+                    ? observedSignals.topIssueTags
+                        .map((item) => `${item.tag} (${item.count})`)
+                        .join(', ')
+                    : 'No inferred tags were attached to these signals.'}
+                </p>
+              </article>
+              <article className="ai-insights-empty-result-note">
+                <span>Repeated evidence</span>
+                {observedSignals.topRepeatedSignal ? (
+                  <p>
+                    <strong>{pluralize(observedSignals.topRepeatedSignal.count, 'occurrence')}</strong>
+                    {observedSignals.topRepeatedSignal.source
+                      ? ` | ${observedSignals.topRepeatedSignal.source}`
+                      : ''}
+                    <br />
+                    {observedSignals.topRepeatedSignal.message}
+                  </p>
+                ) : (
+                  <p>No repeated error signature was detected.</p>
+                )}
+              </article>
+            </div>
+          ) : (
+            <div className="ai-insights-empty-result-notes">
+              {noFindingsCopy.notes.map((note) => (
+                <article key={note.label} className="ai-insights-empty-result-note">
+                  <span>{note.label}</span>
+                  <p>{note.body}</p>
+                </article>
+              ))}
+            </div>
+          )}
+
+          {insights.detectedProducts && insights.detectedProducts.length > 0 && (
+            <div className="ai-insights-empty-result-products">
+              <strong>{productsLabel}</strong>
+              <div className="ai-insights-products-list">
+                {insights.detectedProducts.map((product) => (
+                  <span key={product.shortName} className="ai-insights-product-pill">
+                    {product.shortName}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+      </div>
+    );
+  }
+
+  const health = HEALTH_META[insights.overallHealth] ?? HEALTH_META.warning;
   const criticalCount = insights.sections
     .flatMap((section) => section.findings)
     .filter((finding) => finding.severity === 'critical').length;

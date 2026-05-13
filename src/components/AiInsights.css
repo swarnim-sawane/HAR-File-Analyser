@@ -246,6 +246,96 @@
   background: rgba(255, 255, 255, 0.96);
 }
 
+.ai-insights-empty-result {
+  max-width: 1120px;
+}
+
+.ai-insights-empty-result-card {
+  padding: 28px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at top right, rgba(37, 99, 235, 0.08), transparent 34%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.97));
+  box-shadow:
+    0 20px 46px rgba(15, 23, 42, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.82);
+  display: grid;
+  gap: 18px;
+}
+
+.ai-insights-empty-result-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: start;
+}
+
+.ai-insights-empty-result-copy {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.ai-insights-empty-result-copy h2 {
+  margin: 0;
+  font-size: 34px;
+  line-height: 1.05;
+  letter-spacing: 0;
+  color: var(--text-primary);
+}
+
+.ai-insights-empty-result-copy p {
+  margin: 0;
+  max-width: 900px;
+  font-size: 15px;
+  line-height: 1.75;
+  color: var(--text-secondary);
+}
+
+.ai-insights-empty-result-notes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.ai-insights-empty-result-note {
+  padding: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.ai-insights-empty-result-note span {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.ai-insights-empty-result-note p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text-secondary);
+}
+
+.ai-insights-empty-result-products {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 2px;
+}
+
+.ai-insights-empty-result-products strong {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
 .ai-insights-rail {
   min-width: 0;
 }
@@ -1064,9 +1154,11 @@
 html[data-theme='dark'] .ai-insights-state,
 html[data-theme='dark'] .ai-insights-rail-card,
 html[data-theme='dark'] .ai-insights-hero,
+html[data-theme='dark'] .ai-insights-empty-result-card,
 html[data-theme='dark'] .ai-insights-section-card,
 html[data-theme='dark'] .ai-finding-card,
 html[data-theme='dark'] .ai-finding-detail-card,
+html[data-theme='dark'] .ai-insights-empty-result-note,
 html[data-theme='dark'] .ai-insights-health-card,
 html[data-theme='dark'] .ai-insights-metric-card,
 html[data-theme='dark'] .ai-insights-section-icon,
@@ -1111,6 +1203,7 @@ html[data-theme='dark'] .ai-insights-regen-btn {
 
 html[data-theme='dark'] .ai-insights-rail-card,
 html[data-theme='dark'] .ai-insights-hero,
+html[data-theme='dark'] .ai-insights-empty-result-card,
 html[data-theme='dark'] .ai-insights-section-card {
   border-color: rgba(71, 85, 105, 0.4);
   background:
@@ -1142,6 +1235,7 @@ html[data-theme='dark'] .ai-insights-count,
 html[data-theme='dark'] .ai-finding-context,
 html[data-theme='dark'] .ai-insights-rail-nav-item,
 html[data-theme='dark'] .ai-insights-rail-nav-count,
+html[data-theme='dark'] .ai-insights-empty-result-note,
 html[data-theme='dark'] .ai-finding-card,
 html[data-theme='dark'] .ai-finding-detail-card {
   border-color: rgba(71, 85, 105, 0.42);
@@ -1273,6 +1367,7 @@ html[data-theme='redwood'] .ai-insights-regen-btn {
 
 html[data-theme='redwood'] .ai-insights-rail-card,
 html[data-theme='redwood'] .ai-insights-hero,
+html[data-theme='redwood'] .ai-insights-empty-result-card,
 html[data-theme='redwood'] .ai-insights-section-card {
   border-color: rgba(92, 86, 81, 0.14);
   background:
@@ -1307,6 +1402,7 @@ html[data-theme='redwood'] .ai-insights-count,
 html[data-theme='redwood'] .ai-finding-context,
 html[data-theme='redwood'] .ai-insights-rail-nav-item,
 html[data-theme='redwood'] .ai-insights-rail-nav-count,
+html[data-theme='redwood'] .ai-insights-empty-result-note,
 html[data-theme='redwood'] .ai-finding-card,
 html[data-theme='redwood'] .ai-finding-detail-card {
   border-color: rgba(92, 86, 81, 0.14);
@@ -1423,12 +1519,14 @@ html[data-theme='redwood'] .ai-insights-rail-nav-icon {
   .ai-insights-state,
   .ai-insights-rail-card,
   .ai-insights-hero,
+  .ai-insights-empty-result-card,
   .ai-insights-section-card {
     border-radius: 24px;
   }
 
   .ai-insights-state,
   .ai-insights-rail-card,
+  .ai-insights-empty-result-card,
   .ai-insights-hero {
     padding: 20px;
   }
@@ -1439,6 +1537,11 @@ html[data-theme='redwood'] .ai-insights-rail-nav-icon {
   }
 
   .ai-insights-hero-heading {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-insights-empty-result-head,
+  .ai-insights-empty-result-notes {
     grid-template-columns: 1fr;
   }
 }

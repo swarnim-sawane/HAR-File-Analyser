@@ -66,9 +66,64 @@ describe('ConsoleLogParser', () => {
 
       const entry = parsed.entries[0] as any;
       expect(entry.level).toBe('error');
+      expect(entry.originalLevel).toBe('log');
       expect(entry.inferredSeverity).toBe('error');
       expect(entry.issueTags).toEqual(expect.arrayContaining(['cors', 'network']));
       expect(entry.primaryIssue).toBe('cors');
+      expect(entry.classificationReasons).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            ruleId: 'cors.failure',
+            tag: 'cors',
+            severity: 'error',
+          }),
+        ]),
+      );
+    });
+
+    it('parses Catalina bracketed ISO INFO and ERROR rows as separate server log events', () => {
+      const parsed = ConsoleLogParser.parsePlainText(
+        [
+          '2026-05-09T17:20:53.362Z [INFO] [http-nio-10.89.0.2-8012-exec-2] [Context: {tenantId=7712EB5F949146B4910EB86BD8EBF46F}] [com.oracle.breeze.metrics.HourlyVisitorTrackingFilter@1007] VB_OPID_HOURLY_VISIT: Added one to TenantHourlyPK for URI /rt/warehouse_reception_module/live/resources/data/GantryOblpnInfo Headers: User-Agent = oracle-cloud-rest/21.2.1',
+          '2026-05-09T17:20:53.443Z [ERROR] [vb-data-rt-pool-thread-9403] [Context: {tenantId=7712EB5F949146B4910EB86BD8EBF46F}] [oracle.adf.model.log.Jpx@2240] JPX Namespace /sitedef does not have a writable MetadataStore, forcing mMergedJpxPersisted to DISABLE',
+        ].join('\n'),
+        'catalina.log',
+      );
+
+      expect(parsed.entries).toHaveLength(2);
+      expect(parsed.entries[0]).toMatchObject({
+        level: 'info',
+        source: 'com.oracle.breeze.metrics.HourlyVisitorTrackingFilter@1007',
+      });
+      expect(parsed.entries[0].issueTags).not.toEqual(expect.arrayContaining(['cors', 'network']));
+      expect(parsed.entries[1]).toMatchObject({
+        level: 'error',
+        originalLevel: 'error',
+        source: 'oracle.adf.model.log.Jpx@2240',
+      });
+      expect(parsed.entries[1].message).toContain('writable MetadataStore');
+    });
+
+    it('does not classify harmless CORS header counters as CORS failures', () => {
+      const parsed = ConsoleLogParser.parsePlainText(
+        'Access-Control-Allow-Origin: count 1',
+        'catalina.log',
+      );
+
+      expect(parsed.entries).toHaveLength(1);
+      expect(parsed.entries[0].issueTags).not.toEqual(expect.arrayContaining(['cors', 'network']));
+      expect(parsed.entries[0].inferredSeverity).not.toBe('error');
+    });
+
+    it('does not classify a neutral preflight access-control note as a CORS failure', () => {
+      const parsed = ConsoleLogParser.parsePlainText(
+        'Preflight request completed access control check for /ords/data',
+        'console.log',
+      );
+
+      expect(parsed.entries).toHaveLength(1);
+      expect(parsed.entries[0].issueTags).not.toContain('cors');
+      expect(parsed.entries[0].inferredSeverity).not.toBe('error');
     });
 
     it('does not classify successful HTTP logs with millisecond timings as 5xx', () => {

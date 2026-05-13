@@ -3,6 +3,7 @@ import {
   ConsoleFilterOptions,
   ConsoleLogEntry,
   ConsoleLogEntrySummary,
+  ConsoleLogFacets,
   ConsoleLogQuery,
   ConsoleLogSortField,
   LogLevel,
@@ -44,6 +45,7 @@ interface UsePagedConsoleLogDataReturn {
   isLoadingRows: boolean;
   fileStatus: ConsoleLogStatus | null;
   fileStats: Record<string, unknown> | null;
+  facets: ConsoleLogFacets | null;
   totalEntries: number;
   filteredTotalEntries: number;
   updateFilters: (filters: Partial<ConsoleFilterOptions>) => void;
@@ -96,6 +98,29 @@ function trimPageCache<T>(cache: Map<number, T>, centerPage: number): Map<number
   return next;
 }
 
+function normalizePagedEntry(
+  entry: ConsoleLogEntrySummary,
+  fallbackIndex: number,
+  fileId: string,
+): ConsoleLogEntrySummary {
+  const rawId = entry._id;
+  const id =
+    typeof entry.id === 'string' && entry.id
+      ? entry.id
+      : typeof rawId === 'string' && rawId
+        ? rawId
+        : `log-entry-${fileId}-${entry.index ?? fallbackIndex}`;
+
+  return {
+    ...entry,
+    id,
+    index: typeof entry.index === 'number' ? entry.index : fallbackIndex,
+    fileId: entry.fileId || fileId,
+    inferredSeverity: entry.inferredSeverity ?? 'none',
+    issueTags: Array.isArray(entry.issueTags) ? entry.issueTags : [],
+  };
+}
+
 export function usePagedConsoleLogData({
   fileId,
   fileName,
@@ -114,6 +139,7 @@ export function usePagedConsoleLogData({
   const [pendingRequests, setPendingRequests] = useState(0);
   const [fileStatus, setFileStatus] = useState<ConsoleLogStatus | null>(null);
   const [fileStats, setFileStats] = useState<Record<string, unknown> | null>(null);
+  const [facets, setFacets] = useState<ConsoleLogFacets | null>(null);
   const [filteredTotalEntries, setFilteredTotalEntries] = useState(0);
 
   const pageCacheRef = useRef<Map<number, ConsoleLogEntrySummary[]>>(new Map());
@@ -143,10 +169,11 @@ export function usePagedConsoleLogData({
       levels: activeLevels,
       startTime: filters.timeRange.start,
       endTime: filters.timeRange.end,
+      quickFocus: filters.quickFocus === 'all' ? undefined : filters.quickFocus,
       sortBy: sortField,
       sortDir: sortDirection,
     }),
-    [activeLevels, debouncedSearch, filters.timeRange.end, filters.timeRange.start, sortDirection, sortField]
+    [activeLevels, debouncedSearch, filters.quickFocus, filters.timeRange.end, filters.timeRange.start, sortDirection, sortField]
   );
 
   const queryKey = useMemo(() => JSON.stringify(query), [query]);
@@ -186,9 +213,14 @@ export function usePagedConsoleLogData({
 
         startTransition(() => {
           setFilteredTotalEntries(response.pagination.totalEntries);
+          setFacets(response.facets ?? null);
+          const normalizedEntries = response.entries.map((entry, offset) =>
+            normalizePagedEntry(entry, (page - 1) * PAGE_SIZE + offset, fileId),
+          );
+
           setPageCache((previous) => {
             const next = new Map(previous);
-            next.set(page, response.entries);
+            next.set(page, normalizedEntries);
             const trimmed = trimPageCache(next, page);
             pageCacheRef.current = trimmed;
             return trimmed;
@@ -223,6 +255,19 @@ export function usePagedConsoleLogData({
   );
 
   const loadBootstrapData = useCallback(async () => {
+    requestVersionRef.current += 1;
+    detailVersionRef.current += 1;
+    inFlightPagesRef.current.clear();
+    detailCacheRef.current.clear();
+    pageCacheRef.current = new Map();
+    setPageCache(new Map());
+    setFilteredTotalEntries(0);
+    setFacets(null);
+    setSelectedEntryIndex(null);
+    setSelectedEntryId(null);
+    setSelectedEntryState(null);
+    setSelectedEntryLoading(false);
+    setError(null);
     setBootstrapping(true);
 
     try {
@@ -235,6 +280,7 @@ export function usePagedConsoleLogData({
         setFileStatus(status);
         setFileStats(stats);
         setFilteredTotalEntries(typeof status?.totalEntries === 'number' ? status.totalEntries : 0);
+        setFacets(null);
         setError(null);
       });
     } catch (err) {
@@ -263,18 +309,19 @@ export function usePagedConsoleLogData({
     startTransition(() => {
       setPageCache(new Map());
       setFilteredTotalEntries(typeof fileStatus?.totalEntries === 'number' ? fileStatus.totalEntries : 0);
+      setFacets(null);
       setSelectedEntryIndex(null);
       setSelectedEntryId(null);
       setSelectedEntryState(null);
       setError(null);
     });
 
-    if (!isActive) {
+    if (!isActive || bootstrapping) {
       return;
     }
 
     void loadPage(1, requestVersionRef.current);
-  }, [fileId, fileStatus?.totalEntries, isActive, loadPage, queryKey]);
+  }, [bootstrapping, fileId, isActive, loadPage, queryKey]);
 
   const updateFilters = useCallback((incoming: Partial<ConsoleFilterOptions>) => {
     setFilters((previous) => ({
@@ -351,6 +398,7 @@ export function usePagedConsoleLogData({
     setSortField('timestamp');
     setSortDirection('desc');
     setPageCache(new Map());
+    setFacets(null);
     setSelectedEntryIndex(null);
     setSelectedEntryId(null);
     setSelectedEntryState(null);
@@ -372,6 +420,7 @@ export function usePagedConsoleLogData({
     isLoadingRows: pendingRequests > 0,
     fileStatus,
     fileStats,
+    facets,
     totalEntries: typeof fileStatus?.totalEntries === 'number' ? fileStatus.totalEntries : 0,
     filteredTotalEntries,
     updateFilters,

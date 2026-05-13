@@ -134,9 +134,63 @@ describe('streamParseConsoleLog', () => {
 
     expect(collected).toHaveLength(1);
     expect(collected[0].level).toBe('error');
+    expect(collected[0].originalLevel).toBe('info');
     expect(collected[0].inferredSeverity).toBe('error');
     expect(collected[0].issueTags).toEqual(expect.arrayContaining(['cors', 'network']));
     expect(collected[0].primaryIssue).toBe('cors');
+    expect(collected[0].classificationReasons).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ ruleId: 'cors.failure', tag: 'cors', severity: 'error' }),
+      ]),
+    );
+  });
+
+  it('parses Catalina bracketed ISO INFO and ERROR rows with source fields', async () => {
+    const path = writeTempFile(
+      [
+        '2026-05-09T17:20:53.362Z [INFO] [http-nio-10.89.0.2-8012-exec-2] [Context: {tenantId=7712EB5F949146B4910EB86BD8EBF46F}] [com.oracle.breeze.metrics.HourlyVisitorTrackingFilter@1007] VB_OPID_HOURLY_VISIT: Added one to TenantHourlyPK for URI /rt/warehouse_reception_module/live/resources/data/GantryOblpnInfo Headers: User-Agent = oracle-cloud-rest/21.2.1',
+        '2026-05-09T17:20:53.443Z [ERROR] [vb-data-rt-pool-thread-9403] [Context: {tenantId=7712EB5F949146B4910EB86BD8EBF46F}] [oracle.adf.model.log.Jpx@2240] JPX Namespace /sitedef does not have a writable MetadataStore, forcing mMergedJpxPersisted to DISABLE',
+      ].join('\n'),
+      '.log',
+    );
+    const collected: any[] = [];
+
+    await streamParseConsoleLog(path, async (entry) => { collected.push(entry); });
+
+    expect(collected).toHaveLength(2);
+    expect(collected[0]).toMatchObject({
+      level: 'info',
+      source: 'com.oracle.breeze.metrics.HourlyVisitorTrackingFilter@1007',
+    });
+    expect(collected[0].issueTags).not.toEqual(expect.arrayContaining(['cors', 'network']));
+    expect(collected[1]).toMatchObject({
+      level: 'error',
+      originalLevel: 'error',
+      source: 'oracle.adf.model.log.Jpx@2240',
+    });
+    expect(collected[1].message).toContain('writable MetadataStore');
+  });
+
+  it('does not classify harmless CORS header counters as CORS failures', async () => {
+    const path = writeTempFile('Access-Control-Allow-Origin: count 1', '.log');
+    const collected: any[] = [];
+
+    await streamParseConsoleLog(path, async (entry) => { collected.push(entry); });
+
+    expect(collected).toHaveLength(1);
+    expect(collected[0].issueTags).not.toEqual(expect.arrayContaining(['cors', 'network']));
+    expect(collected[0].inferredSeverity).not.toBe('error');
+  });
+
+  it('does not classify neutral preflight access-control notes as CORS or network failures', async () => {
+    const path = writeTempFile('Preflight request completed access control check for /ords/data', '.log');
+    const collected: any[] = [];
+
+    await streamParseConsoleLog(path, async (entry) => { collected.push(entry); });
+
+    expect(collected).toHaveLength(1);
+    expect(collected[0].issueTags).not.toEqual(expect.arrayContaining(['cors', 'network']));
+    expect(collected[0].inferredSeverity).not.toBe('error');
   });
 
   it('does not classify successful HTTP logs with millisecond timings as 5xx', async () => {

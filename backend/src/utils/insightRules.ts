@@ -1,4 +1,5 @@
 export type InsightSectionType =
+  | 'analyzer_evidence'
   | 'critical_issues'
   | 'performance'
   | 'security'
@@ -25,18 +26,29 @@ export interface InsightSection {
 }
 
 const SECTION_PRIORITY: Record<InsightSectionType, number> = {
-  critical_issues: 0,
-  performance: 1,
-  security: 2,
-  recommendations: 3,
+  analyzer_evidence: 0,
+  critical_issues: 1,
+  performance: 2,
+  security: 3,
+  recommendations: 4,
 };
 
-const CORS_SIGNAL_RE =
-  /\b(CORS_BLOCKED|blocked by CORS policy|preflight request.*access control check|Access-Control-Allow-Origin|cross-origin request blocked)\b/i;
+const CORS_FAILURE_RE =
+  /\b(CORS_BLOCKED|blocked by CORS policy|cross-origin request blocked|preflight request[^.\n]*(?:fail|failed|doesn'?t pass|not pass|blocked|denied)|(?:no|missing)\s+['"]?Access-Control-Allow-Origin|access control check[^.\n]*(?:fail|failed|doesn'?t pass|not pass|blocked|denied)|CORS policy[^.\n]*(?:fail|failed|blocked|denied))\b/i;
 const FAILED_FETCH_RE = /\bTypeError:\s*Failed to fetch\b|\bFailed to fetch\b/i;
+const JPX_METADATA_STORE_RE =
+  /JPX Namespace\s+\/sitedef\s+does not have a writable MetadataStore/i;
 
 export function normalizeInsightsSourceType(value: unknown): InsightsSourceType {
   return value === 'console' ? 'console' : 'har';
+}
+
+export function getEmptyInsightsSummary(sourceType: InsightsSourceType): string {
+  if (sourceType === 'console') {
+    return 'No high-confidence, evidence-backed console findings were identified in the analyzed log context. The log was parsed, but the model response did not include concrete evidence and actionable remediation that passed validation.';
+  }
+
+  return 'No high-confidence, evidence-backed HAR findings were identified in the analyzed request context. The HAR was parsed, but the model response did not include concrete evidence and actionable remediation that passed validation.';
 }
 
 function extractField(line: string, name: string): string | null {
@@ -54,7 +66,7 @@ function extractFirstUrl(context: string): string | null {
 }
 
 function extractEndpoint(context: string): string | null {
-  const corsLine = context.split(/\r?\n/).find((line) => CORS_SIGNAL_RE.test(line)) ?? context;
+  const corsLine = context.split(/\r?\n/).find((line) => CORS_FAILURE_RE.test(line)) ?? context;
   return (
     extractField(corsLine, 'endpoint') ||
     extractQuotedValue(context, /\b(?:fetch|XMLHttpRequest)\s+at\s+['"]([^'"]+)['"]/i) ||
@@ -64,7 +76,7 @@ function extractEndpoint(context: string): string | null {
 }
 
 function extractOrigin(context: string): string | null {
-  const corsLine = context.split(/\r?\n/).find((line) => CORS_SIGNAL_RE.test(line)) ?? context;
+  const corsLine = context.split(/\r?\n/).find((line) => CORS_FAILURE_RE.test(line)) ?? context;
   return (
     extractField(corsLine, 'origin') ||
     extractQuotedValue(context, /\bfrom origin\s+['"]([^'"]+)['"]/i)
@@ -72,7 +84,7 @@ function extractOrigin(context: string): string | null {
 }
 
 function hasCorsEvidence(context: string, sourceType: InsightsSourceType): boolean {
-  return sourceType === 'console' && CORS_SIGNAL_RE.test(context);
+  return sourceType === 'console' && CORS_FAILURE_RE.test(context);
 }
 
 function buildCorsFinding(context: string): InsightFinding {
@@ -101,19 +113,78 @@ function buildCorsFinding(context: string): InsightFinding {
   };
 }
 
+function extractJpxMetadataStoreCount(context: string): number {
+  const repeatedMatch = context.match(/x(\d+):[^\n]*JPX Namespace\s+\/sitedef\s+does not have a writable MetadataStore/i);
+  if (repeatedMatch?.[1]) {
+    return Number.parseInt(repeatedMatch[1], 10);
+  }
+
+  const errorsMatch = context.match(/ERRORS\s+\((\d+)\s+total\)/i);
+  if (errorsMatch?.[1]) {
+    return Number.parseInt(errorsMatch[1], 10);
+  }
+
+  return 1;
+}
+
+function extractJpxMetadataStoreSource(context: string): string {
+  return (
+    context.match(/ERROR\s+\[([^\]]*Jpx[^\]]*)\]/i)?.[1] ||
+    context.match(/\[([^\]]*Jpx[^\]]*)\]/i)?.[1] ||
+    'oracle.adf.model.log.Jpx'
+  );
+}
+
+function buildJpxMetadataStoreFinding(context: string): InsightFinding {
+  const count = extractJpxMetadataStoreCount(context);
+  const source = extractJpxMetadataStoreSource(context);
+
+  return {
+    severity: count >= 3 ? 'medium' : 'low',
+    title: 'Repeated ADF metadata-store error signal',
+    product: 'Visual Builder',
+    component: 'ADF metadata store',
+    what: `The analyzer found ${count} server error signal${count === 1 ? '' : 's'} from ${source}: JPX Namespace /sitedef does not have a writable MetadataStore.`,
+    why: 'This points to a server-side ADF metadata-store persistence/configuration signal. It is analyzer evidence, not an AI-confirmed root cause, so it should be correlated with the affected request window.',
+    evidence: `ERROR [${source}]: JPX Namespace /sitedef does not have a writable MetadataStore, forcing mMergedJpxPersisted to DISABLE`,
+    fix: 'Review the Visual Builder/ADF metadata-store configuration for /sitedef and collect surrounding server logs for the same tenant, user, and timestamp before raising an SR.',
+    srGuidance:
+      'Collect Catalina logs around the repeated JPX errors, tenant/user context, affected URI, and any ADF metadata-store or MDS configuration diagnostics.',
+  };
+}
+
+function buildAnalyzerEvidenceInsights(
+  context: string,
+  sourceType: InsightsSourceType
+): InsightSection[] {
+  if (sourceType !== 'console' || !JPX_METADATA_STORE_RE.test(context)) return [];
+
+  return [
+    {
+      type: 'analyzer_evidence',
+      title: 'Analyzer Evidence',
+      findings: [buildJpxMetadataStoreFinding(context)],
+    },
+  ];
+}
+
 export function buildDeterministicInsights(
   context: string,
   sourceType: InsightsSourceType = 'har'
 ): InsightSection[] {
-  if (!hasCorsEvidence(context, sourceType)) return [];
+  const sections: InsightSection[] = [];
 
-  return [
-    {
+  if (hasCorsEvidence(context, sourceType)) {
+    sections.push({
       type: 'critical_issues',
       title: 'Critical Issues',
       findings: [buildCorsFinding(context)],
-    },
-  ];
+    });
+  }
+
+  sections.push(...buildAnalyzerEvidenceInsights(context, sourceType));
+
+  return sections;
 }
 
 function findingFingerprint(finding: InsightFinding): string {

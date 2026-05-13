@@ -24,6 +24,7 @@ describe('ConsoleLogList', () => {
         index: 0,
         timestamp: '2026-04-23T10:37:00.000Z',
         level: 'log',
+        originalLevel: 'log',
         message:
           "webapp/:1 Access to fetch at 'https://api.example.com/ords/test' has been blocked by CORS policy.",
         source: 'webapp/',
@@ -71,6 +72,7 @@ describe('ConsoleLogList', () => {
     const corsRow = screen.getByText(/blocked by cors policy/i).closest('.request-item');
     expect(corsRow).toHaveAttribute('data-inferred-severity', 'error');
     expect(within(corsRow as HTMLElement).getByText('ERROR')).toBeInTheDocument();
+    expect(within(corsRow as HTMLElement).getByText(/original: LOG/i)).toBeInTheDocument();
     expect(within(corsRow as HTMLElement).queryByText('LOG')).not.toBeInTheDocument();
     expect(within(corsRow as HTMLElement).queryByText('Error')).not.toBeInTheDocument();
     expect(within(corsRow as HTMLElement).getByText('CORS')).toBeInTheDocument();
