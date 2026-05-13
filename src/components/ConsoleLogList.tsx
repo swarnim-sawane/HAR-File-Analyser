@@ -279,6 +279,7 @@ const ConsoleLogList: React.FC<ConsoleLogListProps> = ({
     const isChecked = selectedIds.has(entry.id);
     const sourceLabel = entry.source ? entry.source.split('/').pop() || entry.source : null;
     const displayLevel = getConsoleDisplayLevel(entry);
+    const isPromoted = entry.originalLevel && entry.originalLevel !== displayLevel;
 
     return (
       <div
@@ -310,6 +311,11 @@ const ConsoleLogList: React.FC<ConsoleLogListProps> = ({
             <span className={`status-badge ${getLevelBadgeClass(displayLevel)}`}>
               {displayLevel.toUpperCase()}
             </span>
+            {isPromoted && (
+              <span className="console-original-level">
+                original: {entry.originalLevel!.toUpperCase()}
+              </span>
+            )}
           </div>
         </div>
 

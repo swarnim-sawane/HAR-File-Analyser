@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ConsoleLogEntry, ConsoleLogFile } from '../types/consolelog';
 import { InsightFinding, InsightHealth, InsightSection, InsightsResult } from './useInsights';
 import { getConsoleDisplayLevel } from '../utils/consoleLogSeverity';
-import { extractExplicitHttpStatusCodes } from '../../shared/consoleLogCore';
+import { extractExplicitHttpStatusCodes, hasCorsFailureEvidence } from '../../shared/consoleLogCore';
 
 export type { InsightFinding, InsightHealth, InsightSection, InsightsResult };
 
@@ -17,8 +17,6 @@ interface UseConsoleLogInsightsReturn {
 
 const insightsCache = new Map<string, InsightsResult>();
 
-const CORS_SIGNAL_RE =
-  /\b(blocked by CORS policy|preflight request.*access control check|Access-Control-Allow-Origin|cross-origin request blocked)\b/i;
 const FAILED_FETCH_RE = /\bTypeError:\s*Failed to fetch\b|\bFailed to fetch\b/i;
 const LOW_PRIORITY_WARNING_RE = /\bArrayDataProvider\b.*\bdeprecated\b|\bdeprecated\b.*\bArrayDataProvider\b/i;
 
@@ -106,7 +104,7 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
   const remainingErrorLines = remainingErrors.map(formatError);
 
   // Browser CORS failures can arrive as plain log rows; promote them explicitly.
-  const corsEntries = entries.filter((e) => CORS_SIGNAL_RE.test(getEvidenceText(e)));
+  const corsEntries = entries.filter((e) => hasCorsFailureEvidence(getEvidenceText(e)));
   const hasCorsBlocker = corsEntries.length > 0;
   const failedFetchEntries = hasCorsBlocker
     ? entries.filter((e) => FAILED_FETCH_RE.test(getEvidenceText(e))).slice(0, 5)
@@ -147,16 +145,22 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
   });
 
   // Repeated message patterns
-  const msgCounts = new Map<string, number>();
+  const msgCounts = new Map<string, { count: number; source?: string; message: string }>();
   for (const e of entries) {
-    const key = getEvidenceText(e).substring(0, 120);
-    msgCounts.set(key, (msgCounts.get(key) || 0) + 1);
+    const message = e.message.replace(/\s+/g, ' ').trim().slice(0, 220);
+    const key = `${e.source || 'unknown'}::${message}`;
+    const current = msgCounts.get(key);
+    msgCounts.set(key, {
+      count: (current?.count ?? 0) + 1,
+      source: e.source,
+      message,
+    });
   }
-  const repeatedMessages = Array.from(msgCounts.entries())
-    .filter(([, count]) => count > 2)
-    .sort(([, a], [, b]) => b - a)
+  const repeatedMessages = Array.from(msgCounts.values())
+    .filter(({ count }) => count > 2)
+    .sort((a, b) => b.count - a.count)
     .slice(0, 10)
-    .map(([msg, count]) => `x${count}: ${msg}`);
+    .map(({ count, source, message }) => `x${count}: ${source ? `[${source}] ` : ''}${message}`);
 
   // Action chain failures (VB-specific)
   const chainFailures = entries

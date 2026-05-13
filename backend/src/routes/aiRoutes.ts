@@ -8,8 +8,10 @@ import {
 } from '../utils/oracleProductKb';
 import {
   buildDeterministicInsights,
+  getEmptyInsightsSummary,
   mergeDeterministicInsights,
   normalizeInsightsSourceType,
+  type InsightsSourceType,
 } from '../utils/insightRules';
 
 const router = Router();
@@ -17,6 +19,7 @@ type FetchResponse = Awaited<ReturnType<typeof fetch>>;
 
 type HealthLevel = 'critical' | 'degraded' | 'warning' | 'healthy';
 type InsightSectionType =
+  | 'analyzer_evidence'
   | 'critical_issues'
   | 'performance'
   | 'security'
@@ -56,6 +59,7 @@ interface InsightsResult {
 
 const HEALTH_VALUES: HealthLevel[] = ['critical', 'degraded', 'warning', 'healthy'];
 const SECTION_VALUES: InsightSectionType[] = [
+  'analyzer_evidence',
   'critical_issues',
   'performance',
   'security',
@@ -64,6 +68,7 @@ const SECTION_VALUES: InsightSectionType[] = [
 const SEVERITY_VALUES: FindingSeverity[] = ['critical', 'high', 'medium', 'low'];
 
 const SECTION_LABELS: Record<InsightSectionType, string> = {
+  analyzer_evidence: 'Analyzer Evidence',
   critical_issues: 'Critical Issues',
   performance: 'Performance',
   security: 'Security',
@@ -78,10 +83,11 @@ const SEVERITY_PRIORITY: Record<FindingSeverity, number> = {
 };
 
 const SECTION_PRIORITY: Record<InsightSectionType, number> = {
-  critical_issues: 0,
-  performance: 1,
-  security: 2,
-  recommendations: 3,
+  analyzer_evidence: 0,
+  critical_issues: 1,
+  performance: 2,
+  security: 3,
+  recommendations: 4,
 };
 
 const SOFT_TIMEOUT_MS = 20000;
@@ -211,6 +217,7 @@ function isActionableFix(fix: string): boolean {
 interface NormalizeOptions {
   oracleSpecificityRequired: boolean;
   oracleSpecificityTokens: Set<string>;
+  sourceType: InsightsSourceType;
 }
 
 function hasOracleSpecificity(
@@ -298,13 +305,16 @@ function deriveOverallHealth(sections: InsightSection[]): HealthLevel {
   return 'healthy';
 }
 
-function fallbackSummary(sections: InsightSection[]): string {
+function fallbackSummary(
+  sections: InsightSection[],
+  sourceType: InsightsSourceType = 'har'
+): string {
   const topFinding = sections
     .flatMap((section) => section.findings)
     .sort((a, b) => SEVERITY_PRIORITY[a.severity] - SEVERITY_PRIORITY[b.severity])[0];
 
   if (!topFinding) {
-    return 'No high-confidence, evidence-backed insights were identified from this HAR context.';
+    return getEmptyInsightsSummary(sourceType);
   }
 
   return `${topFinding.title}: ${topFinding.what}`;
@@ -358,7 +368,7 @@ function normalizeInsights(
   if (normalizedSections.length === 0) {
     return {
       overallHealth: 'warning',
-      summary: 'No high-confidence, evidence-backed insights were identified from this HAR context.',
+      summary: getEmptyInsightsSummary(options.sourceType),
       sections: [],
       ...(detectedProducts.length
         ? {
@@ -702,7 +712,7 @@ router.post('/insights', async (req: Request, res: ExpressResponse) => {
 
     const normalized = normalizeInsights(
       parsed,
-      { oracleSpecificityRequired, oracleSpecificityTokens },
+      { oracleSpecificityRequired, oracleSpecificityTokens, sourceType },
       detectedProducts
     );
     const deterministicSections = buildDeterministicInsights(context, sourceType);
@@ -717,7 +727,7 @@ router.post('/insights', async (req: Request, res: ExpressResponse) => {
         ? deriveOverallHealth(mergedSections)
         : normalized.overallHealth,
       summary: deterministicSections.length > 0
-        ? fallbackSummary(mergedSections)
+        ? fallbackSummary(mergedSections, sourceType)
         : normalized.summary,
     };
 

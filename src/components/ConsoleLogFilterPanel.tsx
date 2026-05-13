@@ -6,11 +6,13 @@ import { ConsoleFilterOptions } from '../types/consolelog';
 interface ConsoleLogFilterPanelProps {
   filters: ConsoleFilterOptions;
   onFilterChange: (filters: Partial<ConsoleFilterOptions>) => void;
+  disableGrouping?: boolean;
 }
 
 const ConsoleLogFilterPanel: React.FC<ConsoleLogFilterPanelProps> = ({
   filters,
-  onFilterChange
+  onFilterChange,
+  disableGrouping = false,
 }) => {
   const handleLevelChange = (level: keyof ConsoleFilterOptions['levels']) => {
     onFilterChange({
@@ -98,14 +100,20 @@ const ConsoleLogFilterPanel: React.FC<ConsoleLogFilterPanelProps> = ({
       <div className="filter-section">
         <h3>Group By</h3>
         <select
-          value={filters.groupBy}
+          value={disableGrouping ? 'all' : filters.groupBy}
           onChange={handleGroupByChange}
           className="select-input console-select-input"
+          disabled={disableGrouping}
         >
           <option value="all">All Entries</option>
-          <option value="level">Log Level</option>
-          <option value="source">Source File</option>
+          {!disableGrouping && <option value="level">Log Level</option>}
+          {!disableGrouping && <option value="source">Source File</option>}
         </select>
+        {disableGrouping && (
+          <p className="console-filter-note">
+            Grouping is disabled for server-paged logs so partial pages are not shown as full-file groups.
+          </p>
+        )}
       </div>
     </div>
   );

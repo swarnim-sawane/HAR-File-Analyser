@@ -18008,6 +18008,13 @@ html[data-theme='redwood'] .console-details-panel .arg-value {
     gap: 6px;
 }
 
+.console-original-level {
+    font-size: 10px;
+    line-height: 1.2;
+    color: var(--text-tertiary);
+    white-space: nowrap;
+}
+
 .console-message-stack {
     display: flex;
     flex-direction: column;
@@ -18023,6 +18030,75 @@ html[data-theme='redwood'] .console-details-panel .arg-value {
 
 .console-source-empty {
     color: var(--text-tertiary);
+}
+
+.console-page-loading,
+.console-filter-note,
+.console-stats-scope {
+    font-size: 12px;
+    color: var(--text-tertiary);
+}
+
+.console-filter-note {
+    margin: 8px 0 0;
+    line-height: 1.5;
+}
+
+.console-row-placeholder {
+    color: var(--text-tertiary);
+}
+
+.console-classification-card {
+    display: grid;
+    gap: 12px;
+    width: 100%;
+    padding: 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-secondary);
+}
+
+.console-classification-grid {
+    display: grid;
+    grid-template-columns: minmax(110px, auto) minmax(0, 1fr);
+    gap: 8px 12px;
+    font-size: 12px;
+}
+
+.console-classification-grid span,
+.console-classification-empty {
+    color: var(--text-tertiary);
+}
+
+.console-classification-grid strong {
+    color: var(--text-primary);
+}
+
+.console-classification-reasons {
+    display: grid;
+    gap: 8px;
+}
+
+.console-classification-reasons article {
+    padding: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-primary);
+}
+
+.console-classification-reasons span {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.console-classification-reasons p,
+.console-classification-empty {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
 }
 
 .console-summary-inline-filters {

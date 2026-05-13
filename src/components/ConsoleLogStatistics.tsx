@@ -1,18 +1,29 @@
 // src/components/ConsoleLogStatistics.tsx
 
 import React from 'react';
-import { ConsoleLogEntry } from '../types/consolelog';
+import { ConsoleLogEntry, ConsoleLogFacets } from '../types/consolelog';
 import { ConsoleLogAnalyzer } from '../utils/consoleLogAnalyzer';
 
 interface ConsoleLogStatisticsProps {
   entries: ConsoleLogEntry[];
   totalEntries?: number;   // actual total in backend (may be > entries.length)
   truncatedAt?: number;    // set when backend has more entries than loaded
+  facets?: ConsoleLogFacets | null;
+  label?: string;
 }
 
-const ConsoleLogStatistics: React.FC<ConsoleLogStatisticsProps> = ({ entries, totalEntries, truncatedAt }) => {
+const ConsoleLogStatistics: React.FC<ConsoleLogStatisticsProps> = ({
+  entries,
+  totalEntries,
+  truncatedAt,
+  facets,
+  label,
+}) => {
   const stats = ConsoleLogAnalyzer.getStatistics(entries);
   const isTruncated = truncatedAt !== undefined && (totalEntries ?? 0) > truncatedAt;
+  const isFacetBacked = Boolean(facets);
+  const totalForStats = totalEntries ?? stats.totalEntries;
+  const levelCounts = facets?.levelCounts ?? stats.levelCounts;
 
   const levelColors: Record<string, string> = {
     error: '#ef4444',
@@ -39,7 +50,7 @@ const ConsoleLogStatistics: React.FC<ConsoleLogStatisticsProps> = ({ entries, to
           lineHeight: '1.5',
           color: 'var(--text-secondary, #888)',
         }}>
-          <strong style={{ color: '#f59e0b' }}>⚠ Large file</strong><br />
+          <strong style={{ color: '#f59e0b' }}>Large file</strong><br />
           Showing first <strong>{fmt(truncatedAt!)}</strong> of <strong>{fmt(totalEntries ?? 0)}</strong> entries.
           Use <strong>Filters</strong> or <strong>Search</strong> to narrow results.
         </div>
@@ -47,16 +58,17 @@ const ConsoleLogStatistics: React.FC<ConsoleLogStatisticsProps> = ({ entries, to
 
       <div className="filter-section">
         <h3>Statistics</h3>
+        {label && <p className="console-stats-scope">{label}</p>}
 
         <div className="console-stats-total-card">
           <div className="console-stats-total-label">Total Entries</div>
-          <div className="console-stats-total-value">{fmt(totalEntries ?? stats.totalEntries)}</div>
+          <div className="console-stats-total-value">{fmt(totalForStats)}</div>
         </div>
 
         <div className="console-stats-level-list">
-          {Object.entries(stats.levelCounts).map(([level, count]) => {
+          {Object.entries(levelCounts).map(([level, count]) => {
             if (count <= 0) return null;
-            const percent = stats.totalEntries > 0 ? (count / stats.totalEntries) * 100 : 0;
+            const percent = totalForStats > 0 ? (count / totalForStats) * 100 : 0;
             return (
               <div key={level} className="console-stats-level-row">
                 <span
@@ -81,7 +93,35 @@ const ConsoleLogStatistics: React.FC<ConsoleLogStatisticsProps> = ({ entries, to
         </div>
       </div>
 
-      {stats.topErrors.length > 0 && (
+      {facets && Object.keys(facets.issueTagCounts).length > 0 && (
+        <div className="filter-section">
+          <h3>Issue Tags</h3>
+          <div className="console-stats-error-list">
+            {Object.entries(facets.issueTagCounts).slice(0, 5).map(([tag, count]) => (
+              <div key={tag} className="console-stats-error-card">
+                <div className="console-stats-error-message">{tag}</div>
+                <div className="console-stats-error-count">{fmt(count)} matching entries</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {facets && facets.topSources.length > 0 && (
+        <div className="filter-section">
+          <h3>Top Sources</h3>
+          <div className="console-stats-error-list">
+            {facets.topSources.slice(0, 5).map((source) => (
+              <div key={source.source} className="console-stats-error-card">
+                <div className="console-stats-error-message">{source.source}</div>
+                <div className="console-stats-error-count">{fmt(source.count)} matching entries</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!isFacetBacked && stats.topErrors.length > 0 && (
         <div className="filter-section">
           <h3>Top Errors</h3>
           <div className="console-stats-error-list">
@@ -95,7 +135,7 @@ const ConsoleLogStatistics: React.FC<ConsoleLogStatisticsProps> = ({ entries, to
         </div>
       )}
 
-      {stats.timeRange && (
+      {!isFacetBacked && stats.timeRange && (
         <div className="filter-section">
           <h3>Time Range</h3>
           <div className="console-stats-time-card">

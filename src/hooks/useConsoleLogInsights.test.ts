@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildConsoleLogContext } from './useConsoleLogInsights';
 import type { ConsoleLogFile } from '../types/consolelog';
+import { ConsoleLogParser } from '../utils/consoleLogParser';
 
 function makeConsoleLogFile(messages: Array<{ level: 'log' | 'info' | 'warn' | 'error'; message: string; source?: string }>): ConsoleLogFile {
   return {
@@ -49,6 +50,35 @@ describe('buildConsoleLogContext CORS root-cause signals', () => {
     expect(corsIndex).toBeGreaterThanOrEqual(0);
     expect(warningIndex).toBeGreaterThanOrEqual(0);
     expect(corsIndex).toBeLessThan(warningIndex);
+  });
+
+  it('does not promote harmless CORS header counters as blocking evidence', () => {
+    const context = buildConsoleLogContext(
+      makeConsoleLogFile([
+        { level: 'info', message: 'Access-Control-Allow-Origin: count 1' },
+      ])
+    );
+
+    expect(context).not.toContain('CORS / PREFLIGHT BLOCKING ERRORS');
+    expect(context).not.toContain('CORS_BLOCKED');
+  });
+});
+
+describe('buildConsoleLogContext server error evidence', () => {
+  it('includes parsed Catalina JPX errors as concrete analyzer evidence', () => {
+    const logData = ConsoleLogParser.parsePlainText(
+      [
+        '2026-05-09T17:20:53.362Z [INFO] [http-nio-10.89.0.2-8012-exec-2] [Context: {tenantId=7712EB5F949146B4910EB86BD8EBF46F}] [com.oracle.breeze.metrics.HourlyVisitorTrackingFilter@1007] VB_OPID_HOURLY_VISIT: Added one to TenantHourlyPK for URI /rt/warehouse_reception_module/live/resources/data/GantryOblpnInfo Headers: User-Agent = oracle-cloud-rest/21.2.1',
+        '2026-05-09T17:20:53.443Z [ERROR] [vb-data-rt-pool-thread-9403] [Context: {tenantId=7712EB5F949146B4910EB86BD8EBF46F}] [oracle.adf.model.log.Jpx@2240] JPX Namespace /sitedef does not have a writable MetadataStore, forcing mMergedJpxPersisted to DISABLE',
+      ].join('\n'),
+      'catalina.log',
+    );
+
+    const context = buildConsoleLogContext(logData);
+
+    expect(context).toContain('ERRORS (1 total)');
+    expect(context).toContain('oracle.adf.model.log.Jpx@2240');
+    expect(context).toContain('JPX Namespace /sitedef does not have a writable MetadataStore');
   });
 });
 

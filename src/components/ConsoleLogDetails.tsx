@@ -164,6 +164,13 @@ const ConsoleLogDetails: React.FC<ConsoleLogDetailsProps> = ({ entry, onClose, i
               </span>
             </div>
 
+            {entry.originalLevel && entry.originalLevel !== displayLevel && (
+              <div className="detail-row">
+                <span className="detail-label">Original Level:</span>
+                <span className="detail-value">{entry.originalLevel.toUpperCase()}</span>
+              </div>
+            )}
+
             <div className="detail-row">
               <span className="detail-label">Timestamp:</span>
               <span className="detail-value">{formatDate(entry.timestamp)}</span>
@@ -206,6 +213,36 @@ const ConsoleLogDetails: React.FC<ConsoleLogDetailsProps> = ({ entry, onClose, i
                 </div>
               </div>
             )}
+
+            <div className="detail-row full-width">
+              <span className="detail-label">Analyzer Classification:</span>
+              <div className="console-classification-card">
+                <div className="console-classification-grid">
+                  <span>Displayed level</span>
+                  <strong>{displayLevel.toUpperCase()}</strong>
+                  <span>Original level</span>
+                  <strong>{(entry.originalLevel || entry.level).toUpperCase()}</strong>
+                  <span>Inferred severity</span>
+                  <strong>{entry.inferredSeverity.toUpperCase()}</strong>
+                  <span>Primary issue</span>
+                  <strong>{entry.primaryIssue ? ISSUE_LABELS[entry.primaryIssue] || entry.primaryIssue : 'None'}</strong>
+                </div>
+                {entry.classificationReasons && entry.classificationReasons.length > 0 ? (
+                  <div className="console-classification-reasons">
+                    {entry.classificationReasons.map((reason) => (
+                      <article key={`${reason.ruleId}-${reason.tag || 'severity'}`}>
+                        <span>{reason.label}</span>
+                        <p>{reason.evidence}</p>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="console-classification-empty">
+                    No analyzer promotion rules matched this entry.
+                  </p>
+                )}
+              </div>
+            </div>
 
             <div className="detail-section-with-copy">
               <div className="section-header-inline">

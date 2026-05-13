@@ -51,9 +51,11 @@ export async function connectDatabases() {
     // Console Logs indexes (for fast queries and filtering)
     await db.collection('console_logs').createIndex({ fileId: 1 });
     await reconcileConsoleLogEntryIndex(db.collection('console_logs'));
-    await db.collection('console_logs').createIndex({ fileId: 1, level: 1 });
-    await db.collection('console_logs').createIndex({ fileId: 1, source: 1 });
-    await db.collection('console_logs').createIndex({ fileId: 1, timestamp: 1 });
+    await db.collection('console_logs').createIndex({ fileId: 1, level: 1, index: 1 });
+    await db.collection('console_logs').createIndex({ fileId: 1, source: 1, index: 1 });
+    await db.collection('console_logs').createIndex({ fileId: 1, timestamp: 1, index: 1 });
+    await db.collection('console_logs').createIndex({ fileId: 1, issueTags: 1, index: 1 });
+    await db.collection('console_logs').createIndex({ fileId: 1, inferredSeverity: 1, index: 1 });
     
     console.log('✅ MongoDB indexes created');
     

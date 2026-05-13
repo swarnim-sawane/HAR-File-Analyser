@@ -21,6 +21,7 @@ export interface ParsedLogEntry {
   index: number;
   timestamp: string;
   level: string;
+  originalLevel?: string;
   message: string;
   source?: string;
   stackTrace?: string;
@@ -28,12 +29,19 @@ export interface ParsedLogEntry {
   inferredSeverity?: 'none' | 'warning' | 'error';
   issueTags?: string[];
   primaryIssue?: string;
+  classificationReasons?: Array<{
+    ruleId: string;
+    label: string;
+    tag?: string;
+    severity?: 'none' | 'warning' | 'error';
+    evidence: string;
+  }>;
 }
 
-const CORS_PATTERN =
-  /\b(cors policy|blocked by cors policy|cross-origin request blocked|access-control-allow-origin|preflight request)\b/i;
+const CORS_FAILURE_PATTERN =
+  /\b(CORS_BLOCKED|blocked by cors policy|cross-origin request blocked|preflight request[^.\n]*(?:fail|failed|doesn'?t pass|not pass|blocked|denied)|(?:no|missing)\s+['"]?access-control-allow-origin|access control check[^.\n]*(?:fail|failed|doesn'?t pass|not pass|blocked|denied)|cors policy[^.\n]*(?:fail|failed|blocked|denied))\b/i;
 const NETWORK_ERROR_PATTERN =
-  /\b(failed to fetch|network ?error|net::err_|request failed|load failed|connection (?:refused|reset|timed out)|preflight request|err_connection|err_failed)\b/i;
+  /\b(failed to fetch|network ?error|net::err_|request failed|load failed|connection (?:refused|reset|timed out)|err_connection|err_failed)\b/i;
 const BROWSER_POLICY_PATTERN =
   /\b(autofocus processing was blocked|permissions policy|feature policy|document already has a focused element|refused to (?:load|apply|execute|frame)|content security policy)\b/i;
 const EXCEPTION_PATTERN =
@@ -53,6 +61,10 @@ const HTTP_STATUS_EVIDENCE_PATTERNS = [
   /\bresponse\s+(?:status\s*)?(?:code\s*)?(?:is|was|of|:|=|-)?\s*([1-5]\d{2})\b/gi,
   /\b(?:GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+\S+\s+(?:HTTP\/\d(?:\.\d)?\s+)?([1-5]\d{2})\b/gi,
 ];
+
+function hasCorsFailureEvidence(text: string): boolean {
+  return CORS_FAILURE_PATTERN.test(text);
+}
 
 /**
  * Stream parse HAR file without loading entire file into memory
@@ -204,6 +216,11 @@ function parseLogLine(line: string, index: number): ParsedLogEntry | null {
       }
     }
     
+    const catalinaEntry = parseCatalinaBracketedIsoLine(trimmedLine, index, line);
+    if (catalinaEntry) {
+      return classifyParsedLogEntry(catalinaEntry);
+    }
+
     // ✅ Common log patterns
     const patterns = [
       // [2024-01-15 10:30:45] ERROR: Message
@@ -261,24 +278,114 @@ function parseLogLine(line: string, index: number): ParsedLogEntry | null {
   }
 }
 
+function readLeadingBracketGroups(input: string): { groups: string[]; message: string } {
+  const groups: string[] = [];
+  let remaining = input;
+
+  while (true) {
+    const match = remaining.match(/^\s*\[([^\]]*)\]/);
+    if (!match) break;
+    groups.push(match[1].trim());
+    remaining = remaining.slice(match[0].length);
+  }
+
+  return { groups, message: remaining.trim() };
+}
+
+function selectServerLogSource(groups: string[]): string | undefined {
+  for (let index = groups.length - 1; index >= 0; index -= 1) {
+    const group = groups[index];
+    if (group && !/^context\s*:/i.test(group)) {
+      return group;
+    }
+  }
+
+  return undefined;
+}
+
+function parseCatalinaBracketedIsoLine(
+  trimmedLine: string,
+  index: number,
+  rawText: string,
+): ParsedLogEntry | null {
+  const match = trimmedLine.match(
+    /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?(?:Z|[+-]\d{2}:?\d{2})?)\s+\[(\w+)\]\s+(.+)$/,
+  );
+  if (!match) {
+    return null;
+  }
+
+  const { groups, message } = readLeadingBracketGroups(match[3]);
+  if (!message) {
+    return null;
+  }
+
+  return {
+    index,
+    timestamp: match[1],
+    level: match[2].toLowerCase(),
+    message,
+    source: selectServerLogSource(groups) || 'console',
+    rawText,
+  };
+}
+
 function classifyParsedLogEntry(entry: ParsedLogEntry): ParsedLogEntry {
   const rawText = entry.rawText || entry.message;
   const text = `${entry.message}\n${rawText}\n${entry.stackTrace || ''}`;
   const tags = new Set<string>();
+  const originalLevel = entry.originalLevel || entry.level;
+  const evidence = text.replace(/\s+/g, ' ').trim().slice(0, 220);
+  const classificationReasons: NonNullable<ParsedLogEntry['classificationReasons']> = [];
 
-  if (CORS_PATTERN.test(text)) {
+  const pushReason = (
+    ruleId: string,
+    label: string,
+    tag: string,
+    severity: 'warning' | 'error',
+  ) => {
+    if (classificationReasons.some((reason) => reason.ruleId === ruleId && reason.tag === tag)) {
+      return;
+    }
+
+    classificationReasons.push({ ruleId, label, tag, severity, evidence });
+  };
+
+  if (hasCorsFailureEvidence(text)) {
     tags.add('cors');
     tags.add('network');
+    pushReason('cors.failure', 'Explicit CORS failure language', 'cors', 'error');
+    pushReason('network.cors', 'Network failure caused by CORS block', 'network', 'error');
   }
-  if (NETWORK_ERROR_PATTERN.test(text)) tags.add('network');
-  if (BROWSER_POLICY_PATTERN.test(text)) tags.add('browser-policy');
-  if (EXCEPTION_PATTERN.test(text)) tags.add('exception');
-  if (PROMISE_PATTERN.test(text)) tags.add('promise');
-  if (REACT_PATTERN.test(text)) tags.add('react');
+  if (NETWORK_ERROR_PATTERN.test(text)) {
+    tags.add('network');
+    pushReason('network.failure', 'Explicit network failure language', 'network', 'error');
+  }
+  if (BROWSER_POLICY_PATTERN.test(text)) {
+    tags.add('browser-policy');
+    pushReason('browser.policy', 'Browser policy restriction', 'browser-policy', 'warning');
+  }
+  if (EXCEPTION_PATTERN.test(text)) {
+    tags.add('exception');
+    pushReason('javascript.exception', 'JavaScript exception pattern', 'exception', 'error');
+  }
+  if (PROMISE_PATTERN.test(text)) {
+    tags.add('promise');
+    pushReason('javascript.promise', 'Unhandled promise failure', 'promise', 'error');
+  }
+  if (REACT_PATTERN.test(text)) {
+    tags.add('react');
+    pushReason('react.warning', 'React runtime warning', 'react', 'warning');
+  }
 
   const httpStatusCodes = extractExplicitHttpStatusCodes(text);
-  if (httpStatusCodes.some((code) => code >= 500)) tags.add('http-5xx');
-  else if (httpStatusCodes.some((code) => code >= 400)) tags.add('http-4xx');
+  if (httpStatusCodes.some((code) => code >= 500)) {
+    tags.add('http-5xx');
+    pushReason('http.status.5xx', 'Explicit HTTP 5xx status', 'http-5xx', 'error');
+  } else if (httpStatusCodes.some((code) => code >= 400)) {
+    tags.add('http-4xx');
+    pushReason('http.status.4xx', 'Explicit HTTP 4xx status', 'http-4xx', 'warning');
+  }
 
   const issueTags = Array.from(tags);
   const inferredSeverity = getInferredSeverity(issueTags, text);
@@ -286,10 +393,12 @@ function classifyParsedLogEntry(entry: ParsedLogEntry): ParsedLogEntry {
   return {
     ...entry,
     level: resolveDisplayLevel(entry.level, inferredSeverity),
+    originalLevel,
     rawText,
     inferredSeverity,
     issueTags,
     primaryIssue: getPrimaryIssue(issueTags),
+    classificationReasons,
   };
 }
 

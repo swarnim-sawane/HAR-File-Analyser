@@ -119,7 +119,12 @@ class ApiClient {
     const params =
       typeof pageOrQuery === 'number'
         ? { page: pageOrQuery, limit }
-        : pageOrQuery;
+        : {
+            ...pageOrQuery,
+            levels: Array.isArray(pageOrQuery.levels)
+              ? pageOrQuery.levels.join(',')
+              : pageOrQuery.levels,
+          };
     const response = await this.client.get(`/api/console-log/${fileId}/entries`, {
       params,
     });
