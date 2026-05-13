@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ConsoleLogEntry, ConsoleLogFile } from '../types/consolelog';
 import { InsightFinding, InsightHealth, InsightSection, InsightsResult } from './useInsights';
 import { getConsoleDisplayLevel } from '../utils/consoleLogSeverity';
+import { extractExplicitHttpStatusCodes } from '../../shared/consoleLogCore';
 
 export type { InsightFinding, InsightHealth, InsightSection, InsightsResult };
 
@@ -16,9 +17,6 @@ interface UseConsoleLogInsightsReturn {
 
 const insightsCache = new Map<string, InsightsResult>();
 
-// Regex that matches a 3-digit HTTP status code in a log message.
-// Looks for patterns like: "500", "status: 503", "HTTP/1.1 404", "statusCode=401", etc.
-const HTTP_STATUS_RE = /\b([45]\d{2})\b/;
 const CORS_SIGNAL_RE =
   /\b(blocked by CORS policy|preflight request.*access control check|Access-Control-Allow-Origin|cross-origin request blocked)\b/i;
 const FAILED_FETCH_RE = /\bTypeError:\s*Failed to fetch\b|\bFailed to fetch\b/i;
@@ -73,15 +71,13 @@ export function buildConsoleLogContext(logData: ConsoleLogFile): string {
   });
 
   const http5xxEntries = errorAndWarnEntries.filter((e) => {
-    const match = HTTP_STATUS_RE.exec(getEvidenceText(e));
-    return match ? parseInt(match[1], 10) >= 500 : false;
+    const codes = extractExplicitHttpStatusCodes(getEvidenceText(e));
+    return codes.some((code) => code >= 500);
   });
 
   const http4xxEntries = errorAndWarnEntries.filter((e) => {
-    const match = HTTP_STATUS_RE.exec(getEvidenceText(e));
-    if (!match) return false;
-    const code = parseInt(match[1], 10);
-    return code >= 400 && code < 500;
+    const codes = extractExplicitHttpStatusCodes(getEvidenceText(e));
+    return codes.some((code) => code >= 400 && code < 500);
   });
 
   // All errors: non-HTTP errors last (after HTTP-status-bearing ones)

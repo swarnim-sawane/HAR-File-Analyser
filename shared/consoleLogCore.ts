@@ -112,9 +112,19 @@ const PRIMARY_ISSUE_PRIORITY: ConsoleIssueTag[] = [
 ];
 
 const LOCATION_PATTERN = /((?:https?:\/\/)?[^()\s]+):(\d+)(?::(\d+))?/g;
-const HTTP_STATUS_PATTERN = /\b([45]\d{2})\b/g;
-const HTTP_CONTEXT_PATTERN =
-  /\b(http|status|response|request|fetch|xhr|resource|load resource|preflight|get|post|put|patch|delete|options)\b/i;
+const HTTP_STATUS_UNITS_PATTERN =
+  /^(?:ms|msec|millisecond|milliseconds|s|sec|second|seconds|kb|mb|gb|bytes?|px|%)\b/i;
+const HTTP_STATUS_EVIDENCE_PATTERNS = [
+  /"(?:GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+[^"]+\s+HTTP\/\d(?:\.\d)?"\s+([1-5]\d{2})\b/gi,
+  /\bHTTP\/\d(?:\.\d)?\s+([1-5]\d{2})\b/gi,
+  /\bHTTP\s+(?:status\s*)?([1-5]\d{2})\b/gi,
+  /\b(?:status|statusCode|status_code|httpStatus|http_status)\s*(?:code)?\s*(?:is|was|of|:|=|-)?\s*([1-5]\d{2})\b/gi,
+  /\bresponded\s+with\s+(?:an?\s+)?status\s+(?:of\s+)?([1-5]\d{2})\b/gi,
+  /\bresponse\s+(?:status\s*)?(?:code\s*)?(?:is|was|of|:|=|-)?\s*([1-5]\d{2})\b/gi,
+  /\b(?:GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+\S+\s+(?:HTTP\/\d(?:\.\d)?\s+)?([1-5]\d{2})\b/gi,
+];
+const QUOTED_ACCESS_LOG_STATUS_PATTERN =
+  /"(?:GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+[^"]+\s+HTTP\/\d(?:\.\d)?"\s+([1-5]\d{2})\b/i;
 const NETWORK_ERROR_PATTERN =
   /\b(failed to fetch|network ?error|net::err_|request failed|load failed|connection (?:refused|reset|timed out)|preflight request|err_connection|err_failed)\b/i;
 const CORS_PATTERN =
@@ -286,6 +296,20 @@ function determineSeverity(tags: ConsoleIssueTag[], textLower: string): ConsoleI
   return 'none';
 }
 
+function isHttpIssueTag(tag: unknown): tag is ConsoleIssueTag {
+  return tag === 'http-4xx' || tag === 'http-5xx';
+}
+
+function extractQuotedAccessLogStatus(text: string): number | undefined {
+  const match = text.match(QUOTED_ACCESS_LOG_STATUS_PATTERN);
+  if (!match?.[1]) {
+    return undefined;
+  }
+
+  const status = Number.parseInt(match[1], 10);
+  return Number.isFinite(status) ? status : undefined;
+}
+
 export function resolveConsoleDisplayLevel(
   level: SharedLogLevel,
   inferredSeverity: ConsoleInferredSeverity,
@@ -305,19 +329,46 @@ export function resolveConsoleDisplayLevel(
   return level;
 }
 
-function findHttpIssueTag(text: string): ConsoleIssueTag | undefined {
-  if (!HTTP_CONTEXT_PATTERN.test(text)) {
-    return undefined;
+function hasMetricUnitAfterStatus(text: string, statusEndIndex: number): boolean {
+  return HTTP_STATUS_UNITS_PATTERN.test(text.slice(statusEndIndex).trimStart());
+}
+
+export function extractExplicitHttpStatusCodes(text: string): number[] {
+  const codes: number[] = [];
+  const seen = new Set<string>();
+
+  for (const pattern of HTTP_STATUS_EVIDENCE_PATTERNS) {
+    for (const match of text.matchAll(pattern)) {
+      const rawCode = match[1];
+      if (!rawCode || match.index === undefined) {
+        continue;
+      }
+
+      const codeStart = match.index + match[0].lastIndexOf(rawCode);
+      const codeEnd = codeStart + rawCode.length;
+      const code = Number.parseInt(rawCode, 10);
+
+      if (!Number.isFinite(code) || code < 100 || code > 599) {
+        continue;
+      }
+
+      if (hasMetricUnitAfterStatus(text, codeEnd)) {
+        continue;
+      }
+
+      const evidenceKey = `${codeStart}:${code}`;
+      if (!seen.has(evidenceKey)) {
+        seen.add(evidenceKey);
+        codes.push(code);
+      }
+    }
   }
 
-  const matches = Array.from(text.matchAll(HTTP_STATUS_PATTERN));
-  if (!matches.length) {
-    return undefined;
-  }
+  return codes;
+}
 
-  const codes = matches
-    .map((match) => Number.parseInt(match[1], 10))
-    .filter((code) => Number.isFinite(code));
+export function findExplicitHttpIssueTag(text: string): ConsoleIssueTag | undefined {
+  const codes = extractExplicitHttpStatusCodes(text);
 
   if (codes.some((code) => code >= 500)) {
     return 'http-5xx';
@@ -336,7 +387,9 @@ export function classifyConsoleEvent<T extends CoreDraft>(
   const rawText = buildRawText(entry);
   const text = `${entry.message ?? ''}\n${rawText}`.trim();
   const lowerText = text.toLowerCase();
-  const existingTags = Array.isArray(entry.issueTags) ? entry.issueTags : [];
+  const storedTags = Array.isArray(entry.issueTags) ? entry.issueTags : [];
+  const hadStoredHttpIssue = storedTags.some(isHttpIssueTag) || isHttpIssueTag(entry.primaryIssue);
+  const existingTags = storedTags.filter((tag) => !isHttpIssueTag(tag));
   const tags = new Set<ConsoleIssueTag>(existingTags);
 
   if (CORS_PATTERN.test(text)) {
@@ -364,21 +417,26 @@ export function classifyConsoleEvent<T extends CoreDraft>(
     tags.add('exception');
   }
 
-  const httpIssue = findHttpIssueTag(text);
+  const httpIssue = findExplicitHttpIssueTag(text);
   if (httpIssue) {
     tags.add(httpIssue);
   }
 
   const issueTags = uniqueTags(tags);
+  const computedSeverity = determineSeverity(issueTags, lowerText);
+  const accessLogStatus = extractQuotedAccessLogStatus(text);
+  const shouldResetStoredHttpLevel =
+    hadStoredHttpIssue && accessLogStatus !== undefined && accessLogStatus < 500;
   const inferredSeverity =
-    severityRank(entry.inferredSeverity ?? 'none') > severityRank(determineSeverity(issueTags, lowerText))
-      ? (entry.inferredSeverity ?? 'none')
-      : determineSeverity(issueTags, lowerText);
+    shouldResetStoredHttpLevel ||
+    severityRank(entry.inferredSeverity ?? 'none') <= severityRank(computedSeverity)
+      ? computedSeverity
+      : (entry.inferredSeverity ?? 'none');
   const primaryIssue = determinePrimaryIssue(issueTags, entry.primaryIssue);
 
   return {
     ...entry,
-    level: resolveConsoleDisplayLevel(entry.level, inferredSeverity),
+    level: resolveConsoleDisplayLevel(shouldResetStoredHttpLevel ? 'log' : entry.level, inferredSeverity),
     rawText,
     inferredSeverity,
     issueTags,

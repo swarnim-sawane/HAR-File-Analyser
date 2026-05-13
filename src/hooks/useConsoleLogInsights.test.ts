@@ -51,3 +51,55 @@ describe('buildConsoleLogContext CORS root-cause signals', () => {
     expect(corsIndex).toBeLessThan(warningIndex);
   });
 });
+
+describe('buildConsoleLogContext HTTP status extraction', () => {
+  it('does not report 5xx for successful responses with 500ms timings', () => {
+    const context = buildConsoleLogContext(
+      makeConsoleLogFile([
+        { level: 'warn', message: 'GET /ords/status completed with status 200 in 500ms' },
+        { level: 'warn', message: 'response 200 took 503ms for /ords/data' },
+      ])
+    );
+
+    expect(context).not.toContain('HTTP 5XX SERVER ERRORS IN LOGS');
+  });
+
+  it('still reports real 5xx status evidence', () => {
+    const context = buildConsoleLogContext(
+      makeConsoleLogFile([
+        { level: 'error', message: 'GET /ords/orders HTTP/1.1 503 Service Unavailable' },
+      ])
+    );
+
+    expect(context).toContain('HTTP 5XX SERVER ERRORS IN LOGS');
+    expect(context).toContain('503');
+  });
+
+  it('does not report 5xx for access-log response sizes after a 200 status', () => {
+    const context = buildConsoleLogContext(
+      makeConsoleLogFile([
+        {
+          level: 'warn',
+          message:
+            '[09/May/2026:15:57:00 +0000] 252.177.147.165 - C6135B63D0AC31293BFAD982B55A4BCB "GET /ic/builder/rt/warehouse_reception_module/live/resources/data/GantryReplenishment?onlyData=true&q=retryStatus2%3D0+and+replenId%3D8206791&limit=23 HTTP/1.1" 200 507088 565',
+        },
+      ])
+    );
+
+    expect(context).not.toContain('HTTP 5XX SERVER ERRORS IN LOGS');
+  });
+
+  it('reports real quoted access-log 5xx status evidence', () => {
+    const context = buildConsoleLogContext(
+      makeConsoleLogFile([
+        {
+          level: 'error',
+          message:
+            '[09/May/2026:15:57:00 +0000] 252.177.147.165 - C6135B63D0AC31293BFAD982B55A4BCB "GET /ords/orders HTTP/1.1" 503 507088 565',
+        },
+      ])
+    );
+
+    expect(context).toContain('HTTP 5XX SERVER ERRORS IN LOGS');
+  });
+});

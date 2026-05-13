@@ -8,6 +8,10 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { chunkedUploader, UploadProgress, UploadResult } from '../services/chunkedUploader';
 import { restoreRecentFile, storeRecentFile } from '../services/recentFilesStore';
 import { wsClient } from '../services/websocketClient';
+import {
+  createLocalConsoleLogUploadResult,
+  shouldParseConsoleLogLocally,
+} from '../utils/consoleLogProcessing';
 import { detectUploadFileType, UNIFIED_FILE_INPUT_ACCEPT, UploadFileType } from '../utils/uploadFileTypes';
 import SanitizeModal from './SanitizeModal';
 import BatchSanitizeModal from './BatchSanitizeModal';
@@ -186,10 +190,16 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
     }
 
     setIsUploading(true);
-    setStatusMessage(`Uploading ${file.name}...`);
+    setStatusMessage(
+      shouldParseConsoleLogLocally(file.size)
+        ? `Preparing ${file.name} for local parsing...`
+        : `Uploading ${file.name}...`,
+    );
 
     try {
-      const result = await chunkedUploader.uploadFile(file, 'log', (p) => setUploadProgress(p));
+      const result = shouldParseConsoleLogLocally(file.size)
+        ? createLocalConsoleLogUploadResult(file)
+        : await chunkedUploader.uploadFile(file, 'log', (p) => setUploadProgress(p));
       await onLogFileUpload(result, file);
     } catch (err) {
       setError((err as Error)?.message ?? 'Console log upload failed.');

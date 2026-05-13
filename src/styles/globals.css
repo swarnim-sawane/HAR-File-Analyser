@@ -17962,6 +17962,32 @@ html[data-theme='redwood'] .console-details-panel .arg-value {
     background: var(--bg-primary);
 }
 
+.console-request-list .console-virtual-list-inner {
+    position: relative;
+    width: 100%;
+}
+
+.console-request-list .console-virtual-row {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    overflow: hidden;
+}
+
+.console-request-list .console-virtual-entry-row .request-item {
+    height: 64px;
+    min-height: 64px;
+    box-sizing: border-box;
+}
+
+.console-request-list .console-virtual-group-row .page-header {
+    height: 42px;
+    min-height: 42px;
+    box-sizing: border-box;
+    padding: 8px 16px;
+}
+
 .console-request-list .request-item[data-inferred-severity='error'] {
     background: linear-gradient(90deg, rgba(239, 68, 68, 0.05), transparent 180px);
 }
