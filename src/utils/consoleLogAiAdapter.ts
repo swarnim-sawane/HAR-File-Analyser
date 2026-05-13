@@ -2,6 +2,7 @@
 
 import { ConsoleLogFile } from '../types/consolelog';
 import { getConsoleDisplayLevel } from './consoleLogSeverity';
+import { extractExplicitHttpStatusCodes } from '../../shared/consoleLogCore';
 
 /**
  * Converts Console Log data to a format that AI can understand
@@ -18,6 +19,8 @@ export const adaptConsoleLogForAI = (logData: ConsoleLogFile): any => {
       },
       entries: logData.entries.map((entry) => {
         const displayLevel = getConsoleDisplayLevel(entry);
+        const evidenceText = entry.rawText || [entry.message, entry.stackTrace].filter(Boolean).join('\n');
+        const explicitHttpStatus = extractExplicitHttpStatusCodes(evidenceText)[0] ?? 0;
 
         return {
           startedDateTime: entry.timestamp,
@@ -33,8 +36,8 @@ export const adaptConsoleLogForAI = (logData: ConsoleLogFile): any => {
             bodySize: -1
           },
           response: {
-            status: displayLevel === 'error' ? 500 : 200,
-            statusText: displayLevel.toUpperCase(),
+            status: explicitHttpStatus,
+            statusText: explicitHttpStatus > 0 ? `HTTP ${explicitHttpStatus}` : displayLevel.toUpperCase(),
             httpVersion: 'Console/1.0',
             headers: [],
             cookies: [],

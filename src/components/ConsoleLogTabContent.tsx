@@ -264,14 +264,12 @@ const ConsoleLogTabContent: React.FC<ConsoleLogTabContentProps> = ({
             </>
           )}
 
-          {/* Always mounted so useConsoleLogInsights auto-fires on data load,
-              generating results before the user visits the AI Insights tab. */}
-          <div style={{ display: activeSubTab === 'insights' ? undefined : 'none' }}>
+          {activeSubTab === 'insights' && (
             <ConsoleLogAiInsights
               logData={logState.logData}
               backendUrl={backendUrl}
             />
-          </div>
+          )}
 
           <FloatingAiChat logData={logState.logData} />
         </>

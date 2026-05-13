@@ -2,6 +2,10 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { chunkedUploader, UploadProgress, UploadResult } from '../services/chunkedUploader';
 import { restoreRecentFile } from '../services/recentFilesStore';
 import {
+  createLocalConsoleLogUploadResult,
+  shouldParseConsoleLogLocally,
+} from '../utils/consoleLogProcessing';
+import {
   AlertIcon,
   ChevronRightIcon,
   CloseIcon,
@@ -75,9 +79,11 @@ const ConsoleLogUploader: React.FC<ConsoleLogUploaderProps> = ({
       setIsValidating(false);
       setIsUploading(true);
 
-      const result = await chunkedUploader.uploadFile(file, 'log', (progress) => {
-        setUploadProgress(progress);
-      });
+      const result = shouldParseConsoleLogLocally(file.size)
+        ? createLocalConsoleLogUploadResult(file)
+        : await chunkedUploader.uploadFile(file, 'log', (progress) => {
+            setUploadProgress(progress);
+          });
 
       setIsUploading(false);
       setUploadProgress(null);

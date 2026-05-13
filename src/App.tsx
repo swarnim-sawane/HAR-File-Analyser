@@ -22,6 +22,10 @@ import DocumentationPage from './components/DocumentationPage';
 import { ArrowLeftIcon, FileTextIcon } from './components/Icons';
 import { applyTheme, resolveInitialTheme, ThemeMode } from './theme';
 import { HAR_FILE_INPUT_ACCEPT } from './utils/uploadFileTypes';
+import {
+  createLocalConsoleLogUploadResult,
+  shouldParseConsoleLogLocally,
+} from './utils/consoleLogProcessing';
 
 interface RecentFile {
   name: string;
@@ -384,7 +388,9 @@ const App: React.FC = () => {
     e.target.value = '';
     if (!file) return;
     try {
-      const result = await chunkedUploader.uploadFile(file, 'log', () => {});
+      const result = shouldParseConsoleLogLocally(file.size)
+        ? createLocalConsoleLogUploadResult(file)
+        : await chunkedUploader.uploadFile(file, 'log', () => {});
       await handleLogUploadComplete(result, file);
     } catch (err) {
       console.error('Failed to upload console log file:', err);
@@ -487,9 +493,6 @@ const App: React.FC = () => {
     });
   }, []);
 
-  // Files under this limit are parsed locally (instant, no backend dependency).
-  const LOCAL_PARSE_THRESHOLD = 20 * 1024 * 1024; // 20 MB
-
   // Console log upload handler — creates a new tab after loading.
   // The loading overlay lives in App.tsx (shown during the wait), then the resulting
   // data or fileId is handed off to a new ConsoleLogTabContent that owns it permanently.
@@ -498,7 +501,7 @@ const App: React.FC = () => {
     logCancelRef.current = null;
 
     // Small files: parse locally — instant, no backend wait.
-    if (sourceFile && result.fileSize <= LOCAL_PARSE_THRESHOLD) {
+    if (sourceFile && shouldParseConsoleLogLocally(result.fileSize)) {
       setLogLoadingMessage('Parsing console log…');
       try {
         const parsed: ConsoleLogFile = await ConsoleLogParser.parseFile(sourceFile);
@@ -554,7 +557,9 @@ const App: React.FC = () => {
     }
 
     try {
-      const result = await chunkedUploader.uploadFile(resolvedFile, 'log', () => {});
+      const result = shouldParseConsoleLogLocally(resolvedFile.size)
+        ? createLocalConsoleLogUploadResult(resolvedFile)
+        : await chunkedUploader.uploadFile(resolvedFile, 'log', () => {});
       await handleLogUploadComplete(result, resolvedFile);
     } catch (err) {
       console.error('Recent log re-upload failed, using local fallback:', err);

@@ -42,9 +42,17 @@ const PROMISE_PATTERN =
   /\b(uncaught \(in promise\)|unhandled(?: promise)? rejection|unhandled promise|promise rejection)\b/i;
 const REACT_PATTERN =
   /\b(react|react-dom|encountered two children with the same key|each child in a list should have a unique "key"|cannot update a component while rendering)\b/i;
-const HTTP_STATUS_PATTERN = /\b([45]\d{2})\b/g;
-const HTTP_CONTEXT_PATTERN =
-  /\b(http|status|response|request|fetch|xhr|resource|load resource|preflight|get|post|put|patch|delete|options)\b/i;
+const HTTP_STATUS_UNITS_PATTERN =
+  /^(?:ms|msec|millisecond|milliseconds|s|sec|second|seconds|kb|mb|gb|bytes?|px|%)\b/i;
+const HTTP_STATUS_EVIDENCE_PATTERNS = [
+  /"(?:GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+[^"]+\s+HTTP\/\d(?:\.\d)?"\s+([1-5]\d{2})\b/gi,
+  /\bHTTP\/\d(?:\.\d)?\s+([1-5]\d{2})\b/gi,
+  /\bHTTP\s+(?:status\s*)?([1-5]\d{2})\b/gi,
+  /\b(?:status|statusCode|status_code|httpStatus|http_status)\s*(?:code)?\s*(?:is|was|of|:|=|-)?\s*([1-5]\d{2})\b/gi,
+  /\bresponded\s+with\s+(?:an?\s+)?status\s+(?:of\s+)?([1-5]\d{2})\b/gi,
+  /\bresponse\s+(?:status\s*)?(?:code\s*)?(?:is|was|of|:|=|-)?\s*([1-5]\d{2})\b/gi,
+  /\b(?:GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+\S+\s+(?:HTTP\/\d(?:\.\d)?\s+)?([1-5]\d{2})\b/gi,
+];
 
 /**
  * Stream parse HAR file without loading entire file into memory
@@ -268,14 +276,9 @@ function classifyParsedLogEntry(entry: ParsedLogEntry): ParsedLogEntry {
   if (PROMISE_PATTERN.test(text)) tags.add('promise');
   if (REACT_PATTERN.test(text)) tags.add('react');
 
-  if (HTTP_CONTEXT_PATTERN.test(text)) {
-    const codes = Array.from(text.matchAll(HTTP_STATUS_PATTERN))
-      .map((match) => Number.parseInt(match[1], 10))
-      .filter((code) => Number.isFinite(code));
-
-    if (codes.some((code) => code >= 500)) tags.add('http-5xx');
-    else if (codes.some((code) => code >= 400)) tags.add('http-4xx');
-  }
+  const httpStatusCodes = extractExplicitHttpStatusCodes(text);
+  if (httpStatusCodes.some((code) => code >= 500)) tags.add('http-5xx');
+  else if (httpStatusCodes.some((code) => code >= 400)) tags.add('http-4xx');
 
   const issueTags = Array.from(tags);
   const inferredSeverity = getInferredSeverity(issueTags, text);
@@ -288,6 +291,37 @@ function classifyParsedLogEntry(entry: ParsedLogEntry): ParsedLogEntry {
     issueTags,
     primaryIssue: getPrimaryIssue(issueTags),
   };
+}
+
+function hasMetricUnitAfterStatus(text: string, statusEndIndex: number): boolean {
+  return HTTP_STATUS_UNITS_PATTERN.test(text.slice(statusEndIndex).trimStart());
+}
+
+function extractExplicitHttpStatusCodes(text: string): number[] {
+  const codes: number[] = [];
+  const seen = new Set<string>();
+
+  for (const pattern of HTTP_STATUS_EVIDENCE_PATTERNS) {
+    for (const match of text.matchAll(pattern)) {
+      const rawCode = match[1];
+      if (!rawCode || match.index === undefined) continue;
+
+      const codeStart = match.index + match[0].lastIndexOf(rawCode);
+      const codeEnd = codeStart + rawCode.length;
+      const code = Number.parseInt(rawCode, 10);
+
+      if (!Number.isFinite(code) || code < 100 || code > 599) continue;
+      if (hasMetricUnitAfterStatus(text, codeEnd)) continue;
+
+      const evidenceKey = `${codeStart}:${code}`;
+      if (!seen.has(evidenceKey)) {
+        seen.add(evidenceKey);
+        codes.push(code);
+      }
+    }
+  }
+
+  return codes;
 }
 
 function getInferredSeverity(issueTags: string[], text: string): 'none' | 'warning' | 'error' {

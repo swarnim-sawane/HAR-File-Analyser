@@ -139,6 +139,67 @@ describe('streamParseConsoleLog', () => {
     expect(collected[0].primaryIssue).toBe('cors');
   });
 
+  it('does not classify successful HTTP logs with millisecond timings as 5xx', async () => {
+    const path = writeTempFile(
+      [
+        'GET /ords/status completed with status 200 in 500ms',
+        'response 200 took 503ms for /ords/data',
+      ].join('\n'),
+      '.log',
+    );
+    const collected: any[] = [];
+
+    await streamParseConsoleLog(path, async (entry) => { collected.push(entry); });
+
+    expect(collected).toHaveLength(2);
+    expect(collected[0].issueTags).not.toContain('http-5xx');
+    expect(collected[1].issueTags).not.toContain('http-5xx');
+  });
+
+  it('classifies explicit HTTP 5xx and 4xx status evidence', async () => {
+    const path = writeTempFile(
+      [
+        'GET /ords/orders HTTP/1.1 503 Service Unavailable',
+        'Request to /ords/users responded with a status of 404',
+      ].join('\n'),
+      '.log',
+    );
+    const collected: any[] = [];
+
+    await streamParseConsoleLog(path, async (entry) => { collected.push(entry); });
+
+    expect(collected).toHaveLength(2);
+    expect(collected[0].issueTags).toContain('http-5xx');
+    expect(collected[1].issueTags).toContain('http-4xx');
+  });
+
+  it('does not classify access-log response sizes as HTTP 5xx statuses', async () => {
+    const path = writeTempFile(
+      '[09/May/2026:15:57:00 +0000] 252.177.147.165 - C6135B63D0AC31293BFAD982B55A4BCB "GET /ic/builder/rt/warehouse_reception_module/live/resources/data/GantryReplenishment?onlyData=true&q=retryStatus2%3D0+and+replenId%3D8206791&limit=23 HTTP/1.1" 200 507088 565',
+      '.log',
+    );
+    const collected: any[] = [];
+
+    await streamParseConsoleLog(path, async (entry) => { collected.push(entry); });
+
+    expect(collected).toHaveLength(1);
+    expect(collected[0].issueTags).not.toContain('http-5xx');
+    expect(collected[0].inferredSeverity).not.toBe('error');
+  });
+
+  it('classifies quoted access-log HTTP statuses from the status field only', async () => {
+    const path = writeTempFile(
+      '[09/May/2026:15:57:00 +0000] 252.177.147.165 - C6135B63D0AC31293BFAD982B55A4BCB "GET /ords/orders HTTP/1.1" 503 507088 565',
+      '.log',
+    );
+    const collected: any[] = [];
+
+    await streamParseConsoleLog(path, async (entry) => { collected.push(entry); });
+
+    expect(collected).toHaveLength(1);
+    expect(collected[0].issueTags).toContain('http-5xx');
+  });
+
   it('throws on a non-existent file path', async () => {
     await expect(
       streamParseConsoleLog('/tmp/does-not-exist-xyz-abc.log', async () => {})

@@ -26,7 +26,7 @@ vi.mock('../ConsoleLogStatistics', () => ({
 }));
 
 vi.mock('../ConsoleLogAiInsights', () => ({
-  default: () => <div>Console AI insights mock</div>,
+  default: () => <div data-testid="console-ai-insights">Console AI insights mock</div>,
 }));
 
 vi.mock('../Toolbar', () => ({
@@ -123,5 +123,25 @@ describe('ConsoleLogTabContent', () => {
     await user.click(rawEventTab);
 
     expect(screen.getByText(/TypeError: Failed to fetch/i)).toBeInTheDocument();
+  });
+
+  it('does not mount AI Insights while the analyzer tab is active', async () => {
+    render(
+      <ConsoleLogTabContent
+        tabId="console-tab-1"
+        fileId="file-1"
+        fileName="console.log"
+        initialData={null}
+        isActive={true}
+        backendUrl="http://localhost:4000"
+        recentFiles={[]}
+        onAddNewTab={vi.fn()}
+        onLoadRecentNewTab={vi.fn()}
+        onClearRecent={vi.fn()}
+      />,
+    );
+
+    await screen.findByText(/blocked by cors policy/i);
+    expect(screen.queryByTestId('console-ai-insights')).not.toBeInTheDocument();
   });
 });

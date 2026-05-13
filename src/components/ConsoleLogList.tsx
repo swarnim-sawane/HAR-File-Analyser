@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ConsoleLogEntry, LogLevel } from '../types/consolelog';
 import { formatDate } from '../utils/formatters';
 import { getConsoleDisplayLevel } from '../utils/consoleLogSeverity';
@@ -12,6 +12,49 @@ interface ConsoleLogListProps {
 
 type SortField = 'timestamp' | 'severity';
 type SortDirection = 'asc' | 'desc';
+type VirtualRow =
+  | {
+      type: 'group';
+      key: string;
+      groupKey: string;
+      count: number;
+      errorCount: number;
+      warningCount: number;
+    }
+  | {
+      type: 'entry';
+      key: string;
+      entry: ConsoleLogEntry;
+    };
+
+const ENTRY_ROW_HEIGHT = 64;
+const GROUP_ROW_HEIGHT = 42;
+const VIRTUAL_OVERSCAN = 12;
+const FALLBACK_VIEWPORT_HEIGHT = 600;
+
+function getVirtualRowHeight(row: VirtualRow): number {
+  return row.type === 'group' ? GROUP_ROW_HEIGHT : ENTRY_ROW_HEIGHT;
+}
+
+function findFirstVisibleIndex(rows: VirtualRow[], offsets: number[], scrollTop: number): number {
+  let low = 0;
+  let high = rows.length - 1;
+  let result = rows.length;
+
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const rowBottom = offsets[middle] + getVirtualRowHeight(rows[middle]);
+
+    if (rowBottom < scrollTop) {
+      low = middle + 1;
+    } else {
+      result = middle;
+      high = middle - 1;
+    }
+  }
+
+  return result === rows.length ? Math.max(0, rows.length - 1) : result;
+}
 
 const ISSUE_TAG_LABELS: Record<string, string> = {
   cors: 'CORS',
@@ -34,14 +77,44 @@ const ConsoleLogList: React.FC<ConsoleLogListProps> = ({
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const listContentRef = useRef<HTMLDivElement | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(FALLBACK_VIEWPORT_HEIGHT);
 
   useEffect(() => {
     setSelectedIds((current) => {
+      if (current.size === 0) {
+        return current;
+      }
+
       const visibleIds = new Set(entries.map((entry) => entry.id));
       const next = new Set(Array.from(current).filter((entryId) => visibleIds.has(entryId)));
       return next.size === current.size ? current : next;
     });
   }, [entries]);
+
+  useEffect(() => {
+    const element = listContentRef.current;
+    if (!element) {
+      return undefined;
+    }
+
+    const measure = () => {
+      setViewportHeight(element.clientHeight || FALLBACK_VIEWPORT_HEIGHT);
+      setScrollTop(element.scrollTop);
+    };
+
+    measure();
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', measure);
+      return () => window.removeEventListener('resize', measure);
+    }
+
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -152,12 +225,21 @@ const ConsoleLogList: React.FC<ConsoleLogListProps> = ({
 
   const sortedEntries = useMemo(() => sortEntries(entries), [entries, sortDirection, sortField]);
 
-  const overlayErrorCount = entries.filter(
-    (entry) => getConsoleDisplayLevel(entry) === 'error',
-  ).length;
-  const overlayWarningCount = entries.filter(
-    (entry) => getConsoleDisplayLevel(entry) === 'warn',
-  ).length;
+  const visibleSummary = useMemo(() => {
+    let errorCount = 0;
+    let warningCount = 0;
+
+    for (const entry of entries) {
+      const displayLevel = getConsoleDisplayLevel(entry);
+      if (displayLevel === 'error') {
+        errorCount += 1;
+      } else if (displayLevel === 'warn') {
+        warningCount += 1;
+      }
+    }
+
+    return { errorCount, warningCount };
+  }, [entries]);
 
   const getLevelBadgeClass = (level: LogLevel): string => {
     const classes: Record<LogLevel, string> = {
@@ -273,39 +355,106 @@ const ConsoleLogList: React.FC<ConsoleLogListProps> = ({
     );
   };
 
-  const renderGroupedEntries = () => {
+  const virtualRows = useMemo<VirtualRow[]>(() => {
     if (!groupedEntries) {
-      return sortedEntries.map(renderEntry);
+      return sortedEntries.map((entry) => ({
+        type: 'entry',
+        key: `entry-${entry.id}`,
+        entry,
+      }));
     }
 
-    return Array.from(groupedEntries.entries()).map(([groupKey, groupEntries]) => {
+    return Array.from(groupedEntries.entries()).flatMap(([groupKey, groupEntries]) => {
       const sortedGroupEntries = sortEntries(groupEntries);
-      const groupErrorCount = sortedGroupEntries.filter(
-        (entry) => getConsoleDisplayLevel(entry) === 'error',
-      ).length;
-      const groupWarningCount = sortedGroupEntries.filter(
-        (entry) => getConsoleDisplayLevel(entry) === 'warn',
-      ).length;
+      let groupErrorCount = 0;
+      let groupWarningCount = 0;
 
-      return (
-        <div key={groupKey} className="page-group">
-          <div className="page-header">
-            <div className="group-title-container">
-              <span className="group-title">{groupKey}</span>
-              {(groupErrorCount > 0 || groupWarningCount > 0) && (
-                <span className="group-severity">
-                  {groupErrorCount > 0 && <span className="error-count">{groupErrorCount} issues</span>}
-                  {groupWarningCount > 0 && <span className="warn-count">{groupWarningCount} warnings</span>}
-                </span>
-              )}
-            </div>
-            <span className="page-count">{groupEntries.length} entries</span>
-          </div>
-          <div className="group-entries">{sortedGroupEntries.map(renderEntry)}</div>
-        </div>
-      );
+      for (const entry of sortedGroupEntries) {
+        const displayLevel = getConsoleDisplayLevel(entry);
+        if (displayLevel === 'error') {
+          groupErrorCount += 1;
+        } else if (displayLevel === 'warn') {
+          groupWarningCount += 1;
+        }
+      }
+
+      return [
+        {
+          type: 'group',
+          key: `group-${groupKey}`,
+          groupKey,
+          count: groupEntries.length,
+          errorCount: groupErrorCount,
+          warningCount: groupWarningCount,
+        },
+        ...sortedGroupEntries.map((entry) => ({
+          type: 'entry' as const,
+          key: `entry-${groupKey}-${entry.id}`,
+          entry,
+        })),
+      ];
     });
-  };
+  }, [groupedEntries, sortedEntries, sortDirection, sortField]);
+
+  const virtualLayout = useMemo(() => {
+    const offsets: number[] = [];
+    let totalHeight = 0;
+
+    for (const row of virtualRows) {
+      offsets.push(totalHeight);
+      totalHeight += getVirtualRowHeight(row);
+    }
+
+    return { offsets, totalHeight };
+  }, [virtualRows]);
+
+  const visibleVirtualRows = useMemo(() => {
+    if (virtualRows.length === 0) {
+      return [];
+    }
+
+    const viewportBottom = scrollTop + viewportHeight;
+    const firstVisible = findFirstVisibleIndex(virtualRows, virtualLayout.offsets, scrollTop);
+    const startIndex = Math.max(0, firstVisible - VIRTUAL_OVERSCAN);
+    let endIndex = firstVisible;
+
+    while (
+      endIndex < virtualRows.length &&
+      virtualLayout.offsets[endIndex] < viewportBottom
+    ) {
+      endIndex += 1;
+    }
+
+    const finalEndIndex = Math.min(virtualRows.length, endIndex + VIRTUAL_OVERSCAN);
+
+    return virtualRows.slice(startIndex, finalEndIndex).map((row, localIndex) => {
+      const index = startIndex + localIndex;
+      return {
+        row,
+        index,
+        top: virtualLayout.offsets[index],
+      };
+    });
+  }, [scrollTop, viewportHeight, virtualLayout, virtualRows]);
+
+  const handleListScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    setScrollTop(event.currentTarget.scrollTop);
+  }, []);
+
+  const renderGroupHeader = (row: Extract<VirtualRow, { type: 'group' }>) => (
+    <div className="page-header">
+      <div className="group-title-container">
+        <span className="group-title">{row.groupKey}</span>
+        {(row.errorCount > 0 || row.warningCount > 0) && (
+          <span className="group-severity">
+            {row.errorCount > 0 && <span className="error-count">{row.errorCount} issues</span>}
+            {row.warningCount > 0 && <span className="warn-count">{row.warningCount} warnings</span>}
+          </span>
+        )}
+      </div>
+      <span className="page-count">{row.count} entries</span>
+    </div>
+  );
 
   const allSelected = entries.length > 0 && selectedIds.size === entries.length;
 
@@ -333,15 +482,15 @@ const ConsoleLogList: React.FC<ConsoleLogListProps> = ({
             <strong>{entries.length}</strong> visible
           </span>
 
-          {overlayErrorCount > 0 && (
+          {visibleSummary.errorCount > 0 && (
             <span className="summary-badge console-summary-badge status-4xx">
-              {overlayErrorCount} errors
+              {visibleSummary.errorCount} errors
             </span>
           )}
 
-          {overlayWarningCount > 0 && (
+          {visibleSummary.warningCount > 0 && (
             <span className="summary-badge console-summary-badge status-3xx">
-              {overlayWarningCount} warnings
+              {visibleSummary.warningCount} warnings
             </span>
           )}
         </div>
@@ -396,11 +545,29 @@ const ConsoleLogList: React.FC<ConsoleLogListProps> = ({
         <div className="header-cell actions-header">Actions</div>
       </div>
 
-      <div className="request-list-content">
+      <div className="request-list-content" ref={listContentRef} onScroll={handleListScroll}>
         {entries.length === 0 ? (
           <div className="no-data">No log entries match the current filters.</div>
         ) : (
-          renderGroupedEntries()
+          <div
+            className="console-virtual-list-inner"
+            style={{ height: virtualLayout.totalHeight }}
+          >
+            {visibleVirtualRows.map(({ row, top }) => (
+              <div
+                key={row.key}
+                className={`console-virtual-row ${
+                  row.type === 'group' ? 'console-virtual-group-row' : 'console-virtual-entry-row'
+                }`}
+                style={{
+                  height: getVirtualRowHeight(row),
+                  transform: `translateY(${top}px)`,
+                }}
+              >
+                {row.type === 'group' ? renderGroupHeader(row) : renderEntry(row.entry)}
+              </div>
+            ))}
+          </div>
         )}
       </div>
     </div>
