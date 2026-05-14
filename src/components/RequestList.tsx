@@ -223,37 +223,43 @@ const RequestList: React.FC<RequestListProps> = ({
           className="header-cell sortable"
           onClick={() => handleSort('timestamp')}
         >
-          Timestamp {renderSortIcon('timestamp')}
+          <span className="header-label">Timestamp</span>
+          {renderSortIcon('timestamp')}
         </button>
         <button
           className="header-cell sortable"
           onClick={() => handleSort('status')}
         >
-          Status {renderSortIcon('status')}
+          <span className="header-label">Status</span>
+          {renderSortIcon('status')}
         </button>
-        <button 
-          className="header-cell sortable" 
+        <button
+          className="header-cell sortable"
           onClick={() => handleSort('method')}
         >
-          Method {renderSortIcon('method')}
+          <span className="header-label">Method</span>
+          {renderSortIcon('method')}
         </button>
-        <button 
-          className="header-cell sortable" 
+        <button
+          className="header-cell sortable"
           onClick={() => handleSort('url')}
         >
-          URL {renderSortIcon('url')}
+          <span className="header-label">URL</span>
+          {renderSortIcon('url')}
         </button>
-        <button 
-          className="header-cell sortable" 
+        <button
+          className="header-cell sortable"
           onClick={() => handleSort('size')}
         >
-          Size {renderSortIcon('size')}
+          <span className="header-label">Size</span>
+          {renderSortIcon('size')}
         </button>
-        <button 
-          className="header-cell sortable" 
+        <button
+          className="header-cell sortable"
           onClick={() => handleSort('time')}
         >
-          Time {renderSortIcon('time')}
+          <span className="header-label">Time</span>
+          {renderSortIcon('time')}
         </button>
         <span className="header-cell">Timeline</span>
       </div>
