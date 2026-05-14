@@ -126,8 +126,8 @@ function parsePositiveInt(value: unknown, fallback: number, max?: number): numbe
   return max ? Math.min(safe, max) : safe;
 }
 
-async function buildFacets(logsCollection: any, filter: Record<string, unknown>) {
-  const [levelRows, issueRows, sourceRows] = await Promise.all([
+export async function buildFacets(logsCollection: any, filter: Record<string, unknown>) {
+  const [levelRows, issueRows, sourceRows, parseStatusRows, parseFormatRows, parseWarningRows] = await Promise.all([
     logsCollection.aggregate([
       { $match: filter },
       { $group: { _id: '$level', count: { $sum: 1 } } },
@@ -145,6 +145,23 @@ async function buildFacets(logsCollection: any, filter: Record<string, unknown>)
       { $sort: { count: -1 } },
       { $limit: 10 },
     ]).toArray(),
+    logsCollection.aggregate([
+      { $match: filter },
+      { $group: { _id: '$parseStatus', count: { $sum: 1 } } },
+    ]).toArray(),
+    logsCollection.aggregate([
+      { $match: filter },
+      { $group: { _id: '$parseFormat', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 12 },
+    ]).toArray(),
+    logsCollection.aggregate([
+      { $match: filter },
+      { $unwind: '$parseWarnings' },
+      { $group: { _id: '$parseWarnings', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 12 },
+    ]).toArray(),
   ]);
 
   return {
@@ -153,6 +170,9 @@ async function buildFacets(logsCollection: any, filter: Record<string, unknown>)
     topSources: sourceRows
       .filter((row: any) => row._id)
       .map((row: any) => ({ source: row._id, count: row.count })),
+    parseStatusCounts: Object.fromEntries(parseStatusRows.filter((row: any) => row._id).map((row: any) => [row._id, row.count])),
+    parseFormatCounts: Object.fromEntries(parseFormatRows.filter((row: any) => row._id).map((row: any) => [row._id, row.count])),
+    parseWarningCounts: Object.fromEntries(parseWarningRows.filter((row: any) => row._id).map((row: any) => [row._id, row.count])),
   };
 }
 

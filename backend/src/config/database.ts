@@ -56,6 +56,9 @@ export async function connectDatabases() {
     await db.collection('console_logs').createIndex({ fileId: 1, timestamp: 1, index: 1 });
     await db.collection('console_logs').createIndex({ fileId: 1, issueTags: 1, index: 1 });
     await db.collection('console_logs').createIndex({ fileId: 1, inferredSeverity: 1, index: 1 });
+    await db.collection('console_logs').createIndex({ fileId: 1, parseStatus: 1, index: 1 });
+    await db.collection('console_logs').createIndex({ fileId: 1, parseFormat: 1, index: 1 });
+    await db.collection('console_logs').createIndex({ fileId: 1, parseWarnings: 1, index: 1 });
     
     console.log('✅ MongoDB indexes created');
     

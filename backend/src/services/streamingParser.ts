@@ -24,6 +24,10 @@ export interface ParsedLogEntry {
   originalLevel?: string;
   message: string;
   source?: string;
+  lineNumber?: number;
+  columnNumber?: number;
+  url?: string;
+  category?: string;
   stackTrace?: string;
   rawText?: string;
   inferredSeverity?: 'none' | 'warning' | 'error';
@@ -36,6 +40,10 @@ export interface ParsedLogEntry {
     severity?: 'none' | 'warning' | 'error';
     evidence: string;
   }>;
+  parseStatus?: 'parsed' | 'partial' | 'fallback';
+  parseFormat?: 'json' | 'odl' | 'catalina-iso' | 'browser-console' | 'access-log' | 'generic-level' | 'fallback';
+  parseConfidence?: 'high' | 'medium' | 'low';
+  parseWarnings?: string[];
 }
 
 const CORS_FAILURE_PATTERN =
@@ -61,9 +69,54 @@ const HTTP_STATUS_EVIDENCE_PATTERNS = [
   /\bresponse\s+(?:status\s*)?(?:code\s*)?(?:is|was|of|:|=|-)?\s*([1-5]\d{2})\b/gi,
   /\b(?:GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+\S+\s+(?:HTTP\/\d(?:\.\d)?\s+)?([1-5]\d{2})\b/gi,
 ];
+const PARSE_WARNING_UNRECOGNIZED = 'Unrecognized log format; captured as raw message.';
+const PARSE_WARNING_MISSING_TIMESTAMP = 'Timestamp was not present in the parsed log line.';
+const PARSE_WARNING_MISSING_SOURCE = 'Source was not present in the parsed log line.';
 
 function hasCorsFailureEvidence(text: string): boolean {
   return CORS_FAILURE_PATTERN.test(text);
+}
+
+function uniqueStrings(values: Iterable<string | undefined>): string[] {
+  return Array.from(new Set(Array.from(values).filter((value): value is string => Boolean(value))));
+}
+
+function buildParseWarnings(options: {
+  missingTimestamp?: boolean;
+  missingSource?: boolean;
+  unrecognized?: boolean;
+  warnings?: string[];
+}): string[] {
+  return uniqueStrings([
+    ...(options.warnings ?? []),
+    options.unrecognized ? PARSE_WARNING_UNRECOGNIZED : undefined,
+    options.missingTimestamp ? PARSE_WARNING_MISSING_TIMESTAMP : undefined,
+    options.missingSource ? PARSE_WARNING_MISSING_SOURCE : undefined,
+  ]);
+}
+
+function normalizeLogLevel(level: unknown): string {
+  const normalized = typeof level === 'string' ? level.toLowerCase().trim() : '';
+  const levelMap: Record<string, string> = {
+    warning: 'warn',
+    err: 'error',
+    fatal: 'error',
+    critical: 'error',
+    panic: 'error',
+    information: 'info',
+    inf: 'info',
+    dbg: 'debug',
+    notice: 'info',
+    emerg: 'error',
+    emergency: 'error',
+    alert: 'error',
+    crit: 'error',
+    severe: 'error',
+    incident_error: 'error',
+    incident: 'error',
+  };
+  const validLevels = new Set(['log', 'info', 'warn', 'error', 'debug', 'trace', 'verbose']);
+  return validLevels.has(normalized) ? normalized : levelMap[normalized] || 'log';
 }
 
 /**
@@ -185,99 +238,6 @@ export async function streamParseConsoleLog(
  * Parse individual log line
  * ✅ FIXED: More robust JSON parsing and error handling
  */
-function parseLogLine(line: string, index: number): ParsedLogEntry | null {
-  try {
-    // ✅ FIXED: Skip empty or whitespace-only lines
-    const trimmedLine = line.trim();
-    if (!trimmedLine) {
-      return null;
-    }
-
-    // ✅ FIXED: Try JSON format first, but with better validation
-    if (trimmedLine.startsWith('{') && trimmedLine.endsWith('}')) {
-      try {
-        const json = JSON.parse(trimmedLine);
-        
-        // ✅ Validate that it's actually a log object
-        if (typeof json === 'object' && json !== null) {
-          return classifyParsedLogEntry({
-            index,
-            timestamp: json.timestamp || json.time || json.date || new Date().toISOString(),
-            level: (json.level || json.severity || json.type || 'info').toString().toLowerCase(),
-            message: json.message || json.msg || json.text || JSON.stringify(json),
-            source: json.source || json.logger || json.name || 'console',
-            stackTrace: json.stack || json.stackTrace || json.error?.stack,
-            rawText: line
-          });
-        }
-      } catch (jsonError) {
-        // ✅ FIXED: If JSON parse fails, fall through to regex patterns
-        // Don't log error here to avoid spam, will be caught by outer try-catch if needed
-      }
-    }
-    
-    const catalinaEntry = parseCatalinaBracketedIsoLine(trimmedLine, index, line);
-    if (catalinaEntry) {
-      return classifyParsedLogEntry(catalinaEntry);
-    }
-
-    // ✅ Common log patterns
-    const patterns = [
-      // [2024-01-15 10:30:45] ERROR: Message
-      /^\[([\d\-\s:.,]+)\]\s+(\w+):\s+(.+)$/,
-      // 2024-01-15 10:30:45 ERROR Message
-      /^([\d\-\s:.,]+)\s+(\w+)\s+(.+)$/,
-      // ERROR: Message (timestamp missing)
-      /^(\w+):\s+(.+)$/,
-      // [ERROR] Message
-      /^\[(\w+)\]\s+(.+)$/
-    ];
-    
-    for (const pattern of patterns) {
-      const match = trimmedLine.match(pattern);
-      if (match) {
-        if (match.length === 4) {
-          // Pattern with timestamp and level
-          return classifyParsedLogEntry({
-            index,
-            timestamp: match[1].trim(),
-            level: match[2].toLowerCase(),
-            message: match[3].trim(),
-            source: 'console',
-            rawText: line
-          });
-        } else if (match.length === 3) {
-          // Pattern without timestamp
-          return classifyParsedLogEntry({
-            index,
-            timestamp: new Date().toISOString(),
-            level: match[1].toLowerCase(),
-            message: match[2].trim(),
-            source: 'console',
-            rawText: line
-          });
-        }
-      }
-    }
-    
-    // ✅ FIXED: Fallback - treat entire line as info message
-    // This ensures all lines are captured, even if format is unknown
-    return classifyParsedLogEntry({
-      index,
-      timestamp: new Date().toISOString(),
-      level: 'info',
-      message: trimmedLine,
-      source: 'console',
-      rawText: line
-    });
-    
-  } catch (error) {
-    // ✅ FIXED: Return null instead of throwing - let caller decide what to do
-    console.warn(`Error parsing log line ${index}:`, error);
-    return null;
-  }
-}
-
 function readLeadingBracketGroups(input: string): { groups: string[]; message: string } {
   const groups: string[] = [];
   let remaining = input;
@@ -303,6 +263,278 @@ function selectServerLogSource(groups: string[]): string | undefined {
   return undefined;
 }
 
+function extractOdlRest(rest: string): { message: string } {
+  const source = rest.trimStart();
+  let cursor = 0;
+  let messageStart = 0;
+
+  while (cursor < source.length) {
+    if (source[cursor] !== '[') {
+      messageStart = cursor;
+      break;
+    }
+
+    let depth = 1;
+    let end = cursor + 1;
+    while (end < source.length && depth > 0) {
+      if (source[end] === '[') depth += 1;
+      else if (source[end] === ']') depth -= 1;
+      end += 1;
+    }
+
+    cursor = end;
+    while (cursor < source.length && source[cursor] === ' ') {
+      cursor += 1;
+    }
+    messageStart = cursor;
+  }
+
+  return { message: source.slice(messageStart).trim() };
+}
+
+function parseOdlLine(trimmedLine: string, index: number, rawText: string): ParsedLogEntry | null {
+  const match = trimmedLine.match(
+    /^\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[.\d]*[+-]\d{2}:\d{2})\]\s+\[([^\]]*)\]\s+\[(\w+(?::\d+)?)\]\s+\[([^\]]*)\]\s+\[([^\]]*)\]\s*([\s\S]*)$/,
+  );
+  if (!match) {
+    return null;
+  }
+
+  const [, timestamp, component, rawLevel, messageId, logger, rest] = match;
+  const { message } = extractOdlRest(rest);
+  const trimmedMessageId = messageId.trim();
+  const fullMessage =
+    trimmedMessageId && !message.startsWith(`[${trimmedMessageId}]`)
+      ? `[${trimmedMessageId}] ${message}`
+      : message;
+
+  return {
+    index,
+    timestamp,
+    level: normalizeLogLevel(rawLevel.split(':')[0]),
+    message: fullMessage || `[${component}] ${rawLevel}`,
+    source: logger.trim() || component.trim() || undefined,
+    rawText,
+    parseStatus: 'parsed',
+    parseFormat: 'odl',
+    parseConfidence: 'high',
+    parseWarnings: [],
+  };
+}
+
+function normalizeAccessLogTimestamp(rawTimestamp: string): string {
+  const match = rawTimestamp.match(
+    /^(\d{2})\/([A-Za-z]{3})\/(\d{4}):(\d{2}):(\d{2}):(\d{2})\s+([+-]\d{4})$/,
+  );
+  if (!match) {
+    return rawTimestamp;
+  }
+
+  const [, day, rawMonth, year, hour, minute, second, rawOffset] = match;
+  const month = rawMonth.slice(0, 1).toUpperCase() + rawMonth.slice(1).toLowerCase();
+  const offset = `${rawOffset.slice(0, 3)}:${rawOffset.slice(3)}`;
+  const parsed = new Date(`${day} ${month} ${year} ${hour}:${minute}:${second} ${offset}`);
+  return Number.isNaN(parsed.getTime()) ? rawTimestamp : parsed.toISOString();
+}
+
+function parseAccessLogLine(trimmedLine: string, index: number, rawText: string): ParsedLogEntry | null {
+  const match = trimmedLine.match(
+    /^\[([^\]]+)\]\s+(\S+)\s+\S+\s+\S+\s+"([^"]+)"\s+([1-5]\d{2})\s+\S+\s+\S+(?:\s+.*)?$/,
+  );
+  if (!match) {
+    return null;
+  }
+
+  return {
+    index,
+    timestamp: normalizeAccessLogTimestamp(match[1]),
+    level: 'log',
+    message: `"${match[3]}" ${match[4]}`,
+    source: match[2],
+    rawText,
+    parseStatus: 'parsed',
+    parseFormat: 'access-log',
+    parseConfidence: 'high',
+    parseWarnings: [],
+  };
+}
+
+function looksLikeSourceCandidate(source: string): boolean {
+  return (
+    /[/.?]/.test(source) ||
+    /^(?:https?:|webpack:|blob:|file:|localhost)/i.test(source) ||
+    /^<anonymous>$/i.test(source) ||
+    /^VM\d+$/i.test(source)
+  );
+}
+
+function parseSourcePrefixedBrowserLine(
+  trimmedLine: string,
+  index: number,
+  rawText: string,
+): ParsedLogEntry | null {
+  const match = trimmedLine.match(/^(.+?):(\d+)(?::(\d+))?\s+(.+)$/);
+  if (!match) {
+    return null;
+  }
+
+  const source = match[1].trim();
+  if (!looksLikeSourceCandidate(source)) {
+    return null;
+  }
+
+  const message = match[4].trim();
+  const lowerMessage = message.toLowerCase();
+  const inferredLevel =
+    PROMISE_PATTERN.test(message) ||
+    EXCEPTION_PATTERN.test(message) ||
+    lowerMessage.startsWith('uncaught')
+      ? 'error'
+      : 'log';
+
+  return {
+    index,
+    timestamp: new Date().toISOString(),
+    level: inferredLevel,
+    message,
+    source,
+    lineNumber: Number.parseInt(match[2], 10),
+    columnNumber: match[3] ? Number.parseInt(match[3], 10) : undefined,
+    rawText,
+    parseStatus: 'partial',
+    parseFormat: 'browser-console',
+    parseConfidence: 'medium',
+    parseWarnings: buildParseWarnings({ missingTimestamp: true }),
+  };
+}
+
+function parseLogLine(line: string, index: number): ParsedLogEntry | null {
+  try {
+    // ✅ FIXED: Skip empty or whitespace-only lines
+    const trimmedLine = line.trim();
+    if (!trimmedLine) {
+      return null;
+    }
+
+    // ✅ FIXED: Try JSON format first, but with better validation
+    if (trimmedLine.startsWith('{') && trimmedLine.endsWith('}')) {
+      try {
+        const json = JSON.parse(trimmedLine);
+        
+        // ✅ Validate that it's actually a log object
+        if (typeof json === 'object' && json !== null) {
+          return classifyParsedLogEntry({
+            index,
+            timestamp: json.timestamp || json.time || json.date || new Date().toISOString(),
+            level: normalizeLogLevel(json.level || json.severity || json.type || 'info'),
+            message: json.message || json.msg || json.text || JSON.stringify(json),
+            source: json.source || json.logger || json.name || 'console',
+            stackTrace: json.stack || json.stackTrace || json.error?.stack,
+            rawText: line,
+            parseStatus: 'parsed',
+            parseFormat: 'json',
+            parseConfidence: 'high',
+            parseWarnings: [],
+          });
+        }
+      } catch (jsonError) {
+        // ✅ FIXED: If JSON parse fails, fall through to regex patterns
+        // Don't log error here to avoid spam, will be caught by outer try-catch if needed
+      }
+    }
+    
+    const odlEntry = parseOdlLine(trimmedLine, index, line);
+    if (odlEntry) {
+      return classifyParsedLogEntry(odlEntry);
+    }
+
+    const catalinaEntry = parseCatalinaBracketedIsoLine(trimmedLine, index, line);
+    if (catalinaEntry) {
+      return classifyParsedLogEntry(catalinaEntry);
+    }
+
+    const accessLogEntry = parseAccessLogLine(trimmedLine, index, line);
+    if (accessLogEntry) {
+      return classifyParsedLogEntry(accessLogEntry);
+    }
+
+    const browserEntry = parseSourcePrefixedBrowserLine(trimmedLine, index, line);
+    if (browserEntry) {
+      return classifyParsedLogEntry(browserEntry);
+    }
+
+    // ✅ Common log patterns
+    const patterns = [
+      // [2024-01-15 10:30:45] ERROR: Message
+      /^\[([\d\-\s:.,]+)\]\s+(\w+):\s+(.+)$/,
+      // 2024-01-15 10:30:45 ERROR Message
+      /^([\d\-\s:.,]+)\s+(\w+)\s+(.+)$/,
+      // ERROR: Message (timestamp missing)
+      /^(\w+):\s+(.+)$/,
+      // [ERROR] Message
+      /^\[(\w+)\]\s+(.+)$/
+    ];
+    
+    for (const pattern of patterns) {
+      const match = trimmedLine.match(pattern);
+      if (match) {
+        if (match.length === 4) {
+          // Pattern with timestamp and level
+          return classifyParsedLogEntry({
+            index,
+            timestamp: match[1].trim(),
+            level: normalizeLogLevel(match[2]),
+            message: match[3].trim(),
+            source: 'console',
+            rawText: line,
+            parseStatus: 'parsed',
+            parseFormat: 'generic-level',
+            parseConfidence: 'high',
+            parseWarnings: [],
+          });
+        } else if (match.length === 3) {
+          // Pattern without timestamp
+          return classifyParsedLogEntry({
+            index,
+            timestamp: new Date().toISOString(),
+            level: normalizeLogLevel(match[1]),
+            message: match[2].trim(),
+            source: 'console',
+            rawText: line,
+            parseStatus: 'partial',
+            parseFormat: 'generic-level',
+            parseConfidence: 'medium',
+            parseWarnings: buildParseWarnings({ missingTimestamp: true }),
+          });
+        }
+      }
+    }
+    
+    // ✅ FIXED: Fallback - treat entire line as info message
+    // This ensures all lines are captured, even if format is unknown
+    return classifyParsedLogEntry({
+      index,
+      timestamp: new Date().toISOString(),
+      level: 'log',
+      message: trimmedLine,
+      rawText: line,
+      parseStatus: 'fallback',
+      parseFormat: 'fallback',
+      parseConfidence: 'low',
+      parseWarnings: buildParseWarnings({
+        unrecognized: true,
+        missingTimestamp: true,
+        missingSource: true,
+      }),
+    });
+    
+  } catch (error) {
+    // ✅ FIXED: Return null instead of throwing - let caller decide what to do
+    console.warn(`Error parsing log line ${index}:`, error);
+    return null;
+  }
+}
+
 function parseCatalinaBracketedIsoLine(
   trimmedLine: string,
   index: number,
@@ -323,10 +555,14 @@ function parseCatalinaBracketedIsoLine(
   return {
     index,
     timestamp: match[1],
-    level: match[2].toLowerCase(),
+    level: normalizeLogLevel(match[2]),
     message,
     source: selectServerLogSource(groups) || 'console',
     rawText,
+    parseStatus: 'parsed',
+    parseFormat: 'catalina-iso',
+    parseConfidence: 'high',
+    parseWarnings: [],
   };
 }
 
@@ -337,6 +573,7 @@ function classifyParsedLogEntry(entry: ParsedLogEntry): ParsedLogEntry {
   const originalLevel = entry.originalLevel || entry.level;
   const evidence = text.replace(/\s+/g, ' ').trim().slice(0, 220);
   const classificationReasons: NonNullable<ParsedLogEntry['classificationReasons']> = [];
+  const parseWarnings = uniqueStrings(entry.parseWarnings ?? []);
 
   const pushReason = (
     ruleId: string,
@@ -399,6 +636,10 @@ function classifyParsedLogEntry(entry: ParsedLogEntry): ParsedLogEntry {
     issueTags,
     primaryIssue: getPrimaryIssue(issueTags),
     classificationReasons,
+    parseStatus: entry.parseStatus ?? 'fallback',
+    parseFormat: entry.parseFormat ?? 'fallback',
+    parseConfidence: entry.parseConfidence ?? 'low',
+    parseWarnings,
   };
 }
 

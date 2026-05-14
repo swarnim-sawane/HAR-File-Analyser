@@ -50,6 +50,9 @@ export async function processConsoleLog(data: LogJobData): Promise<void> {
     const statsAccumulator = {
       levels: {} as Record<string, number>,
       sources: {} as Record<string, number>,
+      parseStatuses: {} as Record<string, number>,
+      parseFormats: {} as Record<string, number>,
+      parseWarnings: {} as Record<string, number>,
       errors: 0,
       warnings: 0,
       infos: 0
@@ -170,6 +173,15 @@ function updateStatsWithEntry(stats: any, entry: ParsedLogEntry): void {
   // Sources
   const source = entry.source || 'unknown';
   stats.sources[source] = (stats.sources[source] || 0) + 1;
+
+  const parseStatus = entry.parseStatus || 'fallback';
+  const parseFormat = entry.parseFormat || 'fallback';
+  stats.parseStatuses[parseStatus] = (stats.parseStatuses[parseStatus] || 0) + 1;
+  stats.parseFormats[parseFormat] = (stats.parseFormats[parseFormat] || 0) + 1;
+
+  (entry.parseWarnings || []).forEach((warning) => {
+    stats.parseWarnings[warning] = (stats.parseWarnings[warning] || 0) + 1;
+  });
 }
 
 /**
@@ -180,6 +192,9 @@ function finalizeStats(stats: any, totalEntries: number) {
     totalLogs: totalEntries,
     levels: stats.levels,
     sources: stats.sources,
+    parseStatuses: stats.parseStatuses,
+    parseFormats: stats.parseFormats,
+    parseWarnings: stats.parseWarnings,
     errors: stats.errors,
     warnings: stats.warnings,
     infos: stats.infos

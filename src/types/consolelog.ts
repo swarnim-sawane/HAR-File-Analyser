@@ -4,10 +4,20 @@ import type {
   ConsoleClassificationReason,
   ConsoleInferredSeverity,
   ConsoleIssueTag,
+  ConsoleParseConfidence,
+  ConsoleParseFormat,
+  ConsoleParseStatus,
 } from '../../shared/consoleLogCore';
 
 export type LogLevel = 'log' | 'info' | 'warn' | 'error' | 'debug' | 'trace' | 'verbose';
-export type { ConsoleClassificationReason, ConsoleInferredSeverity, ConsoleIssueTag };
+export type {
+  ConsoleClassificationReason,
+  ConsoleInferredSeverity,
+  ConsoleIssueTag,
+  ConsoleParseConfidence,
+  ConsoleParseFormat,
+  ConsoleParseStatus,
+};
 
 export type ConsoleQuickFocus =
   | 'all'
@@ -34,6 +44,10 @@ export interface ConsoleLogEntry {
   issueTags: ConsoleIssueTag[];
   primaryIssue?: ConsoleIssueTag;
   classificationReasons?: ConsoleClassificationReason[];
+  parseStatus?: ConsoleParseStatus;
+  parseFormat?: ConsoleParseFormat;
+  parseConfidence?: ConsoleParseConfidence;
+  parseWarnings?: string[];
   fileId?: string;
   _id?: string;
 }
@@ -107,4 +121,7 @@ export interface ConsoleLogFacets {
   levelCounts: Partial<Record<LogLevel, number>>;
   issueTagCounts: Record<string, number>;
   topSources: Array<{ source: string; count: number }>;
+  parseStatusCounts?: Partial<Record<ConsoleParseStatus, number>>;
+  parseFormatCounts?: Partial<Record<ConsoleParseFormat, number>>;
+  parseWarningCounts?: Record<string, number>;
 }
