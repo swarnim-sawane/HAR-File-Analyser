@@ -118,6 +118,10 @@ function normalizePagedEntry(
     fileId: entry.fileId || fileId,
     inferredSeverity: entry.inferredSeverity ?? 'none',
     issueTags: Array.isArray(entry.issueTags) ? entry.issueTags : [],
+    parseStatus: entry.parseStatus ?? 'fallback',
+    parseFormat: entry.parseFormat ?? 'fallback',
+    parseConfidence: entry.parseConfidence ?? 'low',
+    parseWarnings: Array.isArray(entry.parseWarnings) ? entry.parseWarnings : [],
   };
 }
 

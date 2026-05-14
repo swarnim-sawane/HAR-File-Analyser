@@ -68,6 +68,10 @@ const ConsoleLogDetails: React.FC<ConsoleLogDetailsProps> = ({ entry, onClose, i
 
   const fullEventText = useMemo(() => buildFullEventText(entry), [entry]);
   const displayLevel = getConsoleDisplayLevel(entry);
+  const parseStatus = entry.parseStatus ?? 'fallback';
+  const parseFormat = entry.parseFormat ?? 'fallback';
+  const parseConfidence = entry.parseConfidence ?? 'low';
+  const parseWarnings = entry.parseWarnings ?? [];
 
   const getLevelColor = (level: string): string => {
     const colors: Record<string, string> = {
@@ -226,7 +230,21 @@ const ConsoleLogDetails: React.FC<ConsoleLogDetailsProps> = ({ entry, onClose, i
                   <strong>{entry.inferredSeverity.toUpperCase()}</strong>
                   <span>Primary issue</span>
                   <strong>{entry.primaryIssue ? ISSUE_LABELS[entry.primaryIssue] || entry.primaryIssue : 'None'}</strong>
+                  <span>Analyzer confidence</span>
+                  <strong>{parseConfidence.toUpperCase()}</strong>
+                  <span>Parse status</span>
+                  <strong>{parseStatus}</strong>
+                  <span>Parse format</span>
+                  <strong>{parseFormat}</strong>
                 </div>
+                {parseWarnings.length > 0 && (
+                  <div className="console-parse-warnings">
+                    <span>Parse warnings</span>
+                    {parseWarnings.map((warning) => (
+                      <p key={warning}>{warning}</p>
+                    ))}
+                  </div>
+                )}
                 {entry.classificationReasons && entry.classificationReasons.length > 0 ? (
                   <div className="console-classification-reasons">
                     {entry.classificationReasons.map((reason) => (

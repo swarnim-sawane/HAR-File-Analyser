@@ -4,6 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { streamParseHar, streamParseConsoleLog } from '../streamingParser';
 import { makeHarJsonString } from '../../test-utils/fixtures';
+import { consoleGoldenCases } from '../../../../shared/__tests__/fixtures/consoleGoldenCorpus';
 
 const tempFiles: string[] = [];
 
@@ -115,13 +116,15 @@ describe('streamParseConsoleLog', () => {
     expect(collected).toHaveLength(2);
   });
 
-  it('falls back to info level for unrecognised format lines', async () => {
+  it('falls back to low-confidence log entries for unrecognised format lines', async () => {
     const path = writeTempFile('random log text here', '.log');
     const collected: any[] = [];
     await streamParseConsoleLog(path, async (entry) => { collected.push(entry); });
     expect(collected).toHaveLength(1);
-    expect(collected[0].level).toBe('info');
+    expect(collected[0].level).toBe('log');
     expect(collected[0].message).toBe('random log text here');
+    expect(collected[0].parseStatus).toBe('fallback');
+    expect(collected[0].parseConfidence).toBe('low');
   });
 
   it('promotes CORS policy blocks to error entries', async () => {
@@ -134,7 +137,7 @@ describe('streamParseConsoleLog', () => {
 
     expect(collected).toHaveLength(1);
     expect(collected[0].level).toBe('error');
-    expect(collected[0].originalLevel).toBe('info');
+    expect(collected[0].originalLevel).toBe('log');
     expect(collected[0].inferredSeverity).toBe('error');
     expect(collected[0].issueTags).toEqual(expect.arrayContaining(['cors', 'network']));
     expect(collected[0].primaryIssue).toBe('cors');
@@ -258,5 +261,37 @@ describe('streamParseConsoleLog', () => {
     await expect(
       streamParseConsoleLog('/tmp/does-not-exist-xyz-abc.log', async () => {})
     ).rejects.toThrow();
+  });
+
+  it.each(consoleGoldenCases)('streams parser metadata for golden corpus case: $name', async (fixture) => {
+    const path = writeTempFile(fixture.content, '.log');
+    const collected: any[] = [];
+
+    await streamParseConsoleLog(path, async (entry) => { collected.push(entry); });
+
+    expect(collected).toHaveLength(fixture.expected.length);
+
+    fixture.expected.forEach((expected, index) => {
+      const entry = collected[index];
+      expect(entry.level).toBe(expected.level);
+      expect(entry.message).toContain(expected.messageIncludes);
+      expect(entry.parseStatus).toBe(expected.parseStatus);
+      expect(entry.parseFormat).toBe(expected.parseFormat);
+      expect(entry.parseConfidence).toBe(expected.parseConfidence);
+      expect(entry.parseWarnings).toEqual(expect.any(Array));
+
+      if (expected.source) {
+        expect(entry.source).toBe(expected.source);
+      }
+      expected.issueTags?.forEach((tag) => {
+        expect(entry.issueTags).toContain(tag);
+      });
+      expected.notIssueTags?.forEach((tag) => {
+        expect(entry.issueTags).not.toContain(tag);
+      });
+      if (expected.inferredSeverity) {
+        expect(entry.inferredSeverity).toBe(expected.inferredSeverity);
+      }
+    });
   });
 });

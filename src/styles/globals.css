@@ -18118,6 +18118,42 @@ html[data-theme='redwood'] .console-details-panel .arg-value {
     line-height: 1.5;
 }
 
+.console-parse-warnings {
+    display: grid;
+    gap: 6px;
+    padding: 10px;
+    border: 1px solid rgba(245, 158, 11, 0.28);
+    border-radius: 8px;
+    background: rgba(245, 158, 11, 0.08);
+}
+
+.console-parse-warnings span {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.console-parse-warnings p {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+}
+
+.parser-health-badge {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+}
+
+.parser-health-fill {
+    background: var(--accent-primary, #3b82f6);
+}
+
+.console-parser-format-list,
+.console-parser-warning-list {
+    margin-top: 10px;
+}
+
 .console-summary-inline-filters {
     display: flex;
     flex-wrap: wrap;

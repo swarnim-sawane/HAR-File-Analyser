@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildLogFilter, buildSort } from './consoleLogRoutes';
+import { buildFacets, buildLogFilter, buildSort } from './consoleLogRoutes';
 
 describe('console log route query helpers', () => {
   it('builds full-file filters for levels, search, quick focus, and time range', () => {
@@ -42,5 +42,29 @@ describe('console log route query helpers', () => {
       index: 1,
     });
     expect(buildSort({ sortBy: 'index', sortDir: 'desc' })).toEqual({ index: 1 });
+  });
+
+  it('builds parser health facets from full-file aggregate results', async () => {
+    const aggregateResults = [
+      [{ _id: 'error', count: 2 }],
+      [{ _id: 'exception', count: 2 }],
+      [{ _id: 'oracle.adf.model.log.Jpx@2240', count: 2 }],
+      [{ _id: 'parsed', count: 7 }, { _id: 'fallback', count: 3 }],
+      [{ _id: 'catalina-iso', count: 7 }, { _id: 'fallback', count: 3 }],
+      [{ _id: 'Unrecognized log format; captured as raw message.', count: 3 }],
+    ];
+    const collection = {
+      aggregate: vi.fn(() => ({
+        toArray: vi.fn().mockResolvedValue(aggregateResults.shift() ?? []),
+      })),
+    };
+
+    const facets = await buildFacets(collection, { fileId: 'file-1' });
+
+    expect(facets.parseStatusCounts).toEqual({ parsed: 7, fallback: 3 });
+    expect(facets.parseFormatCounts).toEqual({ 'catalina-iso': 7, fallback: 3 });
+    expect(facets.parseWarningCounts).toEqual({
+      'Unrecognized log format; captured as raw message.': 3,
+    });
   });
 });

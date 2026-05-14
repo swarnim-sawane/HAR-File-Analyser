@@ -2,6 +2,7 @@ import React from 'react';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ConsoleLogDetails from '../ConsoleLogDetails';
+import type { ConsoleLogEntry } from '../../types/consolelog';
 
 describe('ConsoleLogDetails', () => {
   it('shows enriched metadata in the restored overview surface', () => {
@@ -24,9 +25,9 @@ describe('ConsoleLogDetails', () => {
       />,
     );
 
-    expect(screen.getByText('ERROR')).toBeInTheDocument();
+    expect(screen.getAllByText('ERROR').length).toBeGreaterThan(0);
     expect(screen.queryByText(/inferred severity:/i)).not.toBeInTheDocument();
-    expect(screen.getByText('CORS')).toBeInTheDocument();
+    expect(screen.getAllByText('CORS').length).toBeGreaterThan(0);
     expect(screen.getByText('Network')).toBeInTheDocument();
   });
 
@@ -100,5 +101,49 @@ describe('ConsoleLogDetails', () => {
     await user.click(screen.getByRole('button', { name: /copy all/i }));
 
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining('Object'));
+  });
+
+  it('shows analyzer confidence, parser provenance, and parser warnings', () => {
+    const baseEntry: ConsoleLogEntry = {
+      id: 'entry-3',
+      index: 0,
+      timestamp: '2026-05-09T17:20:53.443Z',
+      level: 'error',
+      originalLevel: 'log',
+      message: 'JPX Namespace /sitedef does not have a writable MetadataStore',
+      source: 'oracle.adf.model.log.Jpx@2240',
+      rawText: 'raw JPX event',
+      inferredSeverity: 'error',
+      issueTags: ['exception'],
+      primaryIssue: 'exception',
+      classificationReasons: [
+        {
+          ruleId: 'javascript.exception',
+          label: 'JavaScript exception pattern',
+          tag: 'exception',
+          severity: 'error',
+          evidence: 'JPX Namespace /sitedef does not have a writable MetadataStore',
+        },
+      ],
+      parseStatus: 'partial',
+      parseFormat: 'generic-level',
+      parseConfidence: 'medium',
+      parseWarnings: ['Timestamp was not present in the parsed log line.'],
+    };
+
+    render(
+      <ConsoleLogDetails
+        entry={baseEntry}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/Analyzer confidence/i)).toBeInTheDocument();
+    expect(screen.getByText('MEDIUM')).toBeInTheDocument();
+    expect(screen.getByText('Parse status')).toBeInTheDocument();
+    expect(screen.getByText('partial')).toBeInTheDocument();
+    expect(screen.getByText('Parse format')).toBeInTheDocument();
+    expect(screen.getByText('generic-level')).toBeInTheDocument();
+    expect(screen.getByText(/Timestamp was not present/i)).toBeInTheDocument();
   });
 });

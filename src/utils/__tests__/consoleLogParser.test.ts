@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ConsoleLogParser } from '../consoleLogParser';
+import { consoleGoldenCases } from '../../../shared/__tests__/fixtures/consoleGoldenCorpus';
 
 describe('ConsoleLogParser', () => {
   describe('parseJSON', () => {
@@ -201,6 +202,57 @@ describe('ConsoleLogParser', () => {
       expect((parsed.entries[0] as any).rawText).toContain(
         'Additional diagnostic context from browser renderer',
       );
+    });
+
+    it.each(consoleGoldenCases)('adds parser metadata for golden corpus case: $name', (fixture) => {
+      const parsed = ConsoleLogParser.parsePlainText(fixture.content, `${fixture.name}.log`);
+
+      expect(parsed.entries).toHaveLength(fixture.expected.length);
+
+      fixture.expected.forEach((expected, index) => {
+        const entry = parsed.entries[index] as any;
+        expect(entry.level).toBe(expected.level);
+        expect(entry.message).toContain(expected.messageIncludes);
+        expect(entry.parseStatus).toBe(expected.parseStatus);
+        expect(entry.parseFormat).toBe(expected.parseFormat);
+        expect(entry.parseConfidence).toBe(expected.parseConfidence);
+        expect(entry.parseWarnings).toEqual(expect.any(Array));
+
+        if (expected.source) {
+          expect(entry.source).toBe(expected.source);
+        }
+        expected.issueTags?.forEach((tag) => {
+          expect(entry.issueTags).toContain(tag);
+        });
+        expected.notIssueTags?.forEach((tag) => {
+          expect(entry.issueTags).not.toContain(tag);
+        });
+        if (expected.inferredSeverity) {
+          expect(entry.inferredSeverity).toBe(expected.inferredSeverity);
+        }
+      });
+    });
+
+    it('marks fallback entries as low confidence without analyzer promotion', () => {
+      const parsed = ConsoleLogParser.parsePlainText(
+        'Tenant routing cache warmed for shard alpha without diagnostic prefix',
+        'unknown.log',
+      );
+
+      const entry = parsed.entries[0] as any;
+      expect(entry.parseStatus).toBe('fallback');
+      expect(entry.parseFormat).toBe('fallback');
+      expect(entry.parseConfidence).toBe('low');
+      expect(entry.parseWarnings).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/unrecognized log format/i),
+          expect.stringMatching(/timestamp/i),
+          expect.stringMatching(/source/i),
+        ]),
+      );
+      expect(entry.level).toBe('log');
+      expect(entry.inferredSeverity).toBe('none');
+      expect(entry.issueTags).toEqual([]);
     });
   });
 });

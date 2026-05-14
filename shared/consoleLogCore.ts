@@ -18,6 +18,16 @@ export type ConsoleIssueTag =
   | 'http-5xx';
 
 export type ConsoleInferredSeverity = 'none' | 'warning' | 'error';
+export type ConsoleParseStatus = 'parsed' | 'partial' | 'fallback';
+export type ConsoleParseFormat =
+  | 'json'
+  | 'odl'
+  | 'catalina-iso'
+  | 'browser-console'
+  | 'access-log'
+  | 'generic-level'
+  | 'fallback';
+export type ConsoleParseConfidence = 'high' | 'medium' | 'low';
 
 export interface ConsoleClassificationReason {
   ruleId: string;
@@ -44,17 +54,33 @@ export interface SharedConsoleLogEntryCore {
   issueTags: ConsoleIssueTag[];
   primaryIssue?: ConsoleIssueTag;
   classificationReasons?: ConsoleClassificationReason[];
+  parseStatus: ConsoleParseStatus;
+  parseFormat: ConsoleParseFormat;
+  parseConfidence: ConsoleParseConfidence;
+  parseWarnings: string[];
 }
 
 type CoreDraft = Omit<
   SharedConsoleLogEntryCore,
-  'rawText' | 'inferredSeverity' | 'issueTags' | 'primaryIssue' | 'classificationReasons'
+  | 'rawText'
+  | 'inferredSeverity'
+  | 'issueTags'
+  | 'primaryIssue'
+  | 'classificationReasons'
+  | 'parseStatus'
+  | 'parseFormat'
+  | 'parseConfidence'
+  | 'parseWarnings'
 > & {
   rawText?: string;
   inferredSeverity?: ConsoleInferredSeverity;
   issueTags?: ConsoleIssueTag[];
   primaryIssue?: ConsoleIssueTag;
   classificationReasons?: ConsoleClassificationReason[];
+  parseStatus?: ConsoleParseStatus;
+  parseFormat?: ConsoleParseFormat;
+  parseConfidence?: ConsoleParseConfidence;
+  parseWarnings?: string[];
 };
 
 interface ParsedHeader extends Partial<CoreDraft> {
@@ -150,6 +176,10 @@ const EXCEPTION_PATTERN = new RegExp(
   `\\b(${JS_EXCEPTION_NAMES.join('|')}|cannot read (?:properties|property) of undefined|is not defined|undefined is not)\\b`,
   'i',
 );
+
+const PARSE_WARNING_UNRECOGNIZED = 'Unrecognized log format; captured as raw message.';
+const PARSE_WARNING_MISSING_TIMESTAMP = 'Timestamp was not present in the parsed log line.';
+const PARSE_WARNING_MISSING_SOURCE = 'Source was not present in the parsed log line.';
 
 export function normalizeLogLevel(level: unknown): SharedLogLevel {
   const normalized = typeof level === 'string' ? level.toLowerCase().trim() : '';
@@ -322,6 +352,42 @@ function pushReason(
   reasons.push(reason);
 }
 
+function uniqueStrings(values: Iterable<string | undefined>): string[] {
+  return Array.from(new Set(Array.from(values).filter((value): value is string => Boolean(value))));
+}
+
+function buildParseWarnings(options: {
+  missingTimestamp?: boolean;
+  missingSource?: boolean;
+  unrecognized?: boolean;
+  warnings?: string[];
+}): string[] {
+  return uniqueStrings([
+    ...(options.warnings ?? []),
+    options.unrecognized ? PARSE_WARNING_UNRECOGNIZED : undefined,
+    options.missingTimestamp ? PARSE_WARNING_MISSING_TIMESTAMP : undefined,
+    options.missingSource ? PARSE_WARNING_MISSING_SOURCE : undefined,
+  ]);
+}
+
+function withParseMetadata<T extends ParsedHeader>(
+  header: T,
+  metadata: {
+    parseStatus: ConsoleParseStatus;
+    parseFormat: ConsoleParseFormat;
+    parseConfidence: ConsoleParseConfidence;
+    parseWarnings?: string[];
+  },
+): T {
+  return {
+    ...header,
+    parseStatus: metadata.parseStatus,
+    parseFormat: metadata.parseFormat,
+    parseConfidence: metadata.parseConfidence,
+    parseWarnings: metadata.parseWarnings ?? [],
+  };
+}
+
 export function hasCorsFailureEvidence(text: string): boolean {
   return CORS_FAILURE_PATTERN.test(text);
 }
@@ -413,7 +479,17 @@ export function findExplicitHttpIssueTag(text: string): ConsoleIssueTag | undefi
 
 export function classifyConsoleEvent<T extends CoreDraft>(
   entry: T,
-): T & Pick<SharedConsoleLogEntryCore, 'rawText' | 'inferredSeverity' | 'issueTags' | 'primaryIssue'> {
+): T & Pick<
+  SharedConsoleLogEntryCore,
+  | 'rawText'
+  | 'inferredSeverity'
+  | 'issueTags'
+  | 'primaryIssue'
+  | 'parseStatus'
+  | 'parseFormat'
+  | 'parseConfidence'
+  | 'parseWarnings'
+> {
   const rawText = buildRawText(entry);
   const text = `${entry.message ?? ''}\n${rawText}`.trim();
   const lowerText = text.toLowerCase();
@@ -426,6 +502,7 @@ export function classifyConsoleEvent<T extends CoreDraft>(
     ? [...entry.classificationReasons]
     : [];
   const evidence = evidenceSnippet(text);
+  const parseWarnings = uniqueStrings(entry.parseWarnings ?? []);
 
   if (hasCorsFailureEvidence(text)) {
     tags.add('cors');
@@ -534,6 +611,10 @@ export function classifyConsoleEvent<T extends CoreDraft>(
     issueTags,
     primaryIssue,
     classificationReasons: reasons,
+    parseStatus: entry.parseStatus ?? 'fallback',
+    parseFormat: entry.parseFormat ?? 'fallback',
+    parseConfidence: entry.parseConfidence ?? 'low',
+    parseWarnings,
   };
 }
 
@@ -595,6 +676,21 @@ export function normalizeStructuredConsoleEntry(
       PRIMARY_ISSUE_PRIORITY.includes(entry.primaryIssue as ConsoleIssueTag)
         ? (entry.primaryIssue as ConsoleIssueTag)
         : undefined,
+    parseStatus:
+      entry.parseStatus === 'parsed' || entry.parseStatus === 'partial' || entry.parseStatus === 'fallback'
+        ? entry.parseStatus
+        : 'parsed',
+    parseFormat:
+      typeof entry.parseFormat === 'string'
+        ? (entry.parseFormat as ConsoleParseFormat)
+        : 'json',
+    parseConfidence:
+      entry.parseConfidence === 'high' || entry.parseConfidence === 'medium' || entry.parseConfidence === 'low'
+        ? entry.parseConfidence
+        : 'high',
+    parseWarnings: Array.isArray(entry.parseWarnings)
+      ? entry.parseWarnings.filter((warning): warning is string => typeof warning === 'string')
+      : [],
   });
 
   if ((!normalized.source || normalized.lineNumber === undefined) && normalized.stackTrace) {
@@ -717,6 +813,10 @@ function parseExceptionHeader(line: string, nowFactory: () => string): ParsedHea
     timestamp: nowFactory(),
     level: 'error',
     message: trimmed,
+    parseStatus: 'partial',
+    parseFormat: 'browser-console',
+    parseConfidence: 'medium',
+    parseWarnings: buildParseWarnings({ missingTimestamp: true, missingSource: true }),
   };
 }
 
@@ -744,6 +844,10 @@ function parseOdlLine(line: string): ParsedHeader | null {
     source: logger.trim() || component.trim() || undefined,
     message: fullMessage || `[${component}] ${rawLevel}`,
     category: attrs.APP || attrs.app,
+    parseStatus: 'parsed',
+    parseFormat: 'odl',
+    parseConfidence: 'high',
+    parseWarnings: [],
   };
 }
 
@@ -761,6 +865,10 @@ function parseVbLine(line: string, nowFactory: () => string): ParsedHeader | nul
       lineNumber: sourceInfo.lineNumber,
       columnNumber: sourceInfo.columnNumber,
       message: message.trim(),
+      parseStatus: 'partial',
+      parseFormat: 'browser-console',
+      parseConfidence: 'medium',
+      parseWarnings: buildParseWarnings({ missingTimestamp: true }),
     };
   }
 
@@ -776,6 +884,10 @@ function parseVbLine(line: string, nowFactory: () => string): ParsedHeader | nul
     level: normalizeLogLevel(vbMatch[1]),
     source: vbMatch[2].trim(),
     message: vbMatch[3].trim(),
+    parseStatus: 'partial',
+    parseFormat: 'browser-console',
+    parseConfidence: 'medium',
+    parseWarnings: buildParseWarnings({ missingTimestamp: true }),
   };
 }
 
@@ -796,6 +908,10 @@ function parseGenericComponentLine(line: string, nowFactory: () => string): Pars
     level: normalizeLogLevel(match[2]),
     source: match[3].trim() || match[1],
     message: match[4].trim(),
+    parseStatus: 'partial',
+    parseFormat: 'generic-level',
+    parseConfidence: 'medium',
+    parseWarnings: buildParseWarnings({ missingTimestamp: true }),
   };
 }
 
@@ -843,6 +959,10 @@ function parseBracketedIsoServerLine(line: string): ParsedHeader | null {
     level: normalizeLogLevel(match[2]),
     source: selectServerLogSource(groups),
     message,
+    parseStatus: 'parsed',
+    parseFormat: 'catalina-iso',
+    parseConfidence: 'high',
+    parseWarnings: [],
   };
 }
 
@@ -858,6 +978,45 @@ function parseChromeLine(line: string): ParsedHeader | null {
     timestamp: normalizeTimestamp(match[1]),
     level: normalizeLogLevel(match[2]),
     message: match[3].trim(),
+    parseStatus: 'partial',
+    parseFormat: 'browser-console',
+    parseConfidence: 'medium',
+    parseWarnings: buildParseWarnings({ missingSource: true }),
+  };
+}
+
+function normalizeAccessLogTimestamp(rawTimestamp: string): string {
+  const match = rawTimestamp.match(
+    /^(\d{2})\/([A-Za-z]{3})\/(\d{4}):(\d{2}):(\d{2}):(\d{2})\s+([+-]\d{4})$/,
+  );
+  if (!match) {
+    return normalizeTimestamp(rawTimestamp);
+  }
+
+  const [, day, rawMonth, year, hour, minute, second, rawOffset] = match;
+  const month = rawMonth.slice(0, 1).toUpperCase() + rawMonth.slice(1).toLowerCase();
+  const offset = `${rawOffset.slice(0, 3)}:${rawOffset.slice(3)}`;
+  return normalizeTimestamp(`${day} ${month} ${year} ${hour}:${minute}:${second} ${offset}`);
+}
+
+function parseAccessLogLine(line: string): ParsedHeader | null {
+  const accessLogPattern =
+    /^\[([^\]]+)\]\s+(\S+)\s+\S+\s+\S+\s+"([^"]+)"\s+([1-5]\d{2})\s+\S+\s+\S+(?:\s+.*)?$/;
+  const match = line.match(accessLogPattern);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    explicit: true,
+    timestamp: normalizeAccessLogTimestamp(match[1]),
+    level: 'log',
+    source: match[2],
+    message: `"${match[3]}" ${match[4]}`,
+    parseStatus: 'parsed',
+    parseFormat: 'access-log',
+    parseConfidence: 'high',
+    parseWarnings: [],
   };
 }
 
@@ -877,6 +1036,10 @@ function parseBrowserUrlLine(line: string, nowFactory: () => string): ParsedHead
     source: match[3],
     lineNumber: Number.parseInt(match[4], 10),
     columnNumber: Number.parseInt(match[5], 10),
+    parseStatus: 'partial',
+    parseFormat: 'browser-console',
+    parseConfidence: 'medium',
+    parseWarnings: buildParseWarnings({ missingTimestamp: true }),
   };
 }
 
@@ -893,6 +1056,10 @@ function parseIsoLine(line: string): ParsedHeader | null {
     timestamp: normalizeTimestamp(match[1]),
     level: normalizeLogLevel(match[2]),
     message: match[3].trim(),
+    parseStatus: 'partial',
+    parseFormat: 'generic-level',
+    parseConfidence: 'medium',
+    parseWarnings: buildParseWarnings({ missingSource: true }),
   };
 }
 
@@ -912,6 +1079,10 @@ function parseUnixLine(line: string): ParsedHeader | null {
     timestamp: normalizedTimestamp.toISOString(),
     level: normalizeLogLevel(match[2]),
     message: match[3].trim(),
+    parseStatus: 'partial',
+    parseFormat: 'generic-level',
+    parseConfidence: 'medium',
+    parseWarnings: buildParseWarnings({ missingSource: true }),
   };
 }
 
@@ -930,6 +1101,10 @@ function parseSourceLevelLine(line: string, nowFactory: () => string): ParsedHea
     source: match[3],
     lineNumber: Number.parseInt(match[4], 10),
     columnNumber: Number.parseInt(match[5], 10),
+    parseStatus: 'partial',
+    parseFormat: 'browser-console',
+    parseConfidence: 'medium',
+    parseWarnings: buildParseWarnings({ missingTimestamp: true }),
   };
 }
 
@@ -945,6 +1120,10 @@ function parseSimpleLevelLine(line: string, nowFactory: () => string): ParsedHea
     timestamp: nowFactory(),
     level: normalizeLogLevel(match[1]),
     message: match[2].trim(),
+    parseStatus: 'partial',
+    parseFormat: 'generic-level',
+    parseConfidence: 'medium',
+    parseWarnings: buildParseWarnings({ missingTimestamp: true, missingSource: true }),
   };
 }
 
@@ -960,6 +1139,10 @@ function parseTimeLine(line: string, nowFactory: () => string): ParsedHeader | n
     timestamp: normalizeTimestamp(match[1], nowFactory()),
     level: normalizeLogLevel(match[2]),
     message: match[3].trim(),
+    parseStatus: 'partial',
+    parseFormat: 'generic-level',
+    parseConfidence: 'medium',
+    parseWarnings: buildParseWarnings({ missingSource: true }),
   };
 }
 
@@ -975,6 +1158,10 @@ function parseLevelWordLine(line: string, nowFactory: () => string): ParsedHeade
     timestamp: nowFactory(),
     level: normalizeLogLevel(match[1]),
     message: match[2].trim(),
+    parseStatus: 'partial',
+    parseFormat: 'generic-level',
+    parseConfidence: 'medium',
+    parseWarnings: buildParseWarnings({ missingTimestamp: true, missingSource: true }),
   };
 }
 
@@ -1008,6 +1195,10 @@ function parseSourcePrefixedBrowserLine(line: string, nowFactory: () => string):
     columnNumber: match[3] ? Number.parseInt(match[3], 10) : undefined,
     url: /^https?:\/\//i.test(source) ? source : undefined,
     message,
+    parseStatus: 'partial',
+    parseFormat: 'browser-console',
+    parseConfidence: 'medium',
+    parseWarnings: buildParseWarnings({ missingTimestamp: true }),
   };
 }
 
@@ -1023,6 +1214,10 @@ function parseJsonHeaderLine(line: string, nowFactory: () => string): ParsedHead
       ...normalized,
       explicit: true,
       message: normalized.message,
+      parseStatus: 'parsed',
+      parseFormat: 'json',
+      parseConfidence: 'high',
+      parseWarnings: normalized.parseWarnings ?? [],
     };
   } catch {
     return null;
@@ -1041,6 +1236,7 @@ function parseConsoleHeaderLine(line: string, nowFactory: () => string): ParsedH
     parseVbLine(trimmed, nowFactory) ||
     parseGenericComponentLine(trimmed, nowFactory) ||
     parseBracketedIsoServerLine(trimmed) ||
+    parseAccessLogLine(trimmed) ||
     parseChromeLine(trimmed) ||
     parseBrowserUrlLine(trimmed, nowFactory) ||
     parseIsoLine(trimmed) ||
@@ -1082,6 +1278,10 @@ function finalizeDraft(draft: DraftEvent | null, nowFactory: () => string): Shar
     issueTags: draft.header.issueTags,
     inferredSeverity: draft.header.inferredSeverity,
     primaryIssue: draft.header.primaryIssue,
+    parseStatus: draft.header.parseStatus,
+    parseFormat: draft.header.parseFormat,
+    parseConfidence: draft.header.parseConfidence,
+    parseWarnings: draft.header.parseWarnings,
   });
 }
 
@@ -1118,6 +1318,14 @@ export class ConsoleTextEventParser {
           timestamp: this.nowFactory(),
           level: 'log',
           message: normalizedLine.trim(),
+          parseStatus: 'fallback',
+          parseFormat: 'fallback',
+          parseConfidence: 'low',
+          parseWarnings: buildParseWarnings({
+            unrecognized: true,
+            missingTimestamp: true,
+            missingSource: true,
+          }),
         },
         lines: [normalizedLine],
         stackLines: [],

@@ -24,6 +24,10 @@ const ConsoleLogStatistics: React.FC<ConsoleLogStatisticsProps> = ({
   const isFacetBacked = Boolean(facets);
   const totalForStats = totalEntries ?? stats.totalEntries;
   const levelCounts = facets?.levelCounts ?? stats.levelCounts;
+  const hasParserHealth =
+    Boolean(facets?.parseStatusCounts && Object.keys(facets.parseStatusCounts).length > 0) ||
+    Boolean(facets?.parseFormatCounts && Object.keys(facets.parseFormatCounts).length > 0) ||
+    Boolean(facets?.parseWarningCounts && Object.keys(facets.parseWarningCounts).length > 0);
 
   const levelColors: Record<string, string> = {
     error: '#ef4444',
@@ -118,6 +122,55 @@ const ConsoleLogStatistics: React.FC<ConsoleLogStatisticsProps> = ({
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {facets && hasParserHealth && (
+        <div className="filter-section">
+          <h3>Parser Health</h3>
+
+          {facets.parseStatusCounts && Object.keys(facets.parseStatusCounts).length > 0 && (
+            <div className="console-stats-level-list">
+              {Object.entries(facets.parseStatusCounts).map(([status, count]) => (
+                <div key={status} className="console-stats-level-row">
+                  <span className="console-stats-level-badge parser-health-badge">
+                    {status}
+                  </span>
+                  <span className="console-stats-level-count">{count}</span>
+                  <div className="console-stats-level-bar">
+                    <div
+                      className="console-stats-level-bar-fill parser-health-fill"
+                      style={{
+                        width: `${totalForStats > 0 ? (count / totalForStats) * 100 : 0}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {facets.parseFormatCounts && Object.keys(facets.parseFormatCounts).length > 0 && (
+            <div className="console-stats-error-list console-parser-format-list">
+              {Object.entries(facets.parseFormatCounts).slice(0, 5).map(([format, count]) => (
+                <div key={format} className="console-stats-error-card">
+                  <div className="console-stats-error-message">{format}</div>
+                  <div className="console-stats-error-count">{fmt(count)} matching entries</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {facets.parseWarningCounts && Object.keys(facets.parseWarningCounts).length > 0 && (
+            <div className="console-stats-error-list console-parser-warning-list">
+              {Object.entries(facets.parseWarningCounts).slice(0, 5).map(([warning, count]) => (
+                <div key={warning} className="console-stats-error-card">
+                  <div className="console-stats-error-message">{warning}</div>
+                  <div className="console-stats-error-count">{fmt(count)} matching entries</div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
