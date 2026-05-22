@@ -7,12 +7,17 @@ interface ConsoleLogFilterPanelProps {
   filters: ConsoleFilterOptions;
   onFilterChange: (filters: Partial<ConsoleFilterOptions>) => void;
   disableGrouping?: boolean;
+  fileSummary?: {
+    name: string;
+    meta: string;
+  };
 }
 
 const ConsoleLogFilterPanel: React.FC<ConsoleLogFilterPanelProps> = ({
   filters,
   onFilterChange,
   disableGrouping = false,
+  fileSummary,
 }) => {
   const handleLevelChange = (level: keyof ConsoleFilterOptions['levels']) => {
     onFilterChange({
@@ -59,6 +64,14 @@ const ConsoleLogFilterPanel: React.FC<ConsoleLogFilterPanelProps> = ({
 
   return (
     <div className="filter-panel pro-filter-panel console-filter-panel">
+      {fileSummary && (
+        <div className="filter-file-summary" aria-label="Active file">
+          <span className="filter-file-kicker">File</span>
+          <strong title={fileSummary.name}>{fileSummary.name}</strong>
+          <span>{fileSummary.meta}</span>
+        </div>
+      )}
+
       <div className="filter-section">
         <div className="filter-section-header console-filter-section-header">
           <h3>Log Levels</h3>

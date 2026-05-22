@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom';
 
-if (!window.matchMedia) {
+if (typeof window !== 'undefined' && !window.matchMedia) {
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
     value: (query: string) => ({
@@ -16,12 +16,14 @@ if (!window.matchMedia) {
   });
 }
 
-Object.defineProperty(window, 'scrollTo', {
-  writable: true,
-  value: () => undefined,
-});
+if (typeof window !== 'undefined') {
+  Object.defineProperty(window, 'scrollTo', {
+    writable: true,
+    value: () => undefined,
+  });
 
-Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', {
-  writable: true,
-  value: () => undefined,
-});
+  Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', {
+    writable: true,
+    value: () => undefined,
+  });
+}

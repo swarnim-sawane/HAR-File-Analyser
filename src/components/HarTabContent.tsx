@@ -6,49 +6,36 @@ import React, { useEffect, useRef, useState } from 'react';
 import FilterPanel from './FilterPanel';
 import RequestList from './RequestList';
 import RequestDetails from './RequestDetails';
-import Toolbar from './Toolbar';
 import { useHarData } from '../hooks/useHarData';
-import FloatingAiChat from './FloatingAiChat';
 import RequestFlowDiagram from './RequestFlowDiagram';
 import RequestFlowGraphView from './RequestFlowGraphView';
 import RequestFlowTraceView from './RequestFlowTraceView';
 import PerformanceScorecard from './PerformanceScorecard';
 import AiInsights from './AiInsights';
 import { apiClient } from '../services/apiClient';
-import { ChevronDownIcon, ClockIcon, FileIcon, NetworkIcon, RouteIcon, ServerIcon, TrashIcon, UploadIcon } from './Icons';
+import { formatBytes } from '../utils/formatters';
+import { NetworkIcon, RouteIcon, ServerIcon } from './Icons';
 import type { RequestFlowFocusMode } from '../types/requestFlow';
 
 type HarTab = 'analyzer' | 'flow' | 'scorecard' | 'insights';
 type FlowViewMode = 'diagram' | 'nodes' | 'trace';
 
-interface RecentFile {
-  name: string;
-  timestamp: number;
-  data: File;
-}
-
 export interface HarTabContentProps {
   tabId: string;
   fileId: string;
   fileName: string;
+  fileSize?: number;
   isActive: boolean;
   backendUrl: string;
-  recentFiles: RecentFile[];
-  onAddNewTab: () => void;          // "Upload new" in toolbar -> create new tab
-  onLoadRecentNewTab: (file: File) => void;
-  onClearRecent: () => void;
 }
 
 const HarTabContent: React.FC<HarTabContentProps> = ({
   tabId,
   fileId,
   fileName,
+  fileSize,
   isActive,
   backendUrl,
-  recentFiles,
-  onAddNewTab,
-  onLoadRecentNewTab,
-  onClearRecent,
 }) => {
   const harState = useHarData();
   const [activeTab, setActiveTab] = useState<HarTab>('analyzer');
@@ -56,7 +43,6 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
   const [requestFlowFocusMode, setRequestFlowFocusMode] = useState<RequestFlowFocusMode>('all');
   const [detailsWidth, setDetailsWidth] = useState(450);
   const [isLoadingFile, setIsLoadingFile] = useState(true);
-  const [showStickyRecent, setShowStickyRecent] = useState(false);
   const flowViewRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const flowSessionEntries = harState.harData?.log.entries ?? [];
   const DETAILS_MIN = 320;
@@ -121,22 +107,6 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
     window.addEventListener('mouseup', onUp);
   };
 
-  const formatRecentDate = (timestamp: number) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-
-    const diffHours = Math.floor(diffMins / 60);
-    if (diffHours < 24) return `${diffHours}h ago`;
-
-    const diffDays = Math.floor(diffHours / 24);
-    return `${diffDays}d ago`;
-  };
-
   const focusFlowView = (index: number) => {
     flowViewRefs.current[index]?.focus();
   };
@@ -177,7 +147,7 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
 
   return (
     // Keep mounted but hidden — preserves hook state (filters, selected entry, etc.)
-    <div style={{ display: isActive ? undefined : 'none' }}>
+    <div className="har-tab-content" style={{ display: isActive ? undefined : 'none' }}>
 
       {/* Sub-tabs: only show once data is loaded */}
       {harState.harData && (
@@ -195,64 +165,6 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
                   : 'AI Insights'}
               </button>
             ))}
-          </div>
-          <div className="har-sticky-actions">
-            <button className="btn-toolbar btn-upload har-sticky-upload" onClick={onAddNewTab}>
-              <UploadIcon />
-              <span>Upload New</span>
-            </button>
-            {recentFiles.length > 0 && (
-              <div className={`recent-files-dropdown ${showStickyRecent ? 'active' : ''}`}>
-                <button
-                  className="btn-toolbar btn-recent har-sticky-recent"
-                  onClick={() => setShowStickyRecent(!showStickyRecent)}
-                >
-                  <ClockIcon />
-                  <span>Recent Files</span>
-                  <ChevronDownIcon />
-                </button>
-
-                {showStickyRecent && (
-                  <div className="dropdown-menu">
-                    <div className="dropdown-header">
-                      <span>Recent Files</span>
-                      <button
-                        className="btn-clear-recent"
-                        onClick={() => {
-                          onClearRecent();
-                          setShowStickyRecent(false);
-                        }}
-                      >
-                        <TrashIcon />
-                        <span>Clear All</span>
-                      </button>
-                    </div>
-                    <div className="dropdown-content">
-                      {recentFiles.map((file, index) => (
-                        <button
-                          key={index}
-                          className="recent-file-item"
-                          onClick={() => {
-                            const fileToPass =
-                              file.data instanceof File
-                                ? file.data
-                                : new File([], file.name);
-                            onLoadRecentNewTab(fileToPass);
-                            setShowStickyRecent(false);
-                          }}
-                        >
-                          <div className="recent-file-info">
-                            <FileIcon />
-                            <span className="recent-file-name">{file.name}</span>
-                          </div>
-                          <span className="recent-file-time">{formatRecentDate(file.timestamp)}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         </div>
       )}
@@ -276,17 +188,6 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
         <>
           {activeTab === 'analyzer' && (
             <>
-              <Toolbar
-                onUploadNew={onAddNewTab}
-                onLoadRecent={onLoadRecentNewTab}
-                recentFiles={recentFiles}
-                onClearRecent={onClearRecent}
-                showUploadButton={false}
-                showRecentButton={false}
-                currentFileName={fileName}
-                harEntries={harState.filteredEntries}
-                totalHarEntries={harState.harData.log.entries.length}
-              />
               <div
                 className={`analyzer-layout ${harState.selectedEntry ? 'with-details' : ''}`}
                 style={harState.selectedEntry ? ({ ['--details-width' as any]: `${detailsWidth}px` }) : undefined}
@@ -295,6 +196,10 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
                   <FilterPanel
                     filters={harState.filters}
                     onFilterChange={harState.updateFilters}
+                    fileSummary={{
+                      name: fileName,
+                      meta: `HAR - ${formatBytes(fileSize ?? 0, 0)} - ${harState.harData.log.entries.length} request${harState.harData.log.entries.length === 1 ? '' : 's'}`,
+                    }}
                   />
                 </aside>
                 <div className="content-area">
@@ -350,7 +255,7 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
                 </div>
               </div>
 
-              <div className="flow-tab-panel">
+              <div className="flow-tab-panel har-tab-scroll-panel">
                 {flowViewMode === 'diagram' ? (
                   <RequestFlowDiagram
                     entries={flowSessionEntries}
@@ -391,21 +296,23 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
           )}
 
           {activeTab === 'scorecard' && (
-            <div className="scorecard-wrapper">
+            <div className="scorecard-wrapper har-tab-scroll-panel">
               <PerformanceScorecard harData={harState.harData} />
             </div>
           )}
 
           {/* Always mounted so useInsights auto-fires as soon as HAR data loads,
               generating results in the background before the user visits the tab. */}
-          <div style={{ display: activeTab === 'insights' ? undefined : 'none' }}>
+          <div
+            className="har-tab-scroll-panel har-insights-scroll-panel"
+            style={{ display: activeTab === 'insights' ? undefined : 'none' }}
+          >
             <AiInsights
               harData={harState.harData}
               backendUrl={backendUrl}
             />
           </div>
 
-          <FloatingAiChat harData={harState.harData} />
         </>
       )}
     </div>

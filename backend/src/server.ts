@@ -191,6 +191,7 @@ async function startServer() {
     const consoleLogRoutes = (await import('./routes/consoleLogRoutes')).default;
     const aiRoutes = (await import('./routes/aiRoutes')).default;
     const sanitizeRoutes = (await import('./routes/sanitizeRoutes')).default;
+    const supportWorkbenchRoutes = (await import('./routes/supportWorkbenchRoutes')).default;
 
     // 4. Health check endpoint
     app.get('/health', (req, res) => {
@@ -211,6 +212,7 @@ async function startServer() {
     app.use('/api/console-log', consoleLogRoutes);
     app.use('/api/ai', aiRoutes);
     app.use('/api/sanitize', sanitizeRoutes);
+    app.use('/api/support-workbench', supportWorkbenchRoutes);
 
     // 6. Start HTTP server
     server.listen(PORT, () => {

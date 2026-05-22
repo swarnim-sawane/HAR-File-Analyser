@@ -1,7 +1,10 @@
 import React from 'react';
+import { readFileSync } from 'node:fs';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import HarTabContent from '../HarTabContent';
+
+const globalsCss = readFileSync('src/styles/globals.css', 'utf8');
 
 const { getHarDataMock, mockHarState, requestFlowDiagramMock, requestFlowGraphViewMock } = vi.hoisted(() => {
   const sampleHarFile = {
@@ -137,14 +140,6 @@ vi.mock('../RequestDetails', () => ({
   default: () => <div>Request details mock</div>,
 }));
 
-vi.mock('../Toolbar', () => ({
-  default: () => <div>Toolbar mock</div>,
-}));
-
-vi.mock('../FloatingAiChat', () => ({
-  default: () => <div>Floating AI chat mock</div>,
-}));
-
 vi.mock('../RequestFlowDiagram', () => ({
   default: (props: any) => {
     requestFlowDiagramMock(props);
@@ -191,19 +186,14 @@ describe('HarTabContent Redwood theme smoke test', () => {
         fileName="session.har"
         isActive
         backendUrl="http://localhost:4000"
-        recentFiles={[]}
-        onAddNewTab={vi.fn()}
-        onLoadRecentNewTab={vi.fn()}
-        onClearRecent={vi.fn()}
       />
     );
 
     expect(document.documentElement.dataset.theme).toBe('redwood');
     expect(screen.getByRole('button', { name: /analyzer/i })).toBeInTheDocument();
-    expect(screen.getByText('Toolbar mock')).toBeInTheDocument();
     expect(screen.getByText('Filter panel mock')).toBeInTheDocument();
     expect(screen.getByText('Request list mock')).toBeInTheDocument();
-    expect(screen.getByText('Floating AI chat mock')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /ai assistant/i })).not.toBeInTheDocument();
 
     await waitFor(() => {
       expect(getHarDataMock).toHaveBeenCalledWith('file-1');
@@ -221,10 +211,6 @@ describe('HarTabContent Redwood theme smoke test', () => {
         fileName="session.har"
         isActive
         backendUrl="http://localhost:4000"
-        recentFiles={[]}
-        onAddNewTab={vi.fn()}
-        onLoadRecentNewTab={vi.fn()}
-        onClearRecent={vi.fn()}
       />
     );
 
@@ -255,6 +241,43 @@ describe('HarTabContent Redwood theme smoke test', () => {
     expect(document.documentElement.dataset.theme).toBe('redwood');
   });
 
+  it('keeps long HAR analysis surfaces in scrollable tab panels', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <HarTabContent
+        tabId="tab-1"
+        fileId="file-1"
+        fileName="session.har"
+        isActive
+        backendUrl="http://localhost:4000"
+      />
+    );
+
+    await waitFor(() => {
+      expect(getHarDataMock).toHaveBeenCalledWith('file-1');
+      expect(mockHarState.loadHarData).toHaveBeenCalled();
+    });
+
+    await user.click(screen.getByRole('button', { name: /request flow/i }));
+    expect(screen.getByText('Scattered view mock').closest('.flow-tab-panel')).toHaveClass('har-tab-scroll-panel');
+
+    await user.click(screen.getByRole('button', { name: /scorecard/i }));
+    expect(screen.getByText('Scorecard mock').closest('.har-tab-scroll-panel')).toHaveClass('scorecard-wrapper');
+
+    await user.click(screen.getByRole('button', { name: /ai insights/i }));
+    expect(screen.getByText('AI insights mock').closest('.har-tab-scroll-panel')).toHaveClass('har-insights-scroll-panel');
+
+    expect(globalsCss).toMatch(/\.har-tab-scroll-panel\s*\{[\s\S]*overflow-y:\s*auto/);
+    expect(globalsCss).toMatch(/\.har-tab-scroll-panel\s*\{[\s\S]*min-height:\s*0/);
+    expect(globalsCss).toMatch(/\.flow-tab-panel\s*\{[\s\S]*overflow-y:\s*auto/);
+    expect(globalsCss).toMatch(/\.flow-tab-panel \.request-flow-shell\s*\{[\s\S]*height:\s*auto/);
+    expect(globalsCss).toMatch(/\.flow-view-toggle-bar\s*\{[\s\S]*grid-template-columns:\s*minmax\(120px,\s*1fr\)\s*auto\s*minmax\(120px,\s*1fr\)/);
+    expect(globalsCss).toMatch(/\.flow-view-toggle\s*\{[\s\S]*justify-self:\s*center/);
+    expect(globalsCss).toMatch(/\.basic-file-analyzer\s*\{[\s\S]*overflow-y:\s*auto/);
+    expect(globalsCss).toMatch(/\.basic-file-image-stage\s*\{[\s\S]*overflow:\s*visible/);
+  });
+
   it('passes full HAR entries to the journey map while preserving the analyzer-filtered visible subset', async () => {
     const user = userEvent.setup();
     const allEntries = mockHarState.harData.log.entries;
@@ -267,10 +290,6 @@ describe('HarTabContent Redwood theme smoke test', () => {
         fileName="session.har"
         isActive
         backendUrl="http://localhost:4000"
-        recentFiles={[]}
-        onAddNewTab={vi.fn()}
-        onLoadRecentNewTab={vi.fn()}
-        onClearRecent={vi.fn()}
       />
     );
 
@@ -306,10 +325,6 @@ describe('HarTabContent Redwood theme smoke test', () => {
         fileName="session.har"
         isActive
         backendUrl="http://localhost:4000"
-        recentFiles={[]}
-        onAddNewTab={vi.fn()}
-        onLoadRecentNewTab={vi.fn()}
-        onClearRecent={vi.fn()}
       />
     );
 

@@ -121,7 +121,7 @@ const renderNode = (
         maxWidth: '220px',
         boxShadow,
         cursor: isInteractive ? 'pointer' : 'default',
-        opacity: data.isDimmed ? 0.34 : 1,
+        opacity: data.isDimmed ? 0.54 : 1,
         filter: data.isDimmed ? 'grayscale(0.72) saturate(0.48)' : 'none',
         transition: 'opacity 160ms ease, filter 160ms ease, box-shadow 160ms ease, border-color 160ms ease',
       }}

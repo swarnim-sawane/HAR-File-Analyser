@@ -13,30 +13,18 @@ import PagedConsoleLogList from './PagedConsoleLogList';
 import ConsoleLogDetails from './ConsoleLogDetails';
 import ConsoleLogStatistics from './ConsoleLogStatistics';
 import ConsoleLogAiInsights from './ConsoleLogAiInsights';
-import Toolbar from './Toolbar';
-import FloatingAiChat from './FloatingAiChat';
-import { ChevronDownIcon, ClockIcon, FileIcon, TrashIcon, UploadIcon } from './Icons';
-
-interface RecentFile {
-  name: string;
-  timestamp: number;
-  data: File;
-}
+import { formatBytes } from '../utils/formatters';
 
 export interface ConsoleLogTabContentProps {
   tabId: string;
   /** Backend file ID — present for large files processed server-side */
   fileId: string | null;
   fileName: string;
+  fileSize?: number;
   /** Pre-parsed data — present for small files parsed locally before tab creation */
   initialData: ConsoleLogFile | null;
   isActive: boolean;
   backendUrl: string;
-  recentFiles: RecentFile[];
-  /** Clicking "Upload New" in the toolbar should open a new tab, not replace this one */
-  onAddNewTab: () => void;
-  onLoadRecentNewTab: (file: File) => void;
-  onClearRecent: () => void;
 }
 
 type ConsoleSubTab = 'analyzer' | 'insights';
@@ -47,13 +35,10 @@ const DETAILS_MAX = 900;
 const ConsoleLogTabContent: React.FC<ConsoleLogTabContentProps> = ({
   fileId,
   fileName,
+  fileSize,
   initialData,
   isActive,
   backendUrl,
-  recentFiles,
-  onAddNewTab,
-  onLoadRecentNewTab,
-  onClearRecent,
 }) => {
   const isBackendPagedLog = Boolean(fileId) && !initialData;
   const logState = useConsoleLogData();
@@ -64,7 +49,6 @@ const ConsoleLogTabContent: React.FC<ConsoleLogTabContentProps> = ({
   });
   const [activeSubTab, setActiveSubTab] = useState<ConsoleSubTab>('analyzer');
   const [detailsWidth, setDetailsWidth] = useState(450);
-  const [showStickyRecent, setShowStickyRecent] = useState(false);
 
   // ── Load data on first mount ────────────────────────────────────────────────
   // If the file was parsed locally in App.tsx before the tab was created, we just
@@ -94,22 +78,6 @@ const ConsoleLogTabContent: React.FC<ConsoleLogTabContentProps> = ({
     window.addEventListener('mouseup', onUp);
   };
 
-  const formatRecentDate = (timestamp: number) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-
-    const diffHours = Math.floor(diffMins / 60);
-    if (diffHours < 24) return `${diffHours}h ago`;
-
-    const diffDays = Math.floor(diffHours / 24);
-    return `${diffDays}d ago`;
-  };
-
   const logGroupedEntries = useMemo(() => {
     if (isBackendPagedLog) return null;
     if (logState.filters.groupBy === 'all') return null;
@@ -137,7 +105,7 @@ const ConsoleLogTabContent: React.FC<ConsoleLogTabContentProps> = ({
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
-    <div style={{ display: isActive ? undefined : 'none' }}>
+    <div className="console-log-tab-content" style={{ display: isActive ? undefined : 'none' }}>
       {/* Loading state while fetching from backend */}
       {(logState.isLoading || (isBackendPagedLog && pagedLogState.isBootstrapping)) && (
         <div className="loading-overlay">
@@ -169,80 +137,10 @@ const ConsoleLogTabContent: React.FC<ConsoleLogTabContentProps> = ({
                 </button>
               ))}
             </div>
-            <div className="console-sticky-actions">
-              <button className="btn-toolbar btn-upload console-sticky-upload" onClick={onAddNewTab}>
-                <UploadIcon />
-                <span>Upload New</span>
-              </button>
-              {recentFiles.length > 0 && (
-                <div className={`recent-files-dropdown ${showStickyRecent ? 'active' : ''}`}>
-                  <button
-                    className="btn-toolbar btn-recent console-sticky-recent"
-                    onClick={() => setShowStickyRecent(!showStickyRecent)}
-                  >
-                    <ClockIcon />
-                    <span>Recent Files</span>
-                    <ChevronDownIcon />
-                  </button>
-
-                  {showStickyRecent && (
-                    <div className="dropdown-menu">
-                      <div className="dropdown-header">
-                        <span>Recent Files</span>
-                        <button
-                          className="btn-clear-recent"
-                          onClick={() => {
-                            onClearRecent();
-                            setShowStickyRecent(false);
-                          }}
-                        >
-                          <TrashIcon />
-                          <span>Clear All</span>
-                        </button>
-                      </div>
-                      <div className="dropdown-content">
-                        {recentFiles.map((file, index) => (
-                          <button
-                            key={index}
-                            className="recent-file-item"
-                            onClick={() => {
-                              const fileToPass =
-                                file.data instanceof File
-                                  ? file.data
-                                  : new File([], file.name);
-                              onLoadRecentNewTab(fileToPass);
-                              setShowStickyRecent(false);
-                            }}
-                          >
-                            <div className="recent-file-info">
-                              <FileIcon />
-                              <span className="recent-file-name">{file.name}</span>
-                            </div>
-                            <span className="recent-file-time">{formatRecentDate(file.timestamp)}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
           </div>
 
           {activeSubTab === 'analyzer' && (
             <>
-              <Toolbar
-                onUploadNew={onAddNewTab}
-                onLoadRecent={onLoadRecentNewTab}
-                recentFiles={recentFiles}
-                onClearRecent={onClearRecent}
-                showUploadButton={false}
-                showRecentButton={false}
-                currentFileName={activeFileName}
-                filteredEntries={activeFilteredEntries}
-                totalEntries={activeTotalEntries}
-              />
-
               <div
                 className={`analyzer-layout ${activeSelectedEntry ? 'with-details' : ''}`}
                 style={
@@ -257,6 +155,10 @@ const ConsoleLogTabContent: React.FC<ConsoleLogTabContentProps> = ({
                       filters={activeFilters}
                       onFilterChange={isBackendPagedLog ? pagedLogState.updateFilters : logState.updateFilters}
                       disableGrouping={isBackendPagedLog}
+                      fileSummary={{
+                        name: activeFileName,
+                        meta: `LOG - ${formatBytes(fileSize ?? 0, 0)} - ${activeTotalEntries} entr${activeTotalEntries === 1 ? 'y' : 'ies'}`,
+                      }}
                     />
                     <ConsoleLogStatistics
                       entries={activeFilteredEntries}
@@ -336,8 +238,6 @@ const ConsoleLogTabContent: React.FC<ConsoleLogTabContentProps> = ({
               />
             ) : null
           )}
-
-          {!isBackendPagedLog && logState.logData && <FloatingAiChat logData={logState.logData} />}
         </>
       )}
     </div>

@@ -4,7 +4,7 @@
 // console log and routes it to the appropriate handler. Replaces the two
 // separate uploaders on the initial home screen.
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { chunkedUploader, UploadProgress, UploadResult } from '../services/chunkedUploader';
 import { restoreRecentFile, storeRecentFile } from '../services/recentFilesStore';
 import { wsClient } from '../services/websocketClient';
@@ -12,7 +12,12 @@ import {
   createLocalConsoleLogUploadResult,
   shouldParseConsoleLogLocally,
 } from '../utils/consoleLogProcessing';
-import { detectUploadFileType, UNIFIED_FILE_INPUT_ACCEPT, UploadFileType } from '../utils/uploadFileTypes';
+import {
+  classifyUploadFile,
+  UNIFIED_FILE_INPUT_ACCEPT,
+  UploadFileClassification,
+  UploadFileType,
+} from '../utils/uploadFileTypes';
 import SanitizeModal from './SanitizeModal';
 import BatchSanitizeModal from './BatchSanitizeModal';
 import {
@@ -32,7 +37,7 @@ interface RecentFile {
 
 interface UnifiedUploaderProps {
   /** Called for each successfully uploaded (and sanitized) HAR file */
-  onHarFileUpload: (result: UploadResult) => void | Promise<void>;
+  onHarFileUpload: (result: UploadResult, sourceFile: File) => void | Promise<void>;
   harRecentFiles?: RecentFile[];
   onClearHarRecent?: () => void;
 
@@ -40,11 +45,25 @@ interface UnifiedUploaderProps {
   onLogFileUpload: (result: UploadResult, sourceFile: File) => void | Promise<void>;
   logRecentFiles?: RecentFile[];
   onClearLogRecent?: () => void;
+
+  /** Called for accepted files that use the universal basic analyzer surface. */
+  onBasicFileUpload?: (sourceFile: File, classification: UploadFileClassification) => void | Promise<void>;
+
+  /** Optional compact preview count for constrained surfaces such as dialogs. */
+  recentPreviewLimit?: number;
+
+  /** Gives the app shell a chance to switch to an already-open file instead of re-uploading. */
+  onOpenExistingRecentFile?: (file: { name: string; fileType: UploadFileType }) => boolean | Promise<boolean>;
 }
 
 interface TypedFile {
   file: File;
-  type: UploadFileType;
+  classification: UploadFileClassification;
+}
+
+interface PendingHarUpload {
+  result: UploadResult;
+  file: File;
 }
 
 const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
@@ -54,6 +73,9 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
   onLogFileUpload,
   logRecentFiles = [],
   onClearLogRecent,
+  onBasicFileUpload,
+  recentPreviewLimit,
+  onOpenExistingRecentFile,
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -69,9 +91,10 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
   const [multiDone, setMultiDone] = useState(0);
 
   // HAR sanitize modals
-  const [pendingHarResult, setPendingHarResult] = useState<UploadResult | null>(null);
+  const [pendingHarUpload, setPendingHarUpload] = useState<PendingHarUpload | null>(null);
   const [showHarSanitizeModal, setShowHarSanitizeModal] = useState(false);
-  const [pendingBatchResults, setPendingBatchResults] = useState<UploadResult[] | null>(null);
+  const [pendingBatchUploads, setPendingBatchUploads] = useState<PendingHarUpload[] | null>(null);
+  const [showAllRecentFiles, setShowAllRecentFiles] = useState(false);
 
   useEffect(() => {
     if (error) {
@@ -146,14 +169,14 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
     setMultiTotal(validFiles.length);
     setMultiDone(0);
 
-    const collectedResults: UploadResult[] = [];
+    const collectedUploads: PendingHarUpload[] = [];
     for (const file of validFiles) {
       setStatusMessage(`Uploading ${file.name}...`);
       try {
         const result = await chunkedUploader.uploadFile(file, 'har', (p) => setUploadProgress(p));
         // Persist to IndexedDB for cross-session Recent Files restore
         void storeRecentFile('har', file);
-        collectedResults.push(result);
+        collectedUploads.push({ result, file });
       } catch (err) {
         setError(`Failed to upload ${file.name}: ${(err as Error)?.message ?? 'Unknown error'}`);
       }
@@ -166,17 +189,17 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
     setMultiDone(0);
     setStatusMessage('');
 
-    if (collectedResults.length === 0) {
+    if (collectedUploads.length === 0) {
       setError('All HAR uploads failed. Please try again.');
       return;
     }
 
     // Hand off to sanitize flow
-    if (collectedResults.length === 1) {
-      setPendingHarResult(collectedResults[0]);
+    if (collectedUploads.length === 1) {
+      setPendingHarUpload(collectedUploads[0]);
       setShowHarSanitizeModal(true);
     } else {
-      setPendingBatchResults(collectedResults);
+      setPendingBatchUploads(collectedUploads);
     }
   };
 
@@ -212,57 +235,83 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
 
   // ── Main entry: detect → group → process ─────────────────────────────────
 
+  const processBasicFile = async (file: File, classification: UploadFileClassification) => {
+    if (!onBasicFileUpload) {
+      setError(`${file.name}: This file type is accepted, but the basic analyzer route is not available.`);
+      return;
+    }
+
+    setIsUploading(true);
+    setStatusMessage(`Preparing ${file.name} preview...`);
+
+    try {
+      await onBasicFileUpload(file, classification);
+    } catch (err) {
+      setError((err as Error)?.message ?? `Failed to open ${file.name}.`);
+    } finally {
+      setIsUploading(false);
+      setStatusMessage('');
+    }
+  };
+
   const processFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
     setError(null);
 
-    // 1. Detect types
+    // 1. Classify files
     setIsDetecting(true);
-    setStatusMessage('Detecting file type...');
+    setStatusMessage('Classifying uploaded files...');
     const typed: TypedFile[] = await Promise.all(
-      files.map(async (f) => ({ file: f, type: await detectUploadFileType(f) }))
+      files.map(async (f) => ({ file: f, classification: await classifyUploadFile(f) }))
     );
     setIsDetecting(false);
     setStatusMessage('');
 
-    const harFiles = typed.filter((t) => t.type === 'har').map((t) => t.file);
-    const logFiles = typed.filter((t) => t.type === 'log').map((t) => t.file);
-
-    if (harFiles.length === 0 && logFiles.length === 0) {
-      setError('Unsupported file type. Please upload a HAR capture (.har or .oc), a console log (.log or .txt), or a .json export.');
-      return;
-    }
+    const harFiles = typed.filter((t) => t.classification.analyzerKind === 'har').map((t) => t.file);
+    const logFiles = typed.filter((t) => t.classification.analyzerKind === 'log').map((t) => t.file);
+    const basicFiles = typed.filter((t) =>
+      t.classification.analyzerKind !== 'har' &&
+      t.classification.analyzerKind !== 'log'
+    );
 
     // 2. Process console log first (no blocking modal)
     if (logFiles.length > 0) {
-      if (logFiles.length > 1) {
-        setError(`Only one console log can be open at a time — opening "${logFiles[0].name}".`);
+      for (const logFile of logFiles) {
+        await processLogFile(logFile);
       }
-      await processLogFile(logFiles[0]);
     }
 
-    // 3. Process HAR files (may show sanitize modal)
+    // 3. Register basic analyzer files.
+    if (basicFiles.length > 0) {
+      for (const item of basicFiles) {
+        await processBasicFile(item.file, item.classification);
+      }
+    }
+
+    // 4. Process HAR files (may show sanitize modal)
     if (harFiles.length > 0) {
       await processHarFiles(harFiles);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onHarFileUpload, onLogFileUpload]);
+  }, [onHarFileUpload, onLogFileUpload, onBasicFileUpload]);
 
   // ── Sanitize modal handlers ───────────────────────────────────────────────
 
   const handleSanitizeComplete = (fileId: string) => {
     setShowHarSanitizeModal(false);
-    if (!pendingHarResult) return;
+    if (!pendingHarUpload) return;
     wsClient.subscribeToFile(fileId);
-    void onHarFileUpload({ ...pendingHarResult, fileId });
-    setPendingHarResult(null);
+    void onHarFileUpload({ ...pendingHarUpload.result, fileId }, pendingHarUpload.file);
+    setPendingHarUpload(null);
   };
 
   const handleBatchSanitizeComplete = async (finalResults: UploadResult[]) => {
-    setPendingBatchResults(null);
-    for (const result of finalResults) {
+    const uploads = pendingBatchUploads ?? [];
+    setPendingBatchUploads(null);
+    for (const [index, result] of finalResults.entries()) {
       wsClient.subscribeToFile(result.fileId);
-      await onHarFileUpload(result);
+      const sourceFile = uploads[index]?.file ?? new File([], result.fileName);
+      await onHarFileUpload(result, sourceFile);
     }
   };
 
@@ -304,14 +353,25 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
 
   // ── Recent files (merged, sorted newest-first) ────────────────────────────
 
-  const allRecentFiles = [
+  const allRecentFiles = useMemo(() => [
     ...harRecentFiles.map((f) => ({ ...f, fileType: 'har' as const })),
     ...logRecentFiles.map((f) => ({ ...f, fileType: 'log' as const })),
-  ]
-    .sort((a, b) => b.timestamp - a.timestamp)
-    .slice(0, 6);
+  ].sort((a, b) => b.timestamp - a.timestamp), [harRecentFiles, logRecentFiles]);
 
-  const handleRecentFileClick = async (f: { name: string; data: File; fileType: UploadFileType }) => {
+  const hasRecentPreviewLimit = typeof recentPreviewLimit === 'number' && recentPreviewLimit > 0;
+  const visibleRecentFiles =
+    hasRecentPreviewLimit && !showAllRecentFiles
+      ? allRecentFiles.slice(0, recentPreviewLimit)
+      : allRecentFiles;
+  const hiddenRecentFileCount = allRecentFiles.length - visibleRecentFiles.length;
+  const isRecentPreviewExpanded = hasRecentPreviewLimit && showAllRecentFiles;
+
+  const handleRecentFileClick = async (f: { name: string; data: File; fileType: Extract<UploadFileType, 'har' | 'log'> }) => {
+    if (onOpenExistingRecentFile) {
+      const wasHandled = await onOpenExistingRecentFile({ name: f.name, fileType: f.fileType });
+      if (wasHandled) return;
+    }
+
     // In-session: f.data is the real File. After a page refresh localStorage only
     // restores name/timestamp so f.data is undefined — restore from IndexedDB.
     let file: File | null =
@@ -348,25 +408,25 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="file-uploader unified-uploader">
+    <div className={`file-uploader unified-uploader ${isRecentPreviewExpanded ? 'recent-files-expanded' : ''}`}>
       {/* Single-file HAR sanitize modal */}
-      {showHarSanitizeModal && pendingHarResult && (
+      {showHarSanitizeModal && pendingHarUpload && (
         <SanitizeModal
-          uploadResult={pendingHarResult}
+          uploadResult={pendingHarUpload.result}
           onProceed={handleSanitizeComplete}
           onCancel={() => {
             setShowHarSanitizeModal(false);
-            setPendingHarResult(null);
+            setPendingHarUpload(null);
           }}
         />
       )}
 
       {/* Multi-file HAR batch sanitize modal */}
-      {pendingBatchResults && (
+      {pendingBatchUploads && (
         <BatchSanitizeModal
-          uploadResults={pendingBatchResults}
+          uploadResults={pendingBatchUploads.map((upload) => upload.result)}
           onProceed={handleBatchSanitizeComplete}
-          onCancel={() => setPendingBatchResults(null)}
+          onCancel={() => setPendingBatchUploads(null)}
         />
       )}
 
@@ -437,18 +497,22 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
               <UploadIcon />
             </div>
             <h2>Drop any file to get started</h2>
-            <p>The system automatically detects whether it's a HAR file or a console log</p>
+            <p>The system routes HAR, logs, traces, documents, tables, images, archives, and unsupported files into the right analyzer view.</p>
 
             {/* Supported type pills */}
             <div className="unified-type-badges">
               <span className="unified-type-badge unified-badge-har">.har / .oc</span>
               <span className="unified-type-badge unified-badge-log">.log / .txt</span>
               <span className="unified-type-badge unified-badge-json">.json</span>
+              <span className="unified-type-badge unified-badge-log">.trc / .dmp</span>
+              <span className="unified-type-badge unified-badge-json">.csv / .xml</span>
+              <span className="unified-type-badge unified-badge-doc">.pdf / .docx</span>
+              <span className="unified-type-badge unified-badge-har">images / .zip</span>
             </div>
 
             <input
               type="file"
-              accept={UNIFIED_FILE_INPUT_ACCEPT}
+              accept={UNIFIED_FILE_INPUT_ACCEPT || undefined}
               onChange={handleFileInput}
               style={{ display: 'none' }}
               id="unified-file-input"
@@ -463,7 +527,7 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
 
       {/* ── Merged recent files ── */}
       {allRecentFiles.length > 0 && !isBusy && (
-        <div className="recent-files-section">
+        <div className={`recent-files-section ${isRecentPreviewExpanded ? 'is-expanded' : ''}`}>
           <div className="recent-files-header">
             <h3>Recent Files</h3>
             {(harRecentFiles.length > 0 || logRecentFiles.length > 0) && (
@@ -473,9 +537,9 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
             )}
           </div>
           <div className="recent-files-list">
-            {allRecentFiles.map((file, idx) => (
+            {visibleRecentFiles.map((file, idx) => (
               <button
-                key={idx}
+                key={`${file.fileType}:${file.name}:${file.timestamp}:${idx}`}
                 className="recent-file-card"
                 onClick={() => handleRecentFileClick(file)}
                 disabled={isBusy}
@@ -504,6 +568,21 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
               </button>
             ))}
           </div>
+          {hasRecentPreviewLimit && allRecentFiles.length > recentPreviewLimit && (
+            <div className="recent-files-footer">
+              <button
+                type="button"
+                className="btn-show-recent"
+                aria-expanded={showAllRecentFiles}
+                onClick={() => setShowAllRecentFiles((current) => !current)}
+              >
+                <span>{showAllRecentFiles ? 'Show fewer recent files' : 'Show all recent files'}</span>
+                {!showAllRecentFiles && hiddenRecentFileCount > 0 && (
+                  <span className="show-recent-count">{hiddenRecentFileCount} more</span>
+                )}
+              </button>
+            </div>
+          )}
         </div>
       )}
 

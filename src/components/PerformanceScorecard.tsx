@@ -982,7 +982,7 @@ const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData }) => {
   );
 
   return (
-    <section className="scorecard-dashboard">
+    <section className="scorecard-dashboard is-compact">
       <div className="scorecard-hero-card">
         <div className="scorecard-hero-grid">
           <div className="scorecard-hero-copy">
@@ -990,7 +990,7 @@ const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData }) => {
               <SparklesIcon />
               <span>Performance Scorecard</span>
             </span>
-            <h2>Executive snapshot for this HAR session</h2>
+            <h2>HAR session scorecard</h2>
             <p>{scoreHeadline(score)}</p>
             <div className="scorecard-hero-tags">
               <span className="scorecard-pill">{data.total} requests</span>
@@ -1047,7 +1047,7 @@ const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData }) => {
               </div>
             </div>
             <p className="scorecard-score-description">
-              Score is penalty-based across latency, reliability, caching, compression, and security indicators.
+              Penalty-based across latency, reliability, caching, compression, and security.
             </p>
             <div
               ref={explainerRegionRef}
@@ -1080,7 +1080,7 @@ const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData }) => {
                 }}
               >
                 <InfoIcon />
-                <span>How this score is calculated</span>
+                <span>Score rules</span>
               </button>
 
               {showExplainer && (
