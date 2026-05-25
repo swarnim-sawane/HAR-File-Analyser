@@ -5,9 +5,9 @@
 
 | Service | Process | Port | Notes |
 |---|---|---|---|
-| Frontend | `har-frontend` (PM2 id:7) | 3000 | Static files via python3 http.server |
-| Backend API | `har-backend` (PM2 ids:2-5) | 4000 | 4x cluster, Express + TypeScript |
-| Worker | `har-worker` (PM2 ids:6-7) | 4001 | 2x fork mode, BullMQ, --expose-gc --max-old-space-size=4096 |
+| Frontend | `har-frontend` | 3000 | Static files via `python3 -m http.server` |
+| Backend API | `har-backend` | 4000 | 4x cluster, Express + TypeScript |
+| Worker | `har-worker` | N/A | 2x fork mode, BullMQ, --expose-gc --max-old-space-size=4096 |
 | MongoDB | system service | 27017 | `har-analyzer` database |
 | Redis | system service | 6379 | Job queue + pub/sub |
 
@@ -26,7 +26,7 @@ refresh-token   # alias in ~/.bashrc — prompts for token, updates .env, restar
 
 Manual alternative:
 ```bash
-sed -i 's/^OCA_TOKEN=.*/OCA_TOKEN=YOUR_NEW_TOKEN/' ~/Downloads/har-analyzer/backend/.env
+sed -i 's/^OCA_TOKEN=.*/OCA_TOKEN=YOUR_NEW_TOKEN/' /refresh/home/Downloads/har-analyzer/backend/.env
 pm2 restart har-backend --update-env
 ```
 
@@ -41,7 +41,7 @@ git checkout main
 git pull origin main
 
 # Frontend build — .env.production MUST have both vars
-# C:\Users\ssawane\Downloads\har-analyzer\.env.production:
+# C:\Users\ssawane\Documents\Work\HAR LATEST\Deployed build\HAR-File-Analyser\.env.production:
 #   VITE_API_URL=http://10.65.39.163:4000
 #   VITE_BACKEND_URL=http://10.65.39.163:4000
 npm run build
@@ -53,21 +53,55 @@ scp -r dist oracle@celvpvm05798.us.oracle.com:/refresh/home/Downloads/har-analyz
 ### Step 2 — On VM
 ```bash
 # Pull latest code
-cd ~/Downloads/har-analyzer
-git pull origin main
+cd /refresh/home/Downloads/har-analyzer
+git -c http.proxy=http://www-proxy-phx.oraclecorp.com:80 \
+    -c https.proxy=http://www-proxy-phx.oraclecorp.com:80 \
+    pull origin main
+
+git log -1 --oneline
 
 # Rebuild backend (TypeScript only — tsc works without native binaries)
 cd backend
 npm run build
+cd ..
 
-# Restart everything
+# Restart backend
 pm2 restart har-backend --update-env
-pm2 restart har-frontend --update-env
+
+# Frontend - replace stale/temp script based processes with direct python server.
+pm2 delete har-frontend
+pm2 start "python3" \
+  --name har-frontend \
+  -- -m http.server 3000 --directory /refresh/home/Downloads/har-analyzer/dist
 
 # Workers — DO NOT use pm2 restart for workers (loses --expose-gc flag).
-# Instead, delete and re-create from the config file:
+# /tmp is ephemeral, so recreate the config before starting workers.
+cat > /tmp/worker.config.cjs <<'EOF'
+module.exports = {
+  apps: [{
+    name: 'har-worker',
+    script: '/refresh/home/Downloads/har-analyzer/backend/dist/worker.js',
+    instances: 2,
+    exec_mode: 'fork',
+    node_args: '--max-old-space-size=4096 --expose-gc',
+    env: {
+      NODE_ENV: 'production',
+      WORKER_CONCURRENCY: '4',
+    }
+  }]
+};
+EOF
+
 pm2 delete har-worker
 pm2 start /tmp/worker.config.cjs
+
+# Verify before saving. Do not run pm2 save while har-frontend or har-worker is missing/errored.
+pm2 list
+pm2 show har-worker | grep "interpreter args"
+curl -I http://localhost:3000
+curl http://localhost:4000/health
+curl http://localhost:4000/openapi.json | grep "/api/v1/har"
+
 pm2 save
 ```
 
@@ -107,21 +141,40 @@ If AI chat silently fails or uploads go to `localhost`, the build used wrong/mis
 
 **Verify after every deploy:**
 ```bash
-grep -o "10\.65\.39\.163:4000" ~/Downloads/har-analyzer/dist/assets/*.js | wc -l
+grep -o "10\.65\.39\.163:4000" /refresh/home/Downloads/har-analyzer/dist/assets/*.js | wc -l
 # Must return 2 or more
 ```
 
-### 4. Worker Node.js flags are silently ignored by `pm2 start --node-args`
+### 4. Frontend PM2 process must not depend on `/tmp/serve-frontend.sh`
+If `har-frontend` is `errored` and logs show:
+
+```text
+bash: /tmp/serve-frontend.sh: No such file or directory
+```
+
+delete and recreate it with the direct Python command:
+
+```bash
+pm2 delete har-frontend
+pm2 start "python3" \
+  --name har-frontend \
+  -- -m http.server 3000 --directory /refresh/home/Downloads/har-analyzer/dist
+
+curl -I http://localhost:3000
+pm2 save
+```
+
+### 5. Worker Node.js flags are silently ignored by `pm2 start --node-args`
 `pm2 start dist/worker.js --node-args="--expose-gc"` appears to work but
 `pm2 show har-worker` will show no interpreter args and `global.gc()` calls
 will be silent no-ops. The only reliable way is a config file.
 
-**Config file at `/tmp/worker.config.cjs` (recreate if VM reboots):**
+**Config file at `/tmp/worker.config.cjs` (recreate before every deploy because `/tmp` is ephemeral):**
 ```js
 module.exports = {
   apps: [{
     name: 'har-worker',
-    script: '/home/oracle/Downloads/har-analyzer/backend/dist/worker.js',
+    script: '/refresh/home/Downloads/har-analyzer/backend/dist/worker.js',
     instances: 2,
     exec_mode: 'fork',
     node_args: '--max-old-space-size=4096 --expose-gc',
@@ -137,13 +190,13 @@ module.exports = {
 ```bash
 pm2 delete har-worker
 pm2 start /tmp/worker.config.cjs
-pm2 save
 # Verify flags applied:
 pm2 show har-worker | grep "interpreter args"
 # Expected: --max-old-space-size=4096 | --expose-gc
+pm2 save
 ```
 
-### 5. MongoDB duplicate key on re-upload
+### 6. MongoDB duplicate key on re-upload
 If you see `E11000 duplicate key error ... fileId_1`, a stale record exists.
 
 **Fix:**
@@ -153,7 +206,32 @@ db = db.getSiblingDB('har-analyzer')
 db.har_files.deleteMany({ fileId: "PASTE_CONFLICTING_FILEID_HERE" })
 exit
 pm2 restart har-backend --update-env
-pm2 restart har-worker --update-env
+# Recreate worker from the config in section 5 if processing needs a restart.
+pm2 delete har-worker
+pm2 start /tmp/worker.config.cjs
+```
+
+### 7. Clear stale BullMQ jobs
+Use this only when old jobs are being replayed and you intentionally want to clear pending HAR/log processing work. `pm2 flush` only clears PM2 logs; it does not clear Redis queues.
+
+```bash
+# Stop workers first so they do not keep consuming stale jobs.
+pm2 delete har-worker
+
+# Inspect queue backlog.
+redis-cli LLEN bull:har-processing:wait
+redis-cli ZCARD bull:har-processing:delayed
+redis-cli ZCARD bull:har-processing:failed
+redis-cli LLEN bull:log-processing:wait
+redis-cli ZCARD bull:log-processing:delayed
+redis-cli ZCARD bull:log-processing:failed
+
+# Clear only this application's BullMQ queues.
+redis-cli --scan --pattern 'bull:har-processing:*' | xargs -r redis-cli DEL
+redis-cli --scan --pattern 'bull:log-processing:*' | xargs -r redis-cli DEL
+
+# Recreate /tmp/worker.config.cjs from section 5 if missing, then start workers.
+pm2 start /tmp/worker.config.cjs
 ```
 
 ***
@@ -177,14 +255,14 @@ pm2 list
 # Verify OCA is reachable from shell
 curl -s -o /dev/null -w "%{http_code}" \
   https://code-internal.aiservice.us-chicago-1.oci.oraclecloud.com/20250206/app/litellm/v1/models \
-  -H "Authorization: Bearer $(grep OCA_TOKEN ~/Downloads/har-analyzer/backend/.env | cut -d= -f2)"
+  -H "Authorization: Bearer $(grep OCA_TOKEN /refresh/home/Downloads/har-analyzer/backend/.env | cut -d= -f2)"
 # Expected: 200
 
-# Verify proxy is in PM2 env
-pm2 env 2 | grep -i proxy
+# Verify proxy is in PM2 env; use any current har-backend id from pm2 list.
+pm2 env <har-backend-id> | grep -i proxy
 
 # Check what API URL is baked into frontend
-grep -o "10\.65\.39\.163:4000\|localhost:4000" ~/Downloads/har-analyzer/dist/assets/*.js | sort | uniq -c
+grep -o "10\.65\.39\.163:4000\|localhost:4000" /refresh/home/Downloads/har-analyzer/dist/assets/*.js | sort | uniq -c
 
 # MongoDB shell
 mongosh
@@ -204,7 +282,10 @@ db.har_files.find().sort({uploadedAt:-1}).limit(5)
 | `fetch failed` in Node test | No proxy set | Proxy vars missing from `.env` |
 | AI chat shows old UI | Wrong branch built | `git checkout main` before building |
 | `OCA proxy error: fetch failed` | Token expired | Run `refresh-token` alias |
-| Worker processes stale jobs | PM2 in-memory retry | `pm2 flush` then `pm2 restart har-worker` |
+| Worker processes stale jobs | Old BullMQ jobs still pending in Redis | Stop `har-worker`, clear only `bull:har-processing:*` / `bull:log-processing:*`, then recreate worker from config |
+| `bash: /tmp/serve-frontend.sh: No such file or directory` | PM2 frontend points to a deleted temp script | Recreate `har-frontend` with `python3 -m http.server` |
+| `[PM2][ERROR] File /tmp/worker.config.cjs not found` | `/tmp` worker config disappeared | Recreate `/tmp/worker.config.cjs`, then `pm2 start /tmp/worker.config.cjs` |
+| `Document is larger than the maximum size 16777216` | Old worker build stored oversized HAR body text in MongoDB | Pull latest `main`, rebuild backend, restart workers |
 
 ***
 
