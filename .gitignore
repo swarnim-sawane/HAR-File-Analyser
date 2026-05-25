@@ -142,5 +142,6 @@ backend/uploads/
 
 
 .claude/
+.superpowers/
 backend/processed/
 *.har
