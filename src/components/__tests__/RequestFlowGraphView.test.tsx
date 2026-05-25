@@ -306,7 +306,7 @@ describe('RequestFlowGraphView', () => {
     expect(screen.queryByText('Request Flow Summary')).not.toBeInTheDocument();
   });
 
-  it('lists failed requests as jump targets and opens the selected error in the analyzer', async () => {
+  it('lists failed requests as jump targets and focuses the selected error in the graph', async () => {
     const user = userEvent.setup();
     const handleNodeClick = vi.fn();
     const entries: Entry[] = [
@@ -335,8 +335,7 @@ describe('RequestFlowGraphView', () => {
     reactFlowFitViewMock.mockClear();
     await user.click(screen.getByRole('button', { name: /open error 500 \/api\/orders/i }));
 
-    expect(handleNodeClick).toHaveBeenCalledTimes(1);
-    expect(handleNodeClick).toHaveBeenCalledWith(entries[1]);
+    expect(handleNodeClick).not.toHaveBeenCalled();
     expect(reactFlowFitViewMock).toHaveBeenCalledWith({
       nodes: [{ id: 'request-1' }],
       padding: 0.62,

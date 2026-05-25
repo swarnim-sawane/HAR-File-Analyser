@@ -398,9 +398,8 @@ const RequestFlowGraphView: React.FC<RequestFlowGraphViewProps> = ({
         maxZoom: 1.12,
         duration: 420,
       });
-      handleEntrySelection(entryIndex);
     },
-    [handleEntrySelection]
+    []
   );
 
   const renderedNodes = useMemo(

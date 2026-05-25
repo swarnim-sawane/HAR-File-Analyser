@@ -131,6 +131,7 @@ const renderNode = (
 
   return (
     <div
+      className={`request-flow-node-card ${data.isErrorJumpSelected ? 'is-error-jump-selected' : ''}`}
       role={isInteractive ? 'button' : undefined}
       tabIndex={isInteractive ? 0 : undefined}
       aria-label={isInteractive ? `Open in Analyzer ${data.method} ${pathLabel} ${data.status}` : undefined}
