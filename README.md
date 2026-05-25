@@ -146,6 +146,16 @@ Expected result:
 
 - Frontend starts on `http://localhost:3000`
 
+### Start all local dev services
+
+For day-to-day local testing, you can start the frontend, backend API, and worker together from the project root:
+
+```powershell
+npm run dev:all
+```
+
+This is only a local convenience wrapper. It still starts the same three separate processes used by the normal architecture.
+
 ### Start the backend API
 
 From `backend`:
@@ -226,6 +236,21 @@ The DNS hostname is also supported:
 `http://celvpvm05798.us.oracle.com:3000`
 
 Both frontend origins are allowed by the backend CORS configuration.
+
+## REST API And OpenAPI
+
+The backend exposes REST APIs for upload, HAR analysis, console log analysis, sanitization, AI status, AI insights, and AI chat. The API contract is available from the running backend at:
+
+- `GET /openapi.json`
+- `GET /api-docs`
+
+For OCI or other automation flows, use the OpenAPI document as the integration contract and see [docs/openapi-automation.md](./docs/openapi-automation.md) for the current upload/status/analysis flow and the next recommended API hardening step.
+
+The stable HAR automation endpoints are:
+
+- `GET /api/v1/har/{fileId}/summary`
+- `GET /api/v1/har/{fileId}/errors`
+- `GET /api/v1/har/{fileId}/insights/context`
 
 ## VM Deployment
 

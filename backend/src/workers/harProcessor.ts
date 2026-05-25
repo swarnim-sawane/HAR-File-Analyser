@@ -4,6 +4,7 @@ import { HAR_QUEUE_NAME } from '../config/queueNames';
 import { streamParseHar, ParsedHarEntry } from '../services/streamingParser';
 import { promises as fs } from 'fs';
 import { publishToFile } from '../utils/socketHelper';
+import { prepareHarEntryForStorage } from './harEntryStorage';
 
 // ✅ REMOVED: import { emitToFile } from '../utils/socketHelper';
 // Now using Redis pub/sub instead
@@ -93,11 +94,7 @@ export async function processHarFile(data: HarJobData): Promise<void> {
       // Batch insert every BATCH_SIZE entries
       if (batchBuffer.length >= BATCH_SIZE) {
         const createdAt = new Date();
-        const toInsert = batchBuffer.map(e => ({
-          ...e,
-          fileId,
-          createdAt
-        }));
+        const toInsert = batchBuffer.map(e => prepareHarEntryForStorage(e, fileId, createdAt));
 
         await entriesCollection.insertMany(toInsert, { ordered: false });
         batchCount++;
@@ -119,11 +116,8 @@ export async function processHarFile(data: HarJobData): Promise<void> {
 
     // Insert remaining entries
     if (batchBuffer.length > 0) {
-      const toInsert = batchBuffer.map(e => ({
-        ...e,
-        fileId,
-        createdAt: new Date()
-      }));
+      const createdAt = new Date();
+      const toInsert = batchBuffer.map(e => prepareHarEntryForStorage(e, fileId, createdAt));
       await entriesCollection.insertMany(toInsert, { ordered: false });
       batchBuffer = []; // Clear buffer
     }

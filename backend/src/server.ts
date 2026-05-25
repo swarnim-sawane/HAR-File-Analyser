@@ -7,6 +7,7 @@ import { connectDatabases, closeDatabases, getRedis } from './config/database';
 import { configureOutboundProxy } from './config/outboundProxy';
 import { buildAllowedOrigins } from './config/corsOrigins';
 import { setSocketIOInstance } from './utils/socketHelper';
+import { buildOpenApiDocument, renderOpenApiDocsHtml } from './openapiSpec';
 
 dotenv.config();
 const outboundProxyUrl = configureOutboundProxy();
@@ -46,6 +47,18 @@ const io = new SocketIOServer(server, {
 
 app.locals.io = io;
 setSocketIOInstance(io);
+
+function getOpenApiServerUrl(req: express.Request): string {
+  const configuredUrl = process.env.OPENAPI_SERVER_URL || process.env.PUBLIC_API_URL;
+  if (configuredUrl) return configuredUrl;
+
+  const forwardedProto = req.get('x-forwarded-proto');
+  const forwardedHost = req.get('x-forwarded-host');
+  const proto = forwardedProto || req.protocol;
+  const host = forwardedHost || req.get('host') || `localhost:${PORT}`;
+
+  return `${proto}://${host}`;
+}
 
 // ✅ NEW: Helper to get file status from Redis
 async function getFileStatusFromRedis(fileId: string) {
@@ -191,6 +204,7 @@ async function startServer() {
     const consoleLogRoutes = (await import('./routes/consoleLogRoutes')).default;
     const aiRoutes = (await import('./routes/aiRoutes')).default;
     const sanitizeRoutes = (await import('./routes/sanitizeRoutes')).default;
+    const automationRoutes = (await import('./routes/automationRoutes')).default;
 
     // 4. Health check endpoint
     app.get('/health', (req, res) => {
@@ -205,12 +219,21 @@ async function startServer() {
       });
     });
 
+    app.get('/openapi.json', (req, res) => {
+      res.json(buildOpenApiDocument(getOpenApiServerUrl(req)));
+    });
+
+    app.get('/api-docs', (_req, res) => {
+      res.type('html').send(renderOpenApiDocsHtml('/openapi.json'));
+    });
+
     // 5. Register routes
     app.use('/api/upload', uploadRoutes);
     app.use('/api/har', harRoutes);
     app.use('/api/console-log', consoleLogRoutes);
     app.use('/api/ai', aiRoutes);
     app.use('/api/sanitize', sanitizeRoutes);
+    app.use('/api/v1', automationRoutes);
 
     // 6. Start HTTP server
     server.listen(PORT, () => {
