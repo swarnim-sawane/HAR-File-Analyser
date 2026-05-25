@@ -6,7 +6,7 @@ import HarTabContent from '../HarTabContent';
 
 const globalsCss = readFileSync('src/styles/globals.css', 'utf8');
 
-const { getHarDataMock, mockHarState, requestFlowDiagramMock, requestFlowGraphViewMock } = vi.hoisted(() => {
+const { getHarDataMock, mockHarState, requestListMock, requestDetailsMock, requestFlowDiagramMock, requestFlowGraphViewMock } = vi.hoisted(() => {
   const sampleHarFile = {
     log: {
       version: '1.2',
@@ -88,6 +88,8 @@ const { getHarDataMock, mockHarState, requestFlowDiagramMock, requestFlowGraphVi
 
   return {
     getHarDataMock: vi.fn().mockResolvedValue(sampleHarFile),
+    requestListMock: vi.fn(),
+    requestDetailsMock: vi.fn(),
     requestFlowDiagramMock: vi.fn(),
     requestFlowGraphViewMock: vi.fn(),
     mockHarState: {
@@ -133,11 +135,17 @@ vi.mock('../FilterPanel', () => ({
 }));
 
 vi.mock('../RequestList', () => ({
-  default: () => <div>Request list mock</div>,
+  default: (props: any) => {
+    requestListMock(props);
+    return <div>Request list mock</div>;
+  },
 }));
 
 vi.mock('../RequestDetails', () => ({
-  default: () => <div>Request details mock</div>,
+  default: (props: any) => {
+    requestDetailsMock(props);
+    return <div>Request details mock</div>;
+  },
 }));
 
 vi.mock('../RequestFlowDiagram', () => ({
@@ -173,7 +181,11 @@ describe('HarTabContent Redwood theme smoke test', () => {
     window.localStorage.setItem('theme', 'redwood');
     getHarDataMock.mockClear();
     mockHarState.filteredEntries = mockHarState.harData.log.entries;
+    mockHarState.selectedEntry = null;
     mockHarState.loadHarData.mockClear();
+    mockHarState.setSelectedEntry.mockClear();
+    requestListMock.mockClear();
+    requestDetailsMock.mockClear();
     requestFlowDiagramMock.mockClear();
     requestFlowGraphViewMock.mockClear();
   });
@@ -199,6 +211,20 @@ describe('HarTabContent Redwood theme smoke test', () => {
       expect(getHarDataMock).toHaveBeenCalledWith('file-1');
       expect(mockHarState.loadHarData).toHaveBeenCalled();
     });
+
+    await waitFor(() => {
+      expect(mockHarState.setSelectedEntry).toHaveBeenCalledWith(mockHarState.harData.log.entries[1]);
+    });
+
+    expect(requestListMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        focusEntry: mockHarState.harData.log.entries[1],
+        focusPath: expect.objectContaining({
+          anchorIndex: 1,
+          confidence: 'high',
+        }),
+      })
+    );
   });
 
   it('renders a request flow view toggle with journey and scattered views', async () => {
@@ -309,6 +335,8 @@ describe('HarTabContent Redwood theme smoke test', () => {
         filters: mockHarState.filters,
         onFiltersChange: mockHarState.updateFilters,
         focusMode: 'all',
+        issueFocusPath: expect.objectContaining({ anchorIndex: 1 }),
+        issueFocusEnabled: true,
       })
     );
   });
@@ -343,6 +371,8 @@ describe('HarTabContent Redwood theme smoke test', () => {
         filters: mockHarState.filters,
         onFiltersChange: mockHarState.updateFilters,
         focusMode: 'all',
+        issueFocusPath: expect.objectContaining({ anchorIndex: 1 }),
+        issueFocusEnabled: true,
       })
     );
   });
