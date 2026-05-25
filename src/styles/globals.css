@@ -16686,6 +16686,70 @@ html[data-theme='redwood'] .scorecard-finding-meta {
   font-weight: 650;
 }
 
+.request-flow-diagnostic-error-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.request-flow-diagnostic-error-label {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #dc2626;
+}
+
+.request-flow-diagnostic-error-list {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-height: 66px;
+  overflow-y: auto;
+  flex-wrap: wrap;
+  scrollbar-width: thin;
+}
+
+.request-flow-diagnostic-error-chip {
+  height: 28px;
+  max-width: 190px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 0 9px;
+  border: 1px solid rgba(220, 38, 38, 0.2);
+  border-radius: 8px;
+  background: rgba(254, 242, 242, 0.92);
+  color: #991b1b;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.request-flow-diagnostic-error-chip:hover,
+.request-flow-diagnostic-error-chip.is-selected {
+  border-color: rgba(220, 38, 38, 0.48);
+  background: #ffffff;
+  color: #7f1d1d;
+}
+
+.request-flow-diagnostic-error-chip strong {
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.request-flow-diagnostic-error-chip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 650;
+}
+
 .request-flow-diagnostic-search {
   height: 32px;
   display: flex;
@@ -17341,6 +17405,19 @@ html[data-theme='dark'] .request-flow-node-reason {
 html[data-theme='dark'] .request-flow-diagnostic-count strong,
 html[data-theme='dark'] .request-flow-node-start-label {
   color: #f8fafc;
+}
+
+html[data-theme='dark'] .request-flow-diagnostic-error-chip {
+  background: rgba(127, 29, 29, 0.28);
+  border-color: rgba(248, 113, 113, 0.22);
+  color: #fecaca;
+}
+
+html[data-theme='dark'] .request-flow-diagnostic-error-chip:hover,
+html[data-theme='dark'] .request-flow-diagnostic-error-chip.is-selected {
+  background: rgba(127, 29, 29, 0.42);
+  border-color: rgba(248, 113, 113, 0.46);
+  color: #fff1f2;
 }
 
 html[data-theme='dark'] .request-flow-node-step-badge {

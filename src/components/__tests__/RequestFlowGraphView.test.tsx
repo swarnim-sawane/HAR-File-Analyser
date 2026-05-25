@@ -6,66 +6,77 @@ import { Entry, FilterOptions } from '../../types/har';
 import type { RequestFlowFocusMode } from '../../types/requestFlow';
 import type { RequestFlowFocusPath } from '../../utils/requestFlowFocus';
 
+const { reactFlowFitViewMock } = vi.hoisted(() => ({
+  reactFlowFitViewMock: vi.fn(),
+}));
+
 vi.mock('reactflow', async () => {
   const ReactModule = await import('react');
 
   return {
     __esModule: true,
-    default: ({ nodes, edges, nodeTypes, children, nodesDraggable, onNodesChange, onEdgesChange }: any) => (
-      <div
-        data-testid="react-flow-mock"
-        data-nodes-draggable={String(nodesDraggable)}
-        data-has-on-nodes-change={String(typeof onNodesChange === 'function')}
-        data-has-on-edges-change={String(typeof onEdgesChange === 'function')}
-      >
-        {nodes.map((node: any) => {
-          const NodeComponent = nodeTypes[node.type];
+    default: ({ nodes, edges, nodeTypes, children, nodesDraggable, onNodesChange, onEdgesChange, onInit }: any) => {
+      ReactModule.useEffect(() => {
+        onInit?.({ fitView: reactFlowFitViewMock });
+      }, [onInit]);
 
-          return (
+      return (
+        <div
+          data-testid="react-flow-mock"
+          data-nodes-draggable={String(nodesDraggable)}
+          data-has-on-nodes-change={String(typeof onNodesChange === 'function')}
+          data-has-on-edges-change={String(typeof onEdgesChange === 'function')}
+        >
+          {nodes.map((node: any) => {
+            const NodeComponent = nodeTypes[node.type];
+
+            return (
+              <div
+                key={node.id}
+                data-testid="react-flow-node"
+                data-node-type={node.type}
+                data-node-draggable={node.draggable === undefined ? 'unset' : String(node.draggable)}
+                data-node-critical={String(Boolean(node.data?.isCritical))}
+                data-node-dimmed={String(Boolean(node.data?.isDimmed))}
+                data-node-error-selected={String(Boolean(node.data?.isErrorJumpSelected))}
+                data-node-focus-anchor={String(Boolean(node.data?.isFocusAnchor))}
+                data-node-focus-path={String(Boolean(node.data?.isFocusPath))}
+                data-node-focus-step={node.data?.focusStep ?? ''}
+                data-node-start-here={String(Boolean(node.data?.isFocusAnchor))}
+                data-node-focus-reason={node.data?.focusReason ?? ''}
+                data-node-style-opacity={node.style?.opacity === undefined ? 'unset' : String(node.style.opacity)}
+                data-node-style-z-index={node.style?.zIndex === undefined ? 'unset' : String(node.style.zIndex)}
+              >
+                <NodeComponent
+                  id={node.id}
+                  type={node.type}
+                  data={node.data}
+                  selected={false}
+                  dragging={false}
+                  zIndex={1}
+                  xPos={node.position?.x ?? 0}
+                  yPos={node.position?.y ?? 0}
+                  isConnectable
+                  positionAbsoluteX={node.position?.x ?? 0}
+                  positionAbsoluteY={node.position?.y ?? 0}
+                />
+              </div>
+            );
+          })}
+          {edges.map((edge: any) => (
             <div
-              key={node.id}
-              data-testid="react-flow-node"
-              data-node-type={node.type}
-              data-node-draggable={node.draggable === undefined ? 'unset' : String(node.draggable)}
-              data-node-critical={String(Boolean(node.data?.isCritical))}
-              data-node-dimmed={String(Boolean(node.data?.isDimmed))}
-              data-node-focus-anchor={String(Boolean(node.data?.isFocusAnchor))}
-              data-node-focus-path={String(Boolean(node.data?.isFocusPath))}
-              data-node-focus-step={node.data?.focusStep ?? ''}
-              data-node-start-here={String(Boolean(node.data?.isFocusAnchor))}
-              data-node-focus-reason={node.data?.focusReason ?? ''}
-              data-node-style-opacity={node.style?.opacity === undefined ? 'unset' : String(node.style.opacity)}
-              data-node-style-z-index={node.style?.zIndex === undefined ? 'unset' : String(node.style.zIndex)}
-            >
-              <NodeComponent
-                id={node.id}
-                type={node.type}
-                data={node.data}
-                selected={false}
-                dragging={false}
-                zIndex={1}
-                xPos={node.position?.x ?? 0}
-                yPos={node.position?.y ?? 0}
-                isConnectable
-                positionAbsoluteX={node.position?.x ?? 0}
-                positionAbsoluteY={node.position?.y ?? 0}
-              />
-            </div>
-          );
-        })}
-        {edges.map((edge: any) => (
-          <div
-            key={edge.id}
-            data-testid="react-flow-edge"
-            data-edge-type={edge.type ?? 'default'}
-            data-edge-focus-path={String(Boolean(edge.data?.isFocusPath))}
-            data-edge-style-opacity={edge.style?.opacity === undefined ? 'unset' : String(edge.style.opacity)}
-            data-edge-style-stroke-width={edge.style?.strokeWidth === undefined ? 'unset' : String(edge.style.strokeWidth)}
-          />
-        ))}
-        {children}
-      </div>
-    ),
+              key={edge.id}
+              data-testid="react-flow-edge"
+              data-edge-type={edge.type ?? 'default'}
+              data-edge-focus-path={String(Boolean(edge.data?.isFocusPath))}
+              data-edge-style-opacity={edge.style?.opacity === undefined ? 'unset' : String(edge.style.opacity)}
+              data-edge-style-stroke-width={edge.style?.strokeWidth === undefined ? 'unset' : String(edge.style.strokeWidth)}
+            />
+          ))}
+          {children}
+        </div>
+      );
+    },
     Background: () => <div data-testid="react-flow-background" />,
     Controls: () => <div data-testid="react-flow-controls" />,
     MiniMap: () => <div data-testid="react-flow-minimap" />,
@@ -199,6 +210,10 @@ function renderGraphView({
 }
 
 describe('RequestFlowGraphView', () => {
+  beforeEach(() => {
+    reactFlowFitViewMock.mockClear();
+  });
+
   it('renders the shared empty state when there are no entries', () => {
     renderGraphView({ entries: [] });
 
@@ -289,6 +304,50 @@ describe('RequestFlowGraphView', () => {
     expect(screen.getByText(/shown/i)).toBeInTheDocument();
     expect(screen.queryByText('Legend')).not.toBeInTheDocument();
     expect(screen.queryByText('Request Flow Summary')).not.toBeInTheDocument();
+  });
+
+  it('lists failed requests as jump targets and opens the selected error in the analyzer', async () => {
+    const user = userEvent.setup();
+    const handleNodeClick = vi.fn();
+    const entries: Entry[] = [
+      makeEntry({
+        request: { ...makeEntry().request, url: 'https://portal.example.com/' },
+        response: { ...makeEntry().response, status: 200 },
+      }),
+      makeEntry({
+        startedDateTime: '2026-04-21T10:30:01.000Z',
+        request: { ...makeEntry().request, url: 'https://portal.example.com/api/orders?debug=true' },
+        response: { ...makeEntry().response, status: 500, statusText: 'Server Error' },
+      }),
+      makeEntry({
+        startedDateTime: '2026-04-21T10:30:02.000Z',
+        request: { ...makeEntry().request, url: 'https://cdn.example.com/missing-logo.png' },
+        response: { ...makeEntry().response, status: 404, statusText: 'Not Found' },
+      }),
+    ];
+
+    renderGraphView({ entries, onNodeClick: handleNodeClick });
+
+    expect(screen.getByLabelText('Failed request jump list')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /open error 500 \/api\/orders/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /open error 404 \/missing-logo\.png/i })).toBeInTheDocument();
+
+    reactFlowFitViewMock.mockClear();
+    await user.click(screen.getByRole('button', { name: /open error 500 \/api\/orders/i }));
+
+    expect(handleNodeClick).toHaveBeenCalledTimes(1);
+    expect(handleNodeClick).toHaveBeenCalledWith(entries[1]);
+    expect(reactFlowFitViewMock).toHaveBeenCalledWith({
+      nodes: [{ id: 'request-1' }],
+      padding: 0.62,
+      maxZoom: 1.12,
+      duration: 420,
+    });
+    expect(screen.getAllByTestId('react-flow-node').map((node) => node.getAttribute('data-node-error-selected'))).toEqual([
+      'false',
+      'true',
+      'false',
+    ]);
   });
 
   it('forwards node selection back to the analyzer callback', async () => {

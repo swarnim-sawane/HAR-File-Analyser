@@ -13,6 +13,7 @@ export interface RequestFlowNodePayload {
   isDimmed?: boolean;
   isFocusPath?: boolean;
   isFocusAnchor?: boolean;
+  isErrorJumpSelected?: boolean;
   focusLabel?: string;
   focusSeverity?: 'critical' | 'warning' | 'notice';
   focusStep?: number;
@@ -104,9 +105,9 @@ const renderNode = (
     ? `0 0 0 ${data.isFocusAnchor ? 3 : 2}px ${focusColor}33, 0 10px 28px ${focusColor}26`
     : options.shadow;
   const boxShadow = data.isCritical || data.isFocusPath
-    ? `0 0 0 2px ${data.isFocusPath ? `${focusColor}55` : options.highlightRing}, ${focusShadow}`
+    ? `0 0 0 2px ${data.isErrorJumpSelected ? '#dc262666' : data.isFocusPath ? `${focusColor}55` : options.highlightRing}, ${focusShadow}`
     : options.shadow;
-  const borderColor = data.isFocusPath ? focusColor : options.accent;
+  const borderColor = data.isErrorJumpSelected ? '#dc2626' : data.isFocusPath ? focusColor : options.accent;
   const traceBadge = getTraceBadge(data.traceRole, data.status);
   const badges = [
     ...(traceBadge ? [traceBadge] : []),
@@ -139,7 +140,7 @@ const renderNode = (
         padding: '12px 16px',
         borderRadius: '10px',
         background: options.surface || 'var(--bg-primary)',
-        border: `${data.isCritical || data.isFocusAnchor ? 2 : 1}px solid ${borderColor}`,
+        border: `${data.isCritical || data.isFocusAnchor || data.isErrorJumpSelected ? 2 : 1}px solid ${borderColor}`,
         minWidth: '220px',
         maxWidth: '220px',
         boxShadow,

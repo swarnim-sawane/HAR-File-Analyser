@@ -70,6 +70,25 @@ const parseHostname = (url: string) => {
   }
 };
 
+const getErrorJumpPathLabel = (url: string) => {
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname || '/';
+  } catch {
+    return url.split('?')[0] || url;
+  }
+};
+
+const compactPathLabel = (path: string, maxLength = 34) => {
+  if (path.length <= maxLength) return path;
+
+  const segments = path.split('/').filter(Boolean);
+  const lastSegment = segments[segments.length - 1];
+  if (lastSegment && lastSegment.length + 2 <= maxLength) return `/${lastSegment}`;
+
+  return `${path.slice(0, maxLength - 1)}…`;
+};
+
 function buildGraphElements(
   entries: Entry[],
   onEntrySelect?: (entryIndex: number) => void
@@ -241,6 +260,7 @@ const RequestFlowGraphView: React.FC<RequestFlowGraphViewProps> = ({
   const reactFlowInstanceRef = useRef<ReactFlowInstance | null>(null);
   const hasAutoFitFocusRef = useRef<string | null>(null);
   const [focusLikelyIssue, setFocusLikelyIssue] = useState(true);
+  const [selectedErrorNodeId, setSelectedErrorNodeId] = useState<string | null>(null);
 
   useEffect(() => {
     onNodeClickRef.current = onNodeClick;
@@ -259,6 +279,17 @@ const RequestFlowGraphView: React.FC<RequestFlowGraphViewProps> = ({
   const graphModel = useMemo(
     () => buildGraphElements(entries, handleEntrySelection),
     [entries, handleEntrySelection]
+  );
+  const errorJumpItems = useMemo(
+    () =>
+      entries
+        .map((entry, index) => ({
+          index,
+          status: entry.response.status,
+          pathLabel: compactPathLabel(getErrorJumpPathLabel(entry.request.url)),
+        }))
+        .filter((item) => item.status >= 400),
+    [entries]
   );
   const visibleRequestIndexes = useMemo(
     () => getVisibleRequestIndexes(entries, visibleEntries),
@@ -302,6 +333,10 @@ const RequestFlowGraphView: React.FC<RequestFlowGraphViewProps> = ({
     setNodes(graphModel.nodes);
     setEdges(graphModel.edges);
   }, [graphModel, setEdges, setNodes]);
+
+  useEffect(() => {
+    setSelectedErrorNodeId(null);
+  }, [entries]);
 
   useEffect(() => {
     if (!focusLikelyIssueActive || !focusPath || !reactFlowInstanceRef.current) return;
@@ -353,15 +388,31 @@ const RequestFlowGraphView: React.FC<RequestFlowGraphViewProps> = ({
     [onFiltersChange]
   );
 
+  const handleErrorJump = useCallback(
+    (entryIndex: number) => {
+      const nodeId = `request-${entryIndex}`;
+      setSelectedErrorNodeId(nodeId);
+      reactFlowInstanceRef.current?.fitView({
+        nodes: [{ id: nodeId }],
+        padding: 0.62,
+        maxZoom: 1.12,
+        duration: 420,
+      });
+      handleEntrySelection(entryIndex);
+    },
+    [handleEntrySelection]
+  );
+
   const renderedNodes = useMemo(
     () =>
       nodes.map((node) => {
         const isIssueFocused = focusLikelyIssueActive && Boolean(focusPath);
         const isFocusPath = isIssueFocused && focusNodeIdSet.has(node.id);
         const isFocusAnchor = isIssueFocused && node.id === focusAnchorNodeId;
+        const isErrorJumpSelected = selectedErrorNodeId === node.id;
         const matchesFlowVisibility = focusedNodeIdSet.has(node.id);
-        const isCritical = Boolean(isFocusPath);
-        const isDimmed = !matchesFlowVisibility || (isIssueFocused && !isFocusPath);
+        const isCritical = Boolean(isFocusPath || isErrorJumpSelected);
+        const isDimmed = !matchesFlowVisibility || (isIssueFocused && !isFocusPath && !isErrorJumpSelected);
 
         return {
           ...node,
@@ -371,6 +422,7 @@ const RequestFlowGraphView: React.FC<RequestFlowGraphViewProps> = ({
             isDimmed,
             isFocusPath,
             isFocusAnchor,
+            isErrorJumpSelected,
             focusLabel: focusAnchorLabel,
             focusSeverity: focusPath?.severity,
             focusStep: isFocusPath ? focusStepByNodeId.get(node.id) : undefined,
@@ -378,7 +430,7 @@ const RequestFlowGraphView: React.FC<RequestFlowGraphViewProps> = ({
           },
           style: {
             ...(node.style || {}),
-            zIndex: isFocusAnchor ? 3 : isFocusPath ? 2 : 1,
+            zIndex: isErrorJumpSelected ? 4 : isFocusAnchor ? 3 : isFocusPath ? 2 : 1,
           },
         };
       }),
@@ -392,6 +444,7 @@ const RequestFlowGraphView: React.FC<RequestFlowGraphViewProps> = ({
       focusedNodeIdSet,
       focusStepByNodeId,
       focusPrimaryReason,
+      selectedErrorNodeId,
     ]
   );
 
@@ -550,6 +603,32 @@ const RequestFlowGraphView: React.FC<RequestFlowGraphViewProps> = ({
                   {p90 ? <span> · p90 {p90.toFixed(0)}ms</span> : null}
                 </div>
               </div>
+
+              {errorJumpItems.length > 0 && (
+                <div className="request-flow-diagnostic-error-row" aria-label="Failed request jump list">
+                  <span className="request-flow-diagnostic-error-label">Errors</span>
+                  <div className="request-flow-diagnostic-error-list">
+                    {errorJumpItems.map((item) => {
+                      const nodeId = `request-${item.index}`;
+                      const selected = selectedErrorNodeId === nodeId;
+
+                      return (
+                        <button
+                          key={nodeId}
+                          type="button"
+                          className={`request-flow-diagnostic-error-chip ${selected ? 'is-selected' : ''}`}
+                          aria-pressed={selected}
+                          aria-label={`Open error ${item.status} ${item.pathLabel}`}
+                          onClick={() => handleErrorJump(item.index)}
+                        >
+                          <strong>{item.status}</strong>
+                          <span>{item.pathLabel}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               <label className="request-flow-diagnostic-search" htmlFor={searchInputId}>
                 <SearchIcon />
