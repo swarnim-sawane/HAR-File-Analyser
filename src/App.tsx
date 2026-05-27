@@ -16,6 +16,7 @@ import { storeRecentFile, clearRecentFiles } from './services/recentFilesStore';
 import HarCompare from './components/HarCompare';
 import HarSanitizer from './components/HarSanitizer';
 import DocumentationPage from './components/DocumentationPage';
+import McpDocumentationPage from './components/McpDocumentationPage';
 import { ArrowLeftIcon, CloseIcon, FileTextIcon, UploadIcon } from './components/Icons';
 import { applyTheme, resolveInitialTheme, ThemeMode } from './theme';
 import {
@@ -70,7 +71,7 @@ const SUPPORT_WORKBENCH_FILE_DIRECT_SYNC_LIMIT_BYTES = 256 * 1024 * 1024;
 const SUPPORT_WORKBENCH_ARCHIVE_DIRECT_SYNC_LIMIT_BYTES = 32 * 1024 * 1024;
 const SUPPORT_WORKBENCH_THEME_MESSAGE_TYPE = 'support-workbench:set-theme';
 
-type AppPath = '/' | '/docs';
+type AppPath = '/' | '/docs' | '/docs/mcp';
 type WorkspaceMode = 'analyzer' | 'support';
 type SupportUploadStatus = 'idle' | 'creating' | 'uploading' | 'ready' | 'error';
 type SupportSyncOptions = {
@@ -128,8 +129,11 @@ interface BasicFileTab {
   createdAt: number;
 }
 
-const normalizePathname = (pathname: string): AppPath =>
-  pathname === '/docs' || pathname === '/docs/' ? '/docs' : '/';
+const normalizePathname = (pathname: string): AppPath => {
+  if (pathname === '/docs/mcp' || pathname === '/docs/mcp/') return '/docs/mcp';
+  if (pathname === '/docs' || pathname === '/docs/') return '/docs';
+  return '/';
+};
 
 const buildSupportWorkbenchUrl = (baseUrl: string, sessionId: string | null, theme: ThemeMode): string => {
   try {
@@ -1135,7 +1139,8 @@ const App: React.FC = () => {
     };
   }, [isToolMenuOpen]);
 
-  const isDocsRoute = pathname === '/docs';
+  const isMcpDocsRoute = pathname === '/docs/mcp';
+  const isDocsRoute = pathname === '/docs' || isMcpDocsRoute;
   const canSwitchWorkspaces = !isDocsRoute && !showUnifiedUploader;
   const activeCaseFile =
     (activeCaseFileId ? caseFiles.find(file => file.id === activeCaseFileId) : null) ??
@@ -1144,11 +1149,15 @@ const App: React.FC = () => {
   const analyzerFileTabs = buildAnalyzerFileTabs(harTabs, logTabs, basicTabs);
   const openAnalyzerFilesLabel = `${analyzerFileTabs.length} file${analyzerFileTabs.length === 1 ? '' : 's'}`;
   const isAnalyzerToolActive = activeTool === 'har' || activeTool === 'console' || activeTool === 'basic';
-  const headerTitle = isDocsRoute
+  const headerTitle = isMcpDocsRoute
+    ? 'MCP Services'
+    : isDocsRoute
     ? 'Documentation'
     : 'Support Analyzer Workbench';
-  const headerSubtitle = isDocsRoute
-    ? 'Curated usage guide for HAR and console log analysis'
+  const headerSubtitle = isMcpDocsRoute
+    ? 'Setup guide for LLM clients and Support Analyzer MCP'
+    : isDocsRoute
+    ? 'Curated usage guide for Support Analyzer Workbench'
     : showUnifiedUploader
     ? 'Upload case files once for visual and AI diagnosis'
     : canSwitchWorkspaces && activeWorkspace === 'support'
@@ -1168,7 +1177,7 @@ const App: React.FC = () => {
       return;
     }
 
-    navigateTo(isDocsRoute ? '/' : '/docs');
+    navigateTo('/docs');
   };
 
   const handleWorkspaceChange = (workspace: WorkspaceMode) => {
@@ -1397,12 +1406,21 @@ const App: React.FC = () => {
       </header>
 
       <main className="main-content">
-        {isDocsRoute ? (
+        {isMcpDocsRoute ? (
+          <McpDocumentationPage
+            onBackToAnalyzer={() => {
+              setActiveWorkspace('analyzer');
+              navigateTo('/');
+            }}
+            onBackToDocs={() => navigateTo('/docs')}
+          />
+        ) : pathname === '/docs' ? (
           <DocumentationPage
             onBackToAnalyzer={() => {
               setActiveWorkspace('analyzer');
               navigateTo('/');
             }}
+            onOpenMcpServices={() => navigateTo('/docs/mcp')}
           />
         ) : (
           <>

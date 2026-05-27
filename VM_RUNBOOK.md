@@ -28,12 +28,14 @@ deployment. Do not reuse ports 3000, 4000, 4173, or 4317 for the experiment.
 | HAR experimental frontend | `har-exp-frontend` | 3100 | `/refresh/home/Downloads/har-analyzer-exp` |
 | HAR experimental backend | `har-exp-backend` | 4100 | `/refresh/home/Downloads/har-analyzer-exp/backend` |
 | HAR experimental worker | `har-exp-worker` | n/a | `/refresh/home/Downloads/har-analyzer-exp/backend` |
+| Support Analyzer MCP endpoint | `har-exp-backend` | 4100 | `http://10.65.39.163:4100/mcp` |
 | Support Workbench experimental frontend | `support-workbench-exp-frontend` | 4174 | `/refresh/home/Downloads/support-workbench-exp` |
 | Support Workbench experimental backend | `support-workbench-exp-backend` | 4318 | `/refresh/home/Downloads/support-workbench-exp/backend` |
 
 **Experimental UI URL:** `http://10.65.39.163:3100`
 **Experimental Workbench embed URL:** `http://10.65.39.163:4174/?embedded=1&theme=dark`
 **Experimental HAR backend URL:** `http://10.65.39.163:4100`
+**Experimental MCP URL:** `http://10.65.39.163:4100/mcp`
 **Experimental Workbench backend URL:** `http://10.65.39.163:4318`
 
 ### Source Branch
@@ -190,10 +192,69 @@ UPLOAD_DIR=/refresh/home/Downloads/har-analyzer-exp/runtime/uploads
 PROCESSED_DIR=/refresh/home/Downloads/har-analyzer-exp/runtime/processed
 CORS_ORIGIN=http://10.65.39.163:3100
 SUPPORT_WORKBENCH_API_URL=http://localhost:4318
+SUPPORT_ANALYZER_HAR_API_URL=http://localhost:4100
+SUPPORT_ANALYZER_UI_URL=http://10.65.39.163:3100
 QDRANT_URL=http://localhost:6333
 HTTPS_PROXY=http://www-proxy-phx.oraclecorp.com:80
 HTTP_PROXY=http://www-proxy-phx.oraclecorp.com:80
 NO_PROXY=localhost,127.0.0.1,10.65.39.163,celvpvm05798.us.oracle.com
+```
+
+### Experimental MCP Server
+
+The normal MCP access path is the VCAP-hosted HTTP endpoint exposed by
+`har-exp-backend`:
+
+```text
+http://10.65.39.163:4100/mcp
+```
+
+Engineers should configure the approved LLM client with that URL. They should
+not need to run a local MCP process for normal usage.
+
+The endpoint calls the experimental HAR backend on 4100 and the experimental
+Support Workbench backend on 4318. Workspace state is persisted through Redis so
+PM2 cluster workers can share MCP workspaces.
+
+HTTP smoke test after extracting backend artifacts and restarting
+`har-exp-backend`:
+
+```bash
+curl -s -X POST http://localhost:4100/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
+
+Expected response includes these tools:
+
+- `create_workspace`
+- `upload_evidence`
+- `list_evidence`
+- `analyze_evidence`
+- `search_evidence`
+- `inspect_evidence`
+- `ask_ai_diagnosis`
+- `generate_support_report`
+- `open_in_workbench`
+
+Example remote MCP client config for the experimental VM:
+
+```json
+{
+  "mcpServers": {
+    "support-analyzer-workbench": {
+      "url": "http://10.65.39.163:4100/mcp"
+    }
+  }
+}
+```
+
+The older stdio entry point still exists for maintainers who are debugging the
+MCP implementation directly:
+
+```bash
+cd /refresh/home/Downloads/har-analyzer-exp/backend
+node dist/mcp/server.js
 ```
 
 ### Experimental Verification

@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "nodemon --exec ts-node src/server.ts",
     "dev:worker": "nodemon --exec ts-node src/worker.ts",
+    "mcp": "ts-node src/mcp/server.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "start": "node dist/server.js",
+    "start:mcp": "node dist/mcp/server.js",
     "worker": "node dist/worker.js",
     "test": "vitest run",
     "test:watch": "vitest"

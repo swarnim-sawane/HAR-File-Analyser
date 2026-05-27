@@ -32,6 +32,9 @@ interface HarJobData {
   compressed?: string;
 }
 
+const MAX_HAR_PAYLOAD_TEXT_CHARS = 256 * 1024;
+const MONGO_TRUNCATION_REASON = 'mongo-document-size-limit';
+
 /**
  * Process HAR file: parse, store, and calculate stats
  * ✅ FIXED: No more memory accumulation
@@ -94,7 +97,7 @@ export async function processHarFile(data: HarJobData): Promise<void> {
       if (batchBuffer.length >= BATCH_SIZE) {
         const createdAt = new Date();
         const toInsert = batchBuffer.map(e => ({
-          ...e,
+          ...sanitizeHarEntryForMongo(e),
           fileId,
           createdAt
         }));
@@ -120,7 +123,7 @@ export async function processHarFile(data: HarJobData): Promise<void> {
     // Insert remaining entries
     if (batchBuffer.length > 0) {
       const toInsert = batchBuffer.map(e => ({
-        ...e,
+        ...sanitizeHarEntryForMongo(e),
         fileId,
         createdAt: new Date()
       }));
@@ -171,6 +174,53 @@ export async function processHarFile(data: HarJobData): Promise<void> {
     await updateFileStatus(fileId, 'error', { error: (error as Error).message });
     throw error;
   }
+}
+
+export function sanitizeHarEntryForMongo(entry: ParsedHarEntry): ParsedHarEntry {
+  return {
+    ...entry,
+    request: sanitizeHarRequest(entry.request),
+    response: sanitizeHarResponse(entry.response),
+  };
+}
+
+function sanitizeHarRequest(request: any): any {
+  if (!request || typeof request !== 'object') return request;
+
+  return {
+    ...request,
+    postData: truncateTextContainer(request.postData),
+  };
+}
+
+function sanitizeHarResponse(response: any): any {
+  if (!response || typeof response !== 'object') return response;
+
+  return {
+    ...response,
+    content: truncateTextContainer(response.content),
+  };
+}
+
+function truncateTextContainer(container: any): any {
+  if (!container || typeof container !== 'object' || typeof container.text !== 'string') {
+    return container;
+  }
+
+  if (container.text.length <= MAX_HAR_PAYLOAD_TEXT_CHARS) {
+    return container;
+  }
+
+  return {
+    ...container,
+    text: container.text.slice(0, MAX_HAR_PAYLOAD_TEXT_CHARS),
+    _truncated: {
+      field: 'text',
+      originalLength: container.text.length,
+      retainedLength: MAX_HAR_PAYLOAD_TEXT_CHARS,
+      reason: MONGO_TRUNCATION_REASON,
+    },
+  };
 }
 
 /**

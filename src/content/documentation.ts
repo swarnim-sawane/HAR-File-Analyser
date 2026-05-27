@@ -6,6 +6,136 @@ export interface DocumentationSection {
   icon: 'network' | 'console' | 'route' | 'shield' | 'sparkles' | 'globe';
 }
 
+export const mcpAccessGuide = {
+  eyebrow: 'LLM Integration',
+  title: 'Use the workbench from approved LLM clients',
+  lead:
+    'Connect ChatGPT, Claude, Codex, or an internal SR assistant to Support Analyzer MCP so the model can upload evidence, run deterministic analyzer tools, ask AI Diagnosis, and return deep links back into the visual workbench.',
+  actionLabel: 'Open MCP services',
+  flow: [
+    {
+      id: 'client',
+      label: 'Step 1',
+      title: 'LLM client',
+      body: 'The engineer starts in an approved MCP-capable assistant and asks it to inspect SR evidence.',
+      icon: 'client',
+    },
+    {
+      id: 'mcp',
+      label: 'Step 2',
+      title: 'Support Analyzer MCP',
+      body: 'The assistant calls curated tools for upload, search, inspection, reports, and AI Diagnosis.',
+      icon: 'mcp',
+    },
+    {
+      id: 'workbench',
+      label: 'Step 3',
+      title: 'Workbench evidence',
+      body: 'The result includes exact rows, log lines, report artifacts, and links back to Visual Analysis.',
+      icon: 'workbench',
+    },
+  ],
+  configSnippet: `{
+  "mcpServers": {
+    "support-analyzer-workbench": {
+      "url": "<mcp-endpoint>"
+    }
+  }
+}`,
+  setupNotes: [
+    'Use the VCAP MCP endpoint exposed by the experimental HAR backend.',
+    'Do not ask engineers to run a local MCP process for normal usage.',
+    'Use local stdio only when maintaining or testing the MCP implementation itself.',
+  ],
+  toolGroups: [
+    {
+      label: 'Evidence',
+      tools: ['create_workspace', 'upload_evidence', 'list_evidence'],
+    },
+    {
+      label: 'Exact lookup',
+      tools: ['analyze_evidence', 'search_evidence', 'inspect_evidence'],
+    },
+    {
+      label: 'Diagnosis',
+      tools: ['ask_ai_diagnosis', 'generate_support_report', 'open_in_workbench'],
+    },
+  ],
+  useCases: [
+    'SR bot uploads a customer ZIP, asks for first failure window, then links the visual workspace.',
+    'Engineer asks an LLM to search a HAR for 5xx requests and inspect the exact failing row.',
+    'Assistant generates a support handoff using analyzer evidence plus AI Diagnosis context.',
+  ],
+};
+
+export const mcpServiceGuide = {
+  eyebrow: 'MCP Services',
+  title: 'Support Analyzer MCP Service Access',
+  lead:
+    'Use this page when you want an approved LLM client to invoke Support Analyzer Workbench through the VCAP-hosted MCP endpoint. The endpoint gives the client controlled access to evidence upload, analyzer search, exact row inspection, AI Diagnosis, reports, and visual workbench deep links.',
+  serviceModel: [
+    {
+      label: 'How it runs',
+      value:
+        'The MCP endpoint is hosted by the experimental HAR backend on VCAP. Engineers configure one remote URL in the approved client.',
+    },
+    {
+      label: 'What it connects to',
+      value:
+        'It calls the HAR Analyzer backend for deterministic analysis and the Support Workbench backend for AI Diagnosis sessions.',
+    },
+    {
+      label: 'What users get',
+      value:
+        'The LLM can return exact evidence and also provide links back into the frontend workbench for visual inspection.',
+    },
+  ],
+  runtimeTargets: [
+    {
+      label: 'VCAP experimental deployment',
+      mcp: 'http://<vcap-host>:4100/mcp',
+      analyzer: 'http://<vcap-host>:4100',
+      workbench: 'http://<vcap-host>:4318',
+      ui: 'http://<vcap-host>:3100',
+      note: 'Use the VM host name or IP visible to the approved client. The MCP endpoint is the only URL engineers should normally configure.',
+    },
+  ],
+  primaryEndpoint: 'http://<vcap-host>:4100/mcp',
+  commandSnippet: `http://<vcap-host>:4100/mcp`,
+  clientConfigSnippet: mcpAccessGuide.configSnippet,
+  verifySnippet: `curl -s -X POST http://<vcap-host>:4100/mcp \\
+  -H "Content-Type: application/json" \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'`,
+  examples: [
+    'Upload this SR ZIP, list all evidence, and identify the first failure window with exact log lines.',
+    'Search the HAR for 5xx and slow requests, inspect the top failing row, then open it in the workbench.',
+    'Generate a support-ready summary from the uploaded HAR, screenshots, PDF, and Catalina logs.',
+  ],
+  troubleshooting: [
+    {
+      problem: 'The client cannot reach the MCP endpoint',
+      fix: 'Confirm the VCAP HAR backend is online and reachable at the configured /mcp URL. Use the backend port, not the frontend UI port.',
+    },
+    {
+      problem: 'Tools are listed but upload or analysis fails',
+      fix: 'Ask the VM owner to verify the experimental backend environment points at the matching HAR backend, Support Workbench backend, Redis, and MongoDB services.',
+    },
+    {
+      problem: 'AI Diagnosis session is missing files',
+      fix: 'Use list_evidence first, then upload_evidence for missing files. Remote clients should send inline files; large archives may need targeted child files or upload through the workbench UI.',
+    },
+    {
+      problem: 'The answer has conclusions without evidence',
+      fix: 'Ask the client to run search_evidence or inspect_evidence and cite file names, request URLs, statuses, timings, or log lines.',
+    },
+  ],
+  securityNotes: [
+    'Use only approved LLM clients and approved internal hosts.',
+    'Sanitize customer-sensitive HAR data before broad sharing.',
+    'Treat MCP output as evidence-assisted diagnosis, not a replacement for engineer review.',
+  ],
+};
+
 export const documentationIntro = {
   eyebrow: 'Product Guide',
   title: 'Support Analyzer Workbench Documentation',
@@ -27,6 +157,10 @@ export const documentationHighlights = [
   {
     label: 'Outcome',
     value: 'Clear evidence, likely root cause, next checks, report artifacts, and a cleaner handoff to product or operations teams.',
+  },
+  {
+    label: 'Automation',
+    value: 'MCP access lets approved LLM clients upload evidence, run analyzer searches, ask AI Diagnosis, and deep-link back to the visual workbench.',
   },
 ];
 

@@ -1365,12 +1365,39 @@ describe('App documentation navigation', () => {
     expect(screen.getByRole('navigation', { name: /documentation section navigation/i })).toBeInTheDocument();
   });
 
+  it('opens the dedicated MCP services page from documentation', async () => {
+    const user = userEvent.setup();
+    setPath('/docs');
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: /mcp access/i }));
+
+    expect(window.location.pathname).toBe('/docs/mcp');
+    expect(screen.getByRole('heading', { name: /support analyzer mcp service access/i })).toBeInTheDocument();
+    expect(screen.getByText(/remote VCAP service/i)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /available mcp services/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /docs index/i }));
+    expect(window.location.pathname).toBe('/docs');
+    expect(screen.getByRole('heading', { name: /support analyzer workbench documentation/i })).toBeInTheDocument();
+  });
+
+  it('renders the dedicated MCP services page directly', () => {
+    setPath('/docs/mcp');
+    render(<App />);
+
+    expect(screen.getByRole('heading', { name: /support analyzer mcp service access/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /copy client config/i })).toBeInTheDocument();
+    expect(screen.getByText(/vcap experimental deployment/i)).toBeInTheDocument();
+  });
+
   it('updates the docs hash and active nav item when a sidebar link is clicked', async () => {
     const user = userEvent.setup();
     setPath('/docs');
     render(<App />);
 
-    const targetLink = screen.getByRole('link', { name: /supported files and routing/i });
+    const docsNav = screen.getByRole('navigation', { name: /documentation section navigation/i });
+    const targetLink = within(docsNav).getByRole('link', { name: /supported files and routing/i });
     await user.click(targetLink);
 
     expect(window.location.hash).toBe('#supported-file-types');
@@ -1381,7 +1408,8 @@ describe('App documentation navigation', () => {
     setPath('/docs#supported-file-types');
     render(<App />);
 
-    expect(screen.getByRole('link', { name: /supported files and routing/i })).toHaveAttribute('aria-current', 'location');
+    const docsNav = screen.getByRole('navigation', { name: /documentation section navigation/i });
+    expect(within(docsNav).getByRole('link', { name: /supported files and routing/i })).toHaveAttribute('aria-current', 'location');
   });
 
   it('updates the visible page when browser history emits popstate', async () => {
@@ -1404,14 +1432,15 @@ describe('App documentation navigation', () => {
     setPath('/docs');
     render(<App />);
 
-    await user.click(screen.getByRole('link', { name: /supported files and routing/i }));
-    expect(screen.getByRole('link', { name: /supported files and routing/i })).toHaveAttribute('aria-current', 'location');
+    const docsNav = screen.getByRole('navigation', { name: /documentation section navigation/i });
+    await user.click(within(docsNav).getByRole('link', { name: /supported files and routing/i }));
+    expect(within(docsNav).getByRole('link', { name: /supported files and routing/i })).toHaveAttribute('aria-current', 'location');
 
     act(() => {
       setPath('/docs#what-this-product-is');
       window.dispatchEvent(new PopStateEvent('popstate'));
     });
 
-    expect(screen.getByRole('link', { name: /what this product is/i })).toHaveAttribute('aria-current', 'location');
+    expect(within(docsNav).getByRole('link', { name: /what this product is/i })).toHaveAttribute('aria-current', 'location');
   });
 });

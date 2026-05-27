@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { makeParsedEntry } from '../../test-utils/fixtures';
 import type { ParsedHarEntry } from '../../services/streamingParser';
+import { sanitizeHarEntryForMongo } from '../harProcessor';
 
 // ── Reference implementations of the private harProcessor functions ─────────
 // These mirror the logic in harProcessor.ts exactly.
@@ -189,5 +190,42 @@ describe('finalizeStats', () => {
     expect(result).toHaveProperty('domains');
     expect(result).toHaveProperty('contentTypes');
     expect(result).toHaveProperty('errors');
+  });
+});
+
+describe('sanitizeHarEntryForMongo', () => {
+  it('truncates huge HAR request and response payload text before Mongo insert', () => {
+    const hugeText = 'x'.repeat(18 * 1024 * 1024);
+    const entry = makeParsedEntry({
+      request: {
+        ...makeParsedEntry().request,
+        postData: {
+          mimeType: 'application/json',
+          text: hugeText,
+        },
+      },
+      response: {
+        ...makeParsedEntry().response,
+        content: {
+          size: hugeText.length,
+          mimeType: 'application/json',
+          text: hugeText,
+        },
+      },
+    });
+
+    const sanitized = sanitizeHarEntryForMongo(entry);
+
+    expect(sanitized.request.postData.text.length).toBeLessThan(hugeText.length);
+    expect(sanitized.response.content.text.length).toBeLessThan(hugeText.length);
+    expect(sanitized.request.postData._truncated).toMatchObject({
+      originalLength: hugeText.length,
+      reason: 'mongo-document-size-limit',
+    });
+    expect(sanitized.response.content._truncated).toMatchObject({
+      originalLength: hugeText.length,
+      reason: 'mongo-document-size-limit',
+    });
+    expect(Buffer.byteLength(JSON.stringify(sanitized), 'utf8')).toBeLessThan(2 * 1024 * 1024);
   });
 });

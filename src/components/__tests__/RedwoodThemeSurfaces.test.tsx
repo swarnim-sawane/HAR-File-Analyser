@@ -45,6 +45,10 @@ describe('Redwood theme surface smoke tests', () => {
     expect(document.documentElement.dataset.theme).toBe('redwood');
     expect(screen.getByRole('heading', { name: /support analyzer workbench documentation/i })).toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: /documentation section navigation/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /mcp access/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /mcp server/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /open mcp setup/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /product documentation/i })).toBeInTheDocument();
   });
 
   it('renders the compare workspace in Redwood mode for both upload and active views', async () => {
