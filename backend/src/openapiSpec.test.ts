@@ -59,7 +59,10 @@ describe('OpenAPI document', () => {
     expect(html).toContain('HAR File Analyzer API');
     expect(html).toContain('/openapi.json');
     expect(html).toContain('OCI automation');
-    expect(html).toContain('HAR Automation Quick Start');
+    expect(html).toContain('Enterprise quick start');
+    expect(html).toContain('Runtime And Data Handling Notes');
+    expect(html).toContain('Recommended Integration Flow');
+    expect(html).toContain('HAR Automation Workflow');
     expect(html).toContain('/api/v1/har/{fileId}/summary');
     expect(html).toContain('/api/v1/har/{fileId}/errors');
     expect(html).toContain('/api/v1/har/{fileId}/insights/context');

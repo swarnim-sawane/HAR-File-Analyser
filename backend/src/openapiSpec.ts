@@ -754,95 +754,292 @@ export function renderOpenApiDocsHtml(specUrl = '/openapi.json'): string {
     <style>
       :root {
         color-scheme: light;
-        --bg: #f5f7fb;
+        --bg: #f4f6f9;
         --panel: #ffffff;
-        --text: #172033;
-        --muted: #5d6678;
-        --line: #d9e0ea;
+        --panel-soft: #f9fafc;
+        --text: #111827;
+        --muted: #5f6b7a;
+        --subtle: #7a8493;
+        --line: #d8dee8;
+        --line-strong: #bcc7d6;
         --code-bg: #eef2f7;
-        --accent: #2558d4;
-        --ok: #0f7b4f;
-        --warn: #a45b00;
+        --accent: #1f5fbf;
+        --accent-soft: #e8f1ff;
+        --accent-strong: #174ea6;
+        --ok: #0b7a53;
+        --ok-soft: #e5f6ee;
+        --warn: #a25b00;
+        --warn-soft: #fff4df;
+        --danger: #b42318;
+        --danger-soft: #ffe8e5;
+        --ink: #0b1220;
       }
       * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
       body {
         margin: 0;
         background: var(--bg);
         color: var(--text);
-        font-family: Arial, sans-serif;
+        font-family: Arial, Helvetica, sans-serif;
         line-height: 1.5;
       }
-      main {
-        max-width: 1120px;
-        margin: 0 auto;
-        padding: 2.5rem 1.5rem 4rem;
+      a {
+        color: var(--accent);
+        text-decoration-thickness: 0.08em;
+        text-underline-offset: 0.16em;
       }
-      header {
-        margin-bottom: 1.5rem;
-      }
-      h1 {
-        margin: 0 0 0.5rem;
-        font-size: 2.2rem;
-        line-height: 1.1;
-      }
-      h2 {
-        margin: 0 0 0.85rem;
-        font-size: 1.35rem;
-      }
-      h3 {
-        margin: 1.1rem 0 0.45rem;
-        font-size: 1.05rem;
-      }
-      p {
-        margin: 0 0 0.9rem;
-      }
-      a { color: var(--accent); }
       code {
         background: var(--code-bg);
-        padding: 0.12rem 0.3rem;
-        border-radius: 4px;
+        padding: 0.12rem 0.32rem;
+        border-radius: 5px;
         font-size: 0.92em;
       }
       pre {
-        margin: 0.7rem 0 0;
+        margin: 0.85rem 0 0;
         padding: 1rem;
         overflow: auto;
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        background: #101723;
+        border: 1px solid #202a3a;
+        border-radius: 8px;
+        background: #0d1420;
         color: #f4f7fb;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
       }
       pre code {
         background: transparent;
         color: inherit;
         padding: 0;
       }
-      .lead {
-        max-width: 860px;
-        color: var(--muted);
+      .page {
+        max-width: 1280px;
+        margin: 0 auto;
+        padding: 2rem 1.5rem 4rem;
+      }
+      .hero {
+        position: relative;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background:
+          linear-gradient(135deg, rgba(31, 95, 191, 0.12), rgba(11, 122, 83, 0.08)),
+          var(--panel);
+        padding: 2rem;
+        margin-bottom: 1.25rem;
+      }
+      .hero:after {
+        content: "";
+        position: absolute;
+        inset: auto -2rem -5rem auto;
+        width: 18rem;
+        height: 18rem;
+        border: 1px solid rgba(31, 95, 191, 0.14);
+        border-radius: 50%;
+      }
+      .hero-content {
+        position: relative;
+        z-index: 1;
+        max-width: 920px;
+      }
+      .eyebrow {
+        margin: 0 0 0.65rem;
+        color: var(--accent-strong);
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      h1 {
+        margin: 0 0 0.5rem;
+        font-size: 2.55rem;
+        line-height: 1.1;
+        letter-spacing: 0;
+      }
+      h2 {
+        margin: 0 0 0.85rem;
+        font-size: 1.45rem;
+        letter-spacing: 0;
+      }
+      h3 {
+        margin: 1rem 0 0.45rem;
         font-size: 1.05rem;
+        letter-spacing: 0;
+      }
+      p { margin: 0 0 0.9rem; }
+      .lead {
+        color: var(--muted);
+        font-size: 1.08rem;
+        max-width: 900px;
+      }
+      .hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        margin-top: 1.2rem;
+      }
+      .button-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        min-height: 2.45rem;
+        padding: 0.56rem 0.78rem;
+        border: 1px solid var(--line-strong);
+        border-radius: 7px;
+        background: var(--panel);
+        color: var(--text);
+        font-weight: 700;
+        text-decoration: none;
+      }
+      .button-link.primary {
+        border-color: var(--accent);
+        background: var(--accent);
+        color: #fff;
+      }
+      .hero-metrics {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.8rem;
+        margin-top: 1.5rem;
+      }
+      .metric {
+        border: 1px solid rgba(31, 95, 191, 0.16);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.74);
+        padding: 0.85rem;
+      }
+      .metric span {
+        display: block;
+        color: var(--subtle);
+        font-size: 0.78rem;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+      .metric strong {
+        display: block;
+        margin-top: 0.2rem;
+        font-size: 1rem;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 250px minmax(0, 1fr);
+        gap: 1.25rem;
+        align-items: start;
+      }
+      .toc {
+        position: sticky;
+        top: 1rem;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--panel);
+        padding: 1rem;
+      }
+      .toc-title {
+        margin: 0 0 0.6rem;
+        color: var(--muted);
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .toc a {
+        display: block;
+        padding: 0.45rem 0.5rem;
+        border-radius: 6px;
+        color: var(--text);
+        font-size: 0.92rem;
+        text-decoration: none;
+      }
+      .toc a:hover {
+        background: var(--accent-soft);
+        color: var(--accent-strong);
       }
       .grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 1rem;
       }
+      .grid.three {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
       .panel {
         background: var(--panel);
         border: 1px solid var(--line);
-        border-radius: 8px;
-        padding: 1.25rem;
-        margin: 1rem 0;
+        border-radius: 10px;
+        padding: 1.35rem;
+        margin: 0 0 1rem;
       }
       .full {
         grid-column: 1 / -1;
       }
+      .callout {
+        border-left: 4px solid var(--accent);
+        background: var(--panel-soft);
+      }
+      .section-label {
+        margin: 0 0 0.35rem;
+        color: var(--accent-strong);
+        font-size: 0.78rem;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+      .flow {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 0.75rem;
+        margin-top: 1rem;
+      }
+      .flow-step {
+        position: relative;
+        min-height: 8.5rem;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: var(--panel-soft);
+        padding: 0.9rem;
+      }
+      .flow-step:not(:last-child):after {
+        content: "";
+        position: absolute;
+        top: 50%;
+        right: -0.75rem;
+        width: 0.75rem;
+        border-top: 2px solid var(--line-strong);
+      }
+      .flow-step span {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.75rem;
+        height: 1.75rem;
+        border-radius: 50%;
+        background: var(--accent);
+        color: #fff;
+        font-size: 0.85rem;
+        font-weight: 700;
+      }
+      .flow-step strong {
+        display: block;
+        margin-top: 0.65rem;
+      }
+      .flow-step p {
+        margin: 0.3rem 0 0;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+      .capability {
+        min-height: 9.25rem;
+      }
+      .capability strong {
+        display: block;
+        margin-bottom: 0.35rem;
+      }
+      .capability p {
+        color: var(--muted);
+        font-size: 0.94rem;
+      }
       .endpoint {
         display: grid;
-        grid-template-columns: 4.5rem 1fr;
-        gap: 0.6rem;
+        grid-template-columns: 4.7rem 1fr;
+        gap: 0.75rem;
         align-items: start;
-        padding: 0.7rem 0;
+        padding: 0.85rem 0;
         border-top: 1px solid var(--line);
       }
       .endpoint:first-of-type {
@@ -850,11 +1047,11 @@ export function renderOpenApiDocsHtml(specUrl = '/openapi.json'): string {
       }
       .method {
         display: inline-block;
-        min-width: 3.4rem;
-        padding: 0.18rem 0.35rem;
-        border-radius: 4px;
-        background: #e8f2ff;
-        color: #174ea6;
+        min-width: 3.6rem;
+        padding: 0.22rem 0.35rem;
+        border-radius: 5px;
+        background: var(--accent-soft);
+        color: var(--accent-strong);
         font-weight: 700;
         text-align: center;
         font-size: 0.82rem;
@@ -863,6 +1060,24 @@ export function renderOpenApiDocsHtml(specUrl = '/openapi.json'): string {
         color: var(--muted);
         font-size: 0.94rem;
       }
+      .pill-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+        margin: 0.7rem 0 0;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        min-height: 1.8rem;
+        padding: 0.24rem 0.55rem;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--panel-soft);
+        color: var(--muted);
+        font-size: 0.84rem;
+        font-weight: 700;
+      }
       .status {
         display: inline-block;
         margin-right: 0.45rem;
@@ -870,6 +1085,33 @@ export function renderOpenApiDocsHtml(specUrl = '/openapi.json'): string {
       }
       .status.ok { color: var(--ok); }
       .status.warn { color: var(--warn); }
+      .status.danger { color: var(--danger); }
+      .lifecycle {
+        display: grid;
+        gap: 0.75rem;
+      }
+      .lifecycle-item {
+        display: grid;
+        grid-template-columns: 6.8rem 1fr;
+        gap: 0.7rem;
+        align-items: start;
+        padding: 0.8rem;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel-soft);
+      }
+      .badge {
+        display: inline-flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 1.8rem;
+        border-radius: 999px;
+        font-weight: 700;
+        font-size: 0.82rem;
+      }
+      .badge.ok { background: var(--ok-soft); color: var(--ok); }
+      .badge.warn { background: var(--warn-soft); color: var(--warn); }
+      .badge.danger { background: var(--danger-soft); color: var(--danger); }
       .table {
         width: 100%;
         border-collapse: collapse;
@@ -886,6 +1128,11 @@ export function renderOpenApiDocsHtml(specUrl = '/openapi.json'): string {
         color: var(--muted);
         font-size: 0.88rem;
       }
+      .sample-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 1rem;
+      }
       .toolbar {
         display: flex;
         flex-wrap: wrap;
@@ -900,135 +1147,327 @@ export function renderOpenApiDocsHtml(specUrl = '/openapi.json'): string {
         border-radius: 6px;
         font: inherit;
       }
+      .link-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.6rem;
+      }
+      .link-list a {
+        display: inline-flex;
+        align-items: center;
+        min-height: 2rem;
+        padding: 0.32rem 0.55rem;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--panel-soft);
+        text-decoration: none;
+      }
+      .copy-button {
+        margin-top: 0.65rem;
+        min-height: 2.1rem;
+        padding: 0.38rem 0.62rem;
+        border: 1px solid var(--line-strong);
+        border-radius: 6px;
+        background: var(--panel);
+        color: var(--text);
+        cursor: pointer;
+        font-weight: 700;
+      }
+      .footer-note {
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+      @media (max-width: 1080px) {
+        .layout { grid-template-columns: 1fr; }
+        .toc { position: static; }
+        .flow { grid-template-columns: 1fr; }
+        .flow-step:not(:last-child):after { display: none; }
+        .hero-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
       @media (max-width: 760px) {
-        .grid { grid-template-columns: 1fr; }
-        main { padding: 1.5rem 1rem 3rem; }
+        .grid,
+        .grid.three,
+        .sample-grid,
+        .hero-metrics {
+          grid-template-columns: 1fr;
+        }
+        .page { padding: 1rem 0.85rem 3rem; }
+        .hero { padding: 1.25rem; }
+        h1 { font-size: 2rem; }
         input { min-width: 100%; }
+        .endpoint { grid-template-columns: 1fr; }
+        .lifecycle-item { grid-template-columns: 1fr; }
       }
     </style>
   </head>
   <body>
-    <main>
-      <header>
-        <h1>HAR File Analyzer API</h1>
-        <p class="lead">
-          Human-readable quick start for OCI automation and internal integration testing.
-          The full machine-readable OpenAPI 3.0 contract is available at
-          <a href="${specUrl}"><code>${specUrl}</code></a>.
-        </p>
+    <div class="page">
+      <header class="hero">
+        <div class="hero-content">
+          <p class="eyebrow">Internal Integration Documentation</p>
+          <h1>HAR File Analyzer API</h1>
+          <p class="lead">
+            Enterprise quick start for OCI automation, internal integration testing, and support diagnostics.
+            Use this page to understand the workflow, API lifecycle, stable v1 endpoints, response shape,
+            and operational guardrails. The full machine-readable OpenAPI 3.0 contract is available at
+            <a href="${specUrl}"><code>${specUrl}</code></a>.
+          </p>
+          <div class="hero-actions">
+            <a class="button-link primary" href="${specUrl}">Open OpenAPI JSON</a>
+            <a class="button-link" href="#workflow">View Workflow</a>
+            <a class="button-link" href="#smoke-test">Run Smoke Test</a>
+          </div>
+          <div class="hero-metrics" aria-label="API capabilities">
+            <div class="metric"><span>Contract</span><strong>OpenAPI 3.0.3</strong></div>
+            <div class="metric"><span>Automation</span><strong>Stable /api/v1 HAR endpoints</strong></div>
+            <div class="metric"><span>Upload</span><strong>Chunked, large-file capable</strong></div>
+            <div class="metric"><span>AI Resilience</span><strong>OCA with deterministic fallback</strong></div>
+          </div>
+        </div>
       </header>
 
-      <section class="panel">
-        <h2>What This API Provides</h2>
-        <p>
-          The backend exposes REST endpoints for upload, HAR processing status, HAR diagnostics,
-          console log diagnostics, sanitization, and AI-assisted analysis. OCI automation should use
-          the stable <code>/api/v1</code> HAR endpoints for summary, failed-request triage, and
-          backend-built AI context.
-        </p>
-      </section>
+      <div class="layout">
+        <nav class="toc" aria-label="Documentation sections">
+          <p class="toc-title">On this page</p>
+          <a href="#overview">Overview</a>
+          <a href="#workflow">Automation Workflow</a>
+          <a href="#capabilities">API Capabilities</a>
+          <a href="#services">Runtime Services</a>
+          <a href="#lifecycle">Status Lifecycle</a>
+          <a href="#endpoints">Stable HAR Endpoints</a>
+          <a href="#examples">Request And Response Examples</a>
+          <a href="#smoke-test">PowerShell Smoke Test</a>
+          <a href="#links">Clickable Test Links</a>
+          <a href="#operations">Operational Notes</a>
+          <a href="#oci">OCI Integration Notes</a>
+        </nav>
 
-      <section class="grid">
-        <div class="panel">
-          <h2>Required Local Services</h2>
-          <p>
-            For local development, run <code>npm run dev:all</code> from the project root to start all
-            three services together. The command is only a wrapper around the separate processes below.
-          </p>
-          <table class="table">
-            <thead>
-              <tr><th>Process</th><th>Command</th><th>Purpose</th></tr>
-            </thead>
-            <tbody>
-              <tr><td>Frontend</td><td><code>npm run dev</code></td><td>Browser UI on port <code>3000</code>.</td></tr>
-              <tr><td>Backend</td><td><code>npm run dev</code> from <code>backend</code></td><td>REST API on port <code>4000</code>.</td></tr>
-              <tr><td>Worker</td><td><code>npm run dev:worker</code> from <code>backend</code></td><td>Parses uploaded files into MongoDB.</td></tr>
-            </tbody>
-          </table>
-        </div>
+        <main>
+          <section id="overview" class="panel callout">
+            <p class="section-label">Overview</p>
+            <h2>What This API Provides</h2>
+            <p>
+              The backend exposes REST endpoints for upload, HAR processing status, HAR diagnostics,
+              console log diagnostics, sanitization, and AI-assisted analysis. OCI automation should use
+              the stable <code>/api/v1</code> HAR endpoints for summary, failed-request triage,
+              backend-built AI context, and one-call insight generation.
+            </p>
+            <div class="pill-row">
+              <span class="pill">HAR upload</span>
+              <span class="pill">Processing status</span>
+              <span class="pill">4xx/5xx triage</span>
+              <span class="pill">AI insights</span>
+              <span class="pill">Console logs</span>
+              <span class="pill">Sanitization</span>
+            </div>
+          </section>
 
-        <div class="panel">
-          <h2>Status Lifecycle</h2>
-          <p><span class="status warn">202 Accepted</span> means the file exists but is still processing. Poll status and retry.</p>
-          <p><span class="status ok">200 OK</span> means the file is ready and the endpoint returned diagnostic data.</p>
-          <p><code>404 File not found</code> means the <code>fileId</code> is unknown to the backend.</p>
-        </div>
-      </section>
+          <section id="workflow" class="panel">
+            <p class="section-label">Recommended Integration Flow</p>
+            <h2>HAR Automation Workflow</h2>
+            <p class="note">
+              This is the recommended flow for tools, scripts, or OCI automation that need to analyze a HAR without using the browser UI.
+            </p>
+            <div class="flow" aria-label="HAR automation workflow">
+              <div class="flow-step"><span>1</span><strong>Upload chunks</strong><p>Send file chunks to <code>/api/upload/chunk</code>.</p></div>
+              <div class="flow-step"><span>2</span><strong>Complete upload</strong><p>Call <code>/api/upload/complete</code> to assemble and queue the file.</p></div>
+              <div class="flow-step"><span>3</span><strong>Poll status</strong><p>Wait for <code>status: ready</code> before reading diagnostics.</p></div>
+              <div class="flow-step"><span>4</span><strong>Read evidence</strong><p>Fetch summary, failed requests, and AI context from <code>/api/v1</code>.</p></div>
+              <div class="flow-step"><span>5</span><strong>Generate insight</strong><p>Call <code>POST /api/v1/har/{fileId}/insights</code>.</p></div>
+            </div>
+          </section>
 
-      <section class="panel">
-        <h2>HAR Automation Quick Start</h2>
-        <ol>
-          <li>Upload the HAR through the UI or with <code>POST /api/upload/chunk</code> and <code>POST /api/upload/complete</code>.</li>
-          <li>Keep the worker running so the file is parsed into MongoDB.</li>
-          <li>Poll <code>GET /api/har/{fileId}/status</code> until <code>status</code> is <code>ready</code>.</li>
-          <li>Call the stable v1 endpoints below for automation output.</li>
-        </ol>
+          <section id="capabilities" class="grid three">
+            <div class="panel capability">
+              <h2>Diagnostic Scope</h2>
+              <strong>Network evidence, not raw JSON reading</strong>
+              <p>Summaries prioritize status buckets, 4xx/5xx requests, slow requests, domains, methods, and timing metrics.</p>
+            </div>
+            <div class="panel capability">
+              <h2>AI-Assisted Analysis</h2>
+              <strong>Context built by backend</strong>
+              <p>Automation clients do not need to recreate frontend logic. The backend builds bounded diagnostic context from stored entries.</p>
+            </div>
+            <div class="panel capability">
+              <h2>Fallback Behavior</h2>
+              <strong>Useful output when OCA is unavailable</strong>
+              <p>If AI fails or returns unusable output, the API returns conservative deterministic findings instead of failing the whole workflow.</p>
+            </div>
+          </section>
 
-        <div class="endpoint">
-          <span class="method">GET</span>
-          <div>
-            <code>/api/v1/har/{fileId}/summary</code>
-            <div class="note">Compact diagnostic summary: request count, errors, status buckets, top domains, and timing metrics.</div>
-          </div>
-        </div>
-        <div class="endpoint">
-          <span class="method">GET</span>
-          <div>
-            <code>/api/v1/har/{fileId}/errors</code>
-            <div class="note">Paginated 4xx/5xx request list for support triage. Empty array is valid when the HAR has no HTTP errors.</div>
-          </div>
-        </div>
-        <div class="endpoint">
-          <span class="method">GET</span>
-          <div>
-            <code>/api/v1/har/{fileId}/insights/context</code>
-            <div class="note">Backend-built AI context that prioritizes 5xx, then 4xx, then slow requests.</div>
-          </div>
-        </div>
-        <div class="endpoint">
-          <span class="method">POST</span>
-          <div>
-            <code>/api/v1/har/{fileId}/insights</code>
-            <div class="note">One-call insight generation for a processed HAR. Returns OCA output when available, otherwise deterministic fallback findings.</div>
-          </div>
-        </div>
-      </section>
+          <section id="services" class="grid">
+            <div class="panel">
+              <h2>Required Local Services</h2>
+              <p>
+                For local development, run <code>npm run dev:all</code> from the project root to start all
+                three services together. The command is a wrapper around the separate processes below.
+              </p>
+              <table class="table">
+                <thead>
+                  <tr><th>Process</th><th>Command</th><th>Purpose</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>Frontend</td><td><code>npm run dev</code></td><td>Browser UI on port <code>3000</code>.</td></tr>
+                  <tr><td>Backend</td><td><code>npm run dev</code> from <code>backend</code></td><td>REST API on port <code>4000</code>.</td></tr>
+                  <tr><td>Worker</td><td><code>npm run dev:worker</code> from <code>backend</code></td><td>Parses uploaded files into MongoDB.</td></tr>
+                </tbody>
+              </table>
+            </div>
 
-      <section class="panel">
-        <h2>PowerShell Smoke Test</h2>
-        <p class="note">Replace the sample value with a file ID from a fresh upload that has reached <code>status: ready</code>.</p>
-        <pre><code>$fileId = "file_1779708244860_pgj5w9e3m"
+            <div id="lifecycle" class="panel">
+              <h2>Status Lifecycle</h2>
+              <div class="lifecycle">
+                <div class="lifecycle-item">
+                  <span class="badge warn">202 Accepted</span>
+                  <div>File exists but is still processing. Poll status and retry the automation endpoint.</div>
+                </div>
+                <div class="lifecycle-item">
+                  <span class="badge ok">200 OK</span>
+                  <div>File is ready and the endpoint returned diagnostic data.</div>
+                </div>
+                <div class="lifecycle-item">
+                  <span class="badge danger">404 Not Found</span>
+                  <div>The <code>fileId</code> is unknown to the backend or has been removed by cleanup.</div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section id="endpoints" class="panel">
+            <p class="section-label">Stable Automation Surface</p>
+            <h2>HAR v1 Endpoints</h2>
+            <p class="note">These endpoints are the preferred integration surface after upload and processing are complete.</p>
+
+            <div class="endpoint">
+              <span class="method">GET</span>
+              <div>
+                <code>/api/v1/har/{fileId}/summary</code>
+                <div class="note">Compact diagnostic summary: request count, error count, status buckets, top domains, methods, and timing metrics.</div>
+              </div>
+            </div>
+            <div class="endpoint">
+              <span class="method">GET</span>
+              <div>
+                <code>/api/v1/har/{fileId}/errors</code>
+                <div class="note">Paginated 4xx/5xx request list for support triage. Empty array is valid when the HAR has no HTTP errors.</div>
+              </div>
+            </div>
+            <div class="endpoint">
+              <span class="method">GET</span>
+              <div>
+                <code>/api/v1/har/{fileId}/insights/context</code>
+                <div class="note">Backend-built AI context that prioritizes 5xx, then 4xx, then slow requests and keeps prompt size bounded.</div>
+              </div>
+            </div>
+            <div class="endpoint">
+              <span class="method">POST</span>
+              <div>
+                <code>/api/v1/har/{fileId}/insights</code>
+                <div class="note">One-call insight generation for a processed HAR. Returns OCA output when available, otherwise deterministic fallback findings.</div>
+              </div>
+            </div>
+          </section>
+
+          <section id="examples" class="panel">
+            <p class="section-label">Examples</p>
+            <h2>Request And Response Shape</h2>
+            <div class="sample-grid">
+              <div>
+                <h3>Poll status</h3>
+                <pre><code>GET /api/har/file_1779708244860_pgj5w9e3m/status</code></pre>
+                <pre><code>{
+  "fileId": "file_1779708244860_pgj5w9e3m",
+  "status": "ready",
+  "totalEntries": 8
+}</code></pre>
+              </div>
+              <div>
+                <h3>Generate insight</h3>
+                <pre><code>POST /api/v1/har/file_1779708244860_pgj5w9e3m/insights</code></pre>
+                <pre><code>{
+  "fileId": "file_...",
+  "sourceType": "har",
+  "result": {
+    "overallHealth": "warning",
+    "summary": "Diagnostic summary",
+    "sections": []
+  },
+  "ai": {
+    "source": "oca"
+  }
+}</code></pre>
+              </div>
+            </div>
+            <p class="note">
+              If OCA is unavailable, <code>ai.source</code> can be <code>deterministic_fallback</code>.
+              That means the API returned rule-based diagnostic findings instead of failing the request.
+            </p>
+          </section>
+
+          <section id="smoke-test" class="panel">
+            <p class="section-label">Validation</p>
+            <h2>PowerShell Smoke Test</h2>
+            <p class="note">Replace the sample value with a file ID from a fresh upload that has reached <code>status: ready</code>.</p>
+            <pre id="smokeCode"><code>$fileId = "file_1779708244860_pgj5w9e3m"
 
 Invoke-RestMethod "http://localhost:4000/api/har/$fileId/status"
 Invoke-RestMethod "http://localhost:4000/api/v1/har/$fileId/summary"
 Invoke-RestMethod "http://localhost:4000/api/v1/har/$fileId/errors"
 Invoke-RestMethod "http://localhost:4000/api/v1/har/$fileId/insights/context"
 Invoke-RestMethod "http://localhost:4000/api/v1/har/$fileId/insights" -Method Post</code></pre>
-      </section>
+            <button class="copy-button" type="button" data-copy-target="smokeCode">Copy smoke test</button>
+          </section>
 
-      <section class="panel">
-        <h2>Clickable V1 Links</h2>
-        <p class="note">Paste a processed HAR <code>fileId</code> to generate local test links.</p>
-        <div class="toolbar">
-          <input id="fileIdInput" value="file_1779708244860_pgj5w9e3m" aria-label="HAR file ID" />
-          <a id="statusLink" href="#">status</a>
-          <a id="summaryLink" href="#">summary</a>
-          <a id="errorsLink" href="#">errors</a>
-          <a id="contextLink" href="#">insights context</a>
-        </div>
-      </section>
+          <section id="links" class="panel">
+            <p class="section-label">Interactive Links</p>
+            <h2>Clickable V1 Links</h2>
+            <p class="note">Paste a processed HAR <code>fileId</code> to generate local test links.</p>
+            <div class="toolbar">
+              <input id="fileIdInput" value="file_1779708244860_pgj5w9e3m" aria-label="HAR file ID" />
+              <div class="link-list">
+                <a id="statusLink" href="#">status</a>
+                <a id="summaryLink" href="#">summary</a>
+                <a id="errorsLink" href="#">errors</a>
+                <a id="contextLink" href="#">insights context</a>
+              </div>
+            </div>
+          </section>
 
-      <section class="panel">
-        <h2>Integration Notes For OCI</h2>
-        <ul>
-          <li>Use <code>${specUrl}</code> as the OpenAPI import/discovery contract.</li>
-          <li>Use <code>/api/v1</code> endpoints for stable automation responses.</li>
-          <li>Use <code>POST /api/v1/har/{fileId}/insights</code> when AI output is required from an already processed HAR.</li>
-          <li>Use <code>/api/ai/insights</code> directly only when the integration needs to supply its own context string.</li>
-          <li>Confirm the deployment access model before exposing the API outside trusted internal networks.</li>
-        </ul>
-      </section>
-    </main>
+          <section id="operations" class="panel">
+            <p class="section-label">Operational Readiness</p>
+            <h2>Runtime And Data Handling Notes</h2>
+            <table class="table">
+              <thead>
+                <tr><th>Area</th><th>Expectation</th><th>Why It Matters</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Chunk size</td><td>Use 8 MB client-side chunks.</td><td>Keeps uploads below the server multipart limit.</td></tr>
+                <tr><td>Worker</td><td>Keep the worker running with memory flags in deployed environments.</td><td>Uploads complete only after the worker parses files into MongoDB.</td></tr>
+                <tr><td>Retention</td><td>Run cleanup in dry-run mode before deleting artifacts.</td><td>Large HAR files can consume disk quickly.</td></tr>
+                <tr><td>AI dependency</td><td>Expect OCA output when available and fallback findings when unavailable.</td><td>Automation receives usable diagnostics even during AI outages.</td></tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section id="oci" class="panel">
+            <p class="section-label">OCI Integration</p>
+            <h2>Integration Notes For OCI</h2>
+            <ul>
+              <li>Use <code>${specUrl}</code> as the OpenAPI import and discovery contract.</li>
+              <li>Use <code>/api/v1</code> endpoints for stable automation responses.</li>
+              <li>Use <code>POST /api/v1/har/{fileId}/insights</code> when AI output is required from an already processed HAR.</li>
+              <li>Use <code>/api/ai/insights</code> directly only when the integration needs to supply its own context string.</li>
+              <li>Confirm the deployment access model before exposing the API outside trusted internal networks.</li>
+              <li>Validate expected file sizes, processing duration, queue depth, and disk retention values in the target OCI/CEL environment.</li>
+            </ul>
+            <p class="footer-note">
+              This page is intentionally human-readable. Automation should import the machine-readable contract from
+              <a href="${specUrl}"><code>${specUrl}</code></a>.
+            </p>
+          </section>
+        </main>
+      </div>
+    </div>
     <script>
       const input = document.getElementById('fileIdInput');
       const links = {
@@ -1047,6 +1486,21 @@ Invoke-RestMethod "http://localhost:4000/api/v1/har/$fileId/insights" -Method Po
 
       input.addEventListener('input', updateLinks);
       updateLinks();
+
+      document.querySelectorAll('[data-copy-target]').forEach(function (button) {
+        button.addEventListener('click', async function () {
+          const target = document.getElementById(button.getAttribute('data-copy-target'));
+          const text = target ? target.innerText : '';
+          try {
+            await navigator.clipboard.writeText(text);
+            button.textContent = 'Copied';
+            setTimeout(function () { button.textContent = 'Copy smoke test'; }, 1400);
+          } catch {
+            button.textContent = 'Copy unavailable';
+            setTimeout(function () { button.textContent = 'Copy smoke test'; }, 1400);
+          }
+        });
+      });
     </script>
   </body>
 </html>`;
