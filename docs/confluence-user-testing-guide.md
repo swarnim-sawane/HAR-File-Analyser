@@ -1,20 +1,20 @@
-# HAR File Analyzer - One Page Validation, OpenAPI, And Testing Guide
+# HAR File Analyzer - Validation, OpenAPI, And Testing Guide
 
-## 1. Purpose Of This Page
+## 1. Purpose
 
-This is the single Confluence page to share with cross-functional reviewers, support engineers, developers, and OCI automation reviewers for testing the HAR File Analyzer.
+The HAR File Analyzer validation guide is intended for cross-functional reviewers, support engineers, developers, and OCI automation reviewers.
 
-The page explains:
+This guide covers:
 
 - What the tool provides.
 - How to access the deployed VM environment.
 - How to validate the browser UI.
 - How to validate the REST/OpenAPI API without using the UI.
-- What evidence testers should capture.
+- What evidence to capture during validation.
 - What counts as pass, partial pass, or fail.
 - Known limitations and operational notes.
 
-All test instructions below use the deployed VM URLs. Testers should not use local development URLs unless they are part of the core development team and intentionally running a local isolated environment.
+Shared validation uses the deployed VM URLs. Local development URLs are out of scope for this guide.
 
 ---
 
@@ -56,9 +56,9 @@ At the end of testing, reviewers should be able to decide one of the following:
 | Proceed with OCI/API evaluation only | REST/OpenAPI flows are ready for integration review, even if UI feedback remains open |
 | Hold for fixes | Core upload, processing, summary, or insight flows fail repeatedly |
 
-### Key Links To Highlight In Confluence
+### Key Links
 
-Place these links near the top of the Confluence page so reviewers do not have to search for them:
+The following links are the primary entry points for validation and integration review:
 
 | Link | Purpose |
 |---|---|
@@ -67,7 +67,7 @@ Place these links near the top of the Confluence page so reviewers do not have t
 | `http://10.65.39.163:4000/openapi.json` | Machine-readable OpenAPI contract for automation integration |
 | `http://10.65.39.163:4000/health` | Quick backend availability check |
 
-For the API review, the most important human-readable page is `http://10.65.39.163:4000/api-docs`. The most important integration artifact for OCI is `http://10.65.39.163:4000/openapi.json`.
+For API review, the human-readable page is `http://10.65.39.163:4000/api-docs`. The machine-readable integration artifact is `http://10.65.39.163:4000/openapi.json`.
 
 ---
 
@@ -84,9 +84,9 @@ Use these URLs over VPN.
 | Human-readable API docs | `http://10.65.39.163:4000/api-docs` | Developers and OCI reviewers |
 | OpenAPI contract | `http://10.65.39.163:4000/openapi.json` | Machine-readable integration contract |
 
-Do not paste the full OpenAPI JSON into Confluence. Link to `openapi.json` so automation users always receive the live contract.
+The OpenAPI JSON is provided as a live contract so automation users always reference the current API surface.
 
-Important:
+Environment notes:
 
 - Use the VM URLs above for shared testing.
 - Do not send testers to local development URLs.
@@ -887,25 +887,3 @@ POST /api/ai/chat
 ```
 
 ---
-
-## 24. Final Recommendation For Confluence
-
-Use this as the primary Confluence page:
-
-```text
-HAR File Analyzer - One Page Validation, OpenAPI, And Testing Guide
-```
-
-For most users, this one page is enough. Link to the live API documentation at:
-
-```text
-http://10.65.39.163:4000/api-docs
-```
-
-Link to the machine-readable OpenAPI contract at:
-
-```text
-http://10.65.39.163:4000/openapi.json
-```
-
-Keep VM operations and deployment recovery steps separate and restricted to maintainers, because those notes contain operational commands and environment-specific details.
