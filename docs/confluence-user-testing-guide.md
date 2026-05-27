@@ -1,250 +1,297 @@
-# HAR File Analyzer - User Testing Guide
+# HAR File Analyzer - One Page Validation, OpenAPI, And Testing Guide
 
-## Executive Summary For Reviewers
+## 1. Purpose Of This Page
 
-This page explains how to validate the HAR File Analyzer through both the browser UI and REST/OpenAPI endpoints. The testing objective is to confirm that different users can upload diagnostic files, identify the most relevant failure signals, review AI-assisted findings, and capture clear evidence for support or automation workflows.
+This is the single Confluence page to share with managers, support engineers, developers, and OCI automation reviewers for testing the HAR File Analyzer.
 
-For managers and business reviewers, focus on sections 1 through 6, section 8, and section 9. For support engineers, include the Analyzer, AI Insights, Request Flow, Console Log, and Compare scenarios. For developers and OCI automation reviewers, also complete section 7 and the technical appendix.
+The page explains:
 
-| Review area | What to confirm |
+- What the tool provides.
+- How to access the deployed VM environment.
+- How to validate the browser UI.
+- How to validate the REST/OpenAPI API without using the UI.
+- What evidence testers should capture.
+- What counts as pass, partial pass, or fail.
+- Known limitations and operational notes.
+
+All test instructions below use the deployed VM URLs. Testers should not use local development URLs unless they are part of the core development team and intentionally running a local isolated environment.
+
+---
+
+## 2. Executive Summary
+
+The HAR File Analyzer is an internal diagnostic tool that helps support and engineering teams analyze browser HAR files, console logs, failed network requests, session/authentication issues, and performance symptoms without manually reading raw HAR JSON.
+
+The tool now also exposes REST/OpenAPI endpoints so automation flows, including OCI workflows, can upload diagnostic files, poll processing status, retrieve summaries and failed-request evidence, and generate AI-assisted insights programmatically.
+
+| Area | What This Validates |
 |---|---|
-| Business value | A tester can move from uploaded file to clear diagnostic summary without reading raw HAR JSON |
-| Support usability | 4xx, 5xx, slow requests, auth/session symptoms, and request sequence issues are easy to isolate |
-| Safety | The redaction/sanitization step appears before analysis and sensitive fields are handled intentionally |
-| Automation readiness | REST endpoints and OpenAPI contract support upload, status polling, summaries, errors, and AI insights |
-| Operational readiness | Large files, worker processing, AI fallback, and retention expectations are documented and testable |
+| Business value | A tester can move from uploaded file to a clear diagnostic explanation faster than manual HAR review |
+| Support workflow | 4xx, 5xx, auth/session, stale-session, and performance symptoms can be isolated and explained |
+| OpenAPI readiness | API users can discover endpoints, upload files, poll status, and retrieve structured output |
+| AI resilience | AI insights work when OCA is available, with deterministic fallback when AI is unavailable |
+| Operational readiness | Large-file upload, worker processing, retention, and API behavior are documented and testable |
 
-Recommended outcome for this test cycle: collect feedback on usability, correctness of diagnostic findings, API integration fit, and any operational gaps before broader rollout.
+Recommended result of this testing cycle: confirm that the tool is usable by non-technical reviewers, useful for support engineers, and ready for OCI API evaluation with clear remaining gaps documented.
 
-## 1. Purpose
+---
 
-This guide explains how to test the HAR File Analyzer as an end user, support engineer, manager, or technical reviewer.
+## 3. Deployed Environment
 
-The goal of testing is to confirm that the tool can:
+Use these URLs over VPN.
 
-- Upload and process HAR files.
-- Protect sensitive information through the redaction workflow.
-- Help users find relevant 4xx, 5xx, session, and performance signals.
-- Generate AI-assisted diagnostic insight.
-- Validate request sequence through Request Flow.
-- Analyze browser console logs.
-- Compare two HAR files.
-- Expose REST/OpenAPI endpoints for automation.
+| Surface | URL | Used By |
+|---|---|---|
+| Browser UI | `http://10.65.39.163:3000` | Managers, support engineers, general testers |
+| Browser UI hostname | `http://celvpvm05798.us.oracle.com:3000` | Same UI through hostname |
+| Backend API base URL | `http://10.65.39.163:4000` | API testers, OCI automation reviewers |
+| Health check | `http://10.65.39.163:4000/health` | Quick API availability check |
+| Human-readable API docs | `http://10.65.39.163:4000/api-docs` | Developers and OCI reviewers |
+| OpenAPI contract | `http://10.65.39.163:4000/openapi.json` | Machine-readable integration contract |
 
-This page is written for mixed audiences. The first sections are suitable for non-technical testers. The later sections provide REST API and validation details for developers and OCI automation reviewers.
+Do not paste the full OpenAPI JSON into Confluence. Link to `openapi.json` so automation users always receive the live contract.
 
-## 2. Access
+---
 
-Use the deployed internal URL over VPN:
-
-```text
-http://10.65.39.163:3000
-```
-
-Hostname URL:
+## 4. System At A Glance
 
 ```text
-http://celvpvm05798.us.oracle.com:3000
+Tester / OCI Flow
+      |
+      v
+Browser UI or REST API
+      |
+      v
+Backend API on VM :4000
+      |
+      +--> Redis queue and pub/sub
+      |
+      +--> Worker parses HAR / console logs
+      |
+      +--> MongoDB stores file metadata and parsed entries
+      |
+      +--> OCA / AI service generates diagnostic insights when available
 ```
 
-Backend health check:
-
-```text
-http://10.65.39.163:4000/health
-```
-
-OpenAPI documentation:
-
-```text
-http://10.65.39.163:4000/api-docs
-```
-
-Machine-readable OpenAPI contract:
-
-```text
-http://10.65.39.163:4000/openapi.json
-```
-
-## 3. Who Should Test What
-
-| Tester type | Recommended focus |
+| Component | Role |
 |---|---|
-| Managers / reviewers | Upload flow, redaction screen, AI Insights, Request Flow, summary value, ease of use |
-| Support engineers | Analyzer filters, 4xx/5xx triage, request details, stale session/auth diagnosis, Request Flow validation |
-| Developers | REST upload, OpenAPI contract, processing status, v1 automation endpoints, large file behavior |
-| OCI automation reviewers | `/openapi.json`, `/api/v1/har/{fileId}/summary`, `/api/v1/har/{fileId}/errors`, `/api/v1/har/{fileId}/insights`, response shape, polling behavior |
-| Security/data reviewers | Redaction workflow, retention cleanup behavior, sensitive data handling expectations |
+| Frontend UI | Uploads files, shows Analyzer, AI Insights, Request Flow, Console Log Analyzer, Compare, and Sanitizer |
+| Backend API | Handles upload, status, OpenAPI, HAR APIs, console log APIs, sanitization, AI insights, and AI chat |
+| Worker | Parses uploaded HAR/console log files and stores structured entries |
+| MongoDB | Stores file metadata, HAR entries, console log entries, and derived statistics |
+| Redis | Queue, upload progress, status tracking, and pub/sub events |
+| OCA/AI | Generates AI-assisted diagnostic summaries when token and connectivity are available |
 
-## 4. Recommended Test Files
+---
 
-Use non-production or approved diagnostic files only.
+## 5. Who Should Test What
+
+| Tester Type | Recommended Sections |
+|---|---|
+| Managers / reviewers | Sections 6, 7, 8, 14, 15 |
+| Support engineers | Sections 6, 7, 8, 9, 10, 14, 15 |
+| Developers | Sections 9 through 18 |
+| OCI automation reviewers | Sections 10 through 18 |
+| Security/data reviewers | Sections 7, 8, 14, 16, 17 |
+
+For a short business review, complete the UI checklist and capture screenshots. For an API readiness review, complete the REST/OpenAPI tests.
+
+---
+
+## 6. Recommended Test Files
+
+Use approved non-production diagnostic files.
 
 Recommended files:
 
 - HAR with authentication or session issue.
 - HAR with at least one 4xx or 5xx request.
 - HAR with performance symptoms, such as slow page load or slow API response.
+- Large HAR file, only if the testing owner has approved stress testing.
 - Two HAR files from similar flows for Compare testing.
-- Browser console log containing an ORDS/CORS error, for example missing `Access-Control-Allow-Origin`.
-
-Do not upload customer-sensitive files unless the testing owner has approved the data handling path.
-
-## 5. Quick Test Checklist
-
-Use this section for a 15 to 20 minute validation.
-
-| Step | Action | Expected result |
-|---|---|---|
-| 1 | Open the UI | Home/upload screen loads |
-| 2 | Upload a HAR file | Upload progress starts and redaction/sanitization screen appears |
-| 3 | Continue from redaction | Main HAR workspace opens |
-| 4 | Open Analyzer | Request table, filters, and status-code filter are visible |
-| 5 | Select 4xx or 5xx filter | Failed requests are easier to isolate |
-| 6 | Open one failed request | Request details panel shows URL, method, status, timings, headers/body where available |
-| 7 | Open AI Insights | Executive summary and findings are generated |
-| 8 | Open Request Flow | Journey or flow view shows the request sequence |
-| 9 | Open Scorecard | High-level performance/security signals are visible |
-| 10 | Upload console log if available | Console log analyzer parses entries and highlights errors/warnings |
-| 11 | Try Compare with two HAR files | Differences in requests/timings/errors are visible |
-
-Testing passes when the user can move from upload to a clear diagnostic explanation without reading raw HAR JSON.
-
-For a non-technical validation round, stop after this checklist and submit feedback using section 9. For a support or developer validation round, continue with the detailed scenarios below.
-
-## 6. Detailed UI Test Scenarios
-
-### Scenario A: Basic HAR Upload And Analysis
-
-1. Open the tool.
-2. Upload a HAR file.
-3. Confirm that the redaction/sanitization screen appears before analysis.
-4. Proceed to the HAR workspace.
-5. Confirm that the HAR tab name matches the uploaded file.
-6. Open the Analyzer tab.
-7. Confirm that the request table is populated.
-8. Use the left-side HTTP status filter.
-9. Select `4xx` or `5xx` if available.
-10. Open a request from the filtered list.
-11. Confirm that request details show useful evidence such as method, URL, response status, timings, and request/response sections.
-
-Expected result:
-
-- The HAR is processed successfully.
-- The user can isolate relevant failed requests.
-- Request details help explain what failed.
-
-Evidence to capture:
-
-- Screenshot of the redaction/sanitization screen.
-- Screenshot of the Analyzer table after applying a status filter.
-- Screenshot of one request details panel.
-
-### Scenario B: Authentication Or Session Issue
-
-Use this when the customer symptom is sign-in, sign-out, authorization, or stale session behavior.
-
-1. Upload the HAR.
-2. Go to Analyzer.
-3. Filter by `4xx`.
-4. Look for `401`, `403`, or auth-related `404` requests.
-5. Open one of the failed requests.
-6. Review URL, status, and timing.
-7. Go to AI Insights.
-8. Check whether AI Insights identifies auth, session, IDCS, stale session, or sign-out sequence symptoms.
-9. Go to Request Flow.
-10. Validate whether the request sequence supports the AI finding.
-
-Expected result:
-
-- 4xx requests are easy to locate.
-- AI Insights should not focus only on successful 2xx traffic when auth failures exist.
-- Request Flow helps validate the sequence around sign-in or sign-out.
-
-Evidence to capture:
-
-- Filtered Analyzer view showing 4xx requests.
-- Request details for one representative auth/session-related request.
-- AI Insights finding that explains whether this appears to be auth, session, IDCS, stale session, or sign-out related.
-- Request Flow view showing the sequence around the failure.
-
-### Scenario C: Performance Issue
-
-1. Upload the HAR.
-2. Open Analyzer.
-3. Sort or filter by timing if available.
-4. Open slow requests.
-5. Review timing breakdown, especially wait/TTFB and total time.
-6. Open Scorecard.
-7. Review performance recommendations.
-8. Open Request Flow to see whether the slow request is isolated or part of a chain.
-
-Expected result:
-
-- Slow requests are visible.
-- The tool distinguishes failed requests from successful but slow requests.
-- The user can explain whether the issue appears network-side, server-side, or sequence-related.
-
-Evidence to capture:
-
-- Slowest request or timing view.
-- Scorecard/performance signal.
-- Request Flow view if the slow request is part of a larger sequence.
-
-### Scenario D: Console Log Analysis
-
-Use this when there is a browser console log or copied browser error output.
-
-1. Open the console log upload/analyzer area.
-2. Upload the console log.
-3. Confirm that log entries are parsed.
-4. Filter by error or warning.
-5. Look for ORDS/CORS evidence such as:
+- Browser console log containing ORDS/CORS evidence, for example:
 
 ```text
-Access-Control-Allow-Origin header is missing
+Access-Control-Allow-Origin header is missing from ORDS
 preflight request failed
 blocked by CORS policy
 TypeError: Failed to fetch
 ```
 
-6. Open Console Log AI Insights.
+Do not upload customer-sensitive files unless the testing owner has approved the data handling path.
+
+---
+
+## 7. UI Validation Checklist
+
+Use this for a 15 to 20 minute business/support validation.
+
+| Step | Action | Expected Result |
+|---|---|---|
+| 1 | Open `http://10.65.39.163:3000` | Upload/home screen loads |
+| 2 | Upload a HAR file | Upload progress starts |
+| 3 | Review redaction/sanitization step | Sensitive data workflow appears before analysis |
+| 4 | Continue to workspace | HAR workspace opens and tab name matches file |
+| 5 | Open Analyzer | Request table and filters are visible |
+| 6 | Select 4xx or 5xx filter | Failed requests are isolated |
+| 7 | Open a failed request | Request details show method, URL, status, timing, and headers/body where available |
+| 8 | Open AI Insights | Executive summary and findings are generated |
+| 9 | Open Request Flow | Request sequence is visible |
+| 10 | Open Scorecard | High-level quality/performance/security signals are visible |
+| 11 | Upload console log if available | Console Log Analyzer parses and highlights errors/warnings |
+| 12 | Try Compare with two HAR files | Differences in requests, failures, or timings are visible |
+
+Testing passes when the user can move from upload to a clear diagnostic explanation without reading raw HAR JSON.
+
+---
+
+## 8. UI Test Scenarios
+
+### Scenario A - Basic HAR Upload
+
+1. Open the UI.
+2. Upload a HAR file.
+3. Confirm that redaction/sanitization appears before analysis.
+4. Continue to the HAR workspace.
+5. Open Analyzer.
+6. Confirm that the request table is populated.
+7. Apply a status-code filter.
+8. Open one request and review details.
+
+Expected result:
+
+- HAR is processed successfully.
+- Request details are understandable.
+- A non-technical reviewer can explain the high-level issue or confirm that deeper support review is needed.
+
+Evidence to capture:
+
+- Redaction screen screenshot.
+- Analyzer screenshot after filter.
+- Request details screenshot.
+
+### Scenario B - Authentication Or Session Issue
+
+Use when the customer symptom is sign-in, sign-out, authorization, IDCS, or stale session behavior.
+
+1. Upload the HAR.
+2. Open Analyzer.
+3. Filter by `4xx`.
+4. Look for `401`, `403`, or auth-related `404` requests.
+5. Open a representative failed request.
+6. Go to AI Insights.
+7. Check whether AI identifies auth/session/stale-session/sign-out symptoms.
+8. Go to Request Flow and validate the sequence.
+
+Expected result:
+
+- 4xx requests are easy to locate.
+- AI Insights does not get distracted by successful 2xx traffic when auth failures exist.
+- Request Flow supports or challenges the AI finding.
+
+Evidence to capture:
+
+- Filtered 4xx Analyzer view.
+- Failed request details.
+- AI Insights finding.
+- Request Flow sequence.
+
+### Scenario C - Performance Issue
+
+1. Upload the HAR.
+2. Open Analyzer.
+3. Sort or filter by timing if available.
+4. Open slow requests.
+5. Review wait/TTFB and total timing.
+6. Open Scorecard.
+7. Review Request Flow to check whether the slow request is isolated or part of a chain.
+
+Expected result:
+
+- Slow requests are visible.
+- Tool distinguishes failed requests from successful but slow requests.
+- Tester can explain whether the issue appears request-specific or sequence-related.
+
+### Scenario D - Console Log Analysis
+
+1. Open Console Log Analyzer.
+2. Upload a browser console log.
+3. Filter by error or warning.
+4. Look for CORS/ORDS/preflight evidence.
+5. Open Console Log AI Insights.
 
 Expected result:
 
 - ORDS/CORS issues are classified as high-priority evidence.
-- The tool should identify missing `Access-Control-Allow-Origin` or failed preflight behavior as an ORDS/proxy CORS issue, not only as a generic JavaScript error.
+- Missing `Access-Control-Allow-Origin` or failed preflight behavior is not treated only as a generic JavaScript error.
 
-Evidence to capture:
+### Scenario E - Compare Two HAR Files
 
-- Console log error list filtered to errors/warnings.
-- Console Log AI Insights result for the ORDS/CORS issue.
-
-### Scenario E: Compare Two HAR Files
-
-Use this when testing before/after, working/failing, UAT/production, or normal/incognito sessions.
+Use this for before/after, working/failing, UAT/production, or normal/incognito comparisons.
 
 1. Open Compare.
-2. Load the baseline HAR.
-3. Load the comparison HAR.
-4. Review request differences.
-5. Look for added failures, missing requests, timing changes, and new domains.
+2. Load baseline HAR.
+3. Load comparison HAR.
+4. Review added failures, missing requests, timing changes, and new domains.
 
 Expected result:
 
-- The user can explain what changed between two captures.
-- Regressions are easier to identify than by manually comparing files.
+- Tester can explain what changed between two captures.
 
-Evidence to capture:
+---
 
-- Compare view showing added, missing, slower, or newly failing requests.
+## 9. OpenAPI Overview
 
-## 7. REST API Testing For Technical Users
+The backend exposes a machine-readable OpenAPI 3.0.3 contract.
 
-The UI uses REST APIs behind the scenes. Automation users can test the same backend without using the UI.
+| Endpoint | Purpose |
+|---|---|
+| `GET /api-docs` | Human-readable API documentation page |
+| `GET /openapi.json` | Machine-readable OpenAPI 3.0.3 contract |
+| `GET /health` | Backend availability check |
 
-Use this section when the tester wants to validate the backend directly, without relying on the browser UI. The upload flow is intentionally chunked because real HAR files can be larger than a single safe request payload.
+Full URLs:
 
-### Health And OpenAPI
+```text
+http://10.65.39.163:4000/api-docs
+http://10.65.39.163:4000/openapi.json
+http://10.65.39.163:4000/health
+```
+
+For OCI, `openapi.json` should be treated as the contract. The human-readable `/api-docs` page is for quick onboarding and manual validation.
+
+---
+
+## 10. REST/OpenAPI Test Flow
+
+Use this flow when testing the API without the UI.
+
+```text
+1. Check backend health
+2. Check OpenAPI contract
+3. Upload HAR file in chunks
+4. Complete upload
+5. Poll processing status
+6. Fetch HAR summary
+7. Fetch failed requests
+8. Fetch AI context
+9. Generate AI insights
+10. Capture response evidence
+```
+
+Important behavior:
+
+- Upload is chunked because HAR files can be large.
+- Recommended chunk size is 8 MB.
+- Server rejects chunks above the configured upload limit.
+- Worker must be running for status to reach `ready`.
+- API consumers should poll until `ready` before calling final analysis endpoints.
+
+---
+
+## 11. API Test 1 - Health And OpenAPI Contract
+
+Run from PowerShell:
 
 ```powershell
 $baseUrl = "http://10.65.39.163:4000"
@@ -255,12 +302,25 @@ Invoke-RestMethod "$baseUrl/openapi.json"
 
 Expected:
 
-- `/health` returns `status: ok`.
+- `/health` returns a healthy status.
 - `/openapi.json` returns an OpenAPI `3.0.3` document.
+- The contract includes `/api/v1/har/{fileId}/summary`, `/errors`, `/insights/context`, and `/insights`.
 
-### REST-Only HAR Upload
+Optional quick check:
 
-Use chunked upload. The backend rejects chunks larger than 12 MB, so an 8 MB chunk size is recommended.
+```powershell
+$spec = Invoke-RestMethod "$baseUrl/openapi.json"
+$spec.openapi
+$spec.paths.PSObject.Properties.Name | Select-String "/api/v1/har"
+```
+
+---
+
+## 12. API Test 2 - REST-Only HAR Upload
+
+Use this when a tester wants to upload a HAR only through APIs.
+
+Update `$filePath` to point to the HAR file on the tester's machine.
 
 ```powershell
 $baseUrl = "http://10.65.39.163:4000"
@@ -318,9 +378,21 @@ Invoke-RestMethod "$baseUrl/api/upload/complete" `
   -Method Post `
   -ContentType "application/json" `
   -Body $body
+
+Write-Host "Use this fileId for the next steps: $fileId"
 ```
 
-### Poll Processing Status
+Expected:
+
+- Each chunk upload returns success.
+- Complete upload returns success and a job identifier.
+- `$fileId` is printed and should be reused for status and analysis calls.
+
+---
+
+## 13. API Test 3 - Poll Processing Status
+
+After upload completion, poll until status is `ready`.
 
 ```powershell
 do {
@@ -332,15 +404,19 @@ do {
 
 Expected statuses:
 
-| Status | Meaning |
-|---|---|
-| `processing` / `parsing` / `analyzing` | Worker is still processing the file |
-| `ready` | File is ready for analysis |
-| `error` | Processing failed |
+| Status | Meaning | Tester Action |
+|---|---|---|
+| `processing`, `parsing`, or `analyzing` | Worker is still processing | Continue polling |
+| `ready` | File is ready for API analysis | Continue to v1 endpoints |
+| `error` | Processing failed | Capture response and report issue |
 
-Continue only after the status is `ready`.
+Do not call final diagnostic endpoints until status is `ready`.
 
-### Call Automation Endpoints
+---
+
+## 14. API Test 4 - HAR Automation Endpoints
+
+Run after the file reaches `ready`.
 
 ```powershell
 Invoke-RestMethod "$baseUrl/api/v1/har/$fileId/summary"
@@ -349,14 +425,36 @@ Invoke-RestMethod "$baseUrl/api/v1/har/$fileId/insights/context"
 Invoke-RestMethod "$baseUrl/api/v1/har/$fileId/insights" -Method Post
 ```
 
-Expected:
+Expected output:
 
-- `summary` returns total requests, errors, status buckets, top domains, methods, and timing summary.
-- `errors` returns paginated 4xx/5xx requests.
-- `insights/context` returns the backend-built context used for AI.
-- `insights` returns structured diagnostic output.
+| Endpoint | Expected Result |
+|---|---|
+| `GET /api/v1/har/{fileId}/summary` | Request count, error count, status buckets, top domains, methods, timing summary |
+| `GET /api/v1/har/{fileId}/errors` | Paginated 4xx/5xx entries, or empty result when no errors exist |
+| `GET /api/v1/har/{fileId}/insights/context` | Bounded backend-built diagnostic context |
+| `POST /api/v1/har/{fileId}/insights` | Structured AI or fallback diagnostic result |
 
-The `insights` response includes:
+Example `summary` shape:
+
+```json
+{
+  "fileId": "file_...",
+  "fileName": "sample.har",
+  "status": "ready",
+  "summary": {
+    "totalRequests": 120,
+    "errors": 5,
+    "errorRate": 4.17,
+    "statusBuckets": {
+      "2xx": 100,
+      "4xx": 4,
+      "5xx": 1
+    }
+  }
+}
+```
+
+Example `insights` shape:
 
 ```json
 {
@@ -364,7 +462,7 @@ The `insights` response includes:
   "sourceType": "har",
   "result": {
     "overallHealth": "warning",
-    "summary": "...",
+    "summary": "Diagnostic summary",
     "sections": []
   },
   "ai": {
@@ -379,46 +477,161 @@ If OCA is unavailable, `ai.source` can be:
 deterministic_fallback
 ```
 
-That is not automatically a test failure. It means the backend returned conservative rule-based findings instead of failing the entire diagnostic request.
+That is not automatically a test failure. It means the backend returned conservative rule-based findings instead of failing the diagnostic request.
 
-### Optional Developer Regression Scripts
+---
 
-These scripts are intended for local or controlled technical validation where MongoDB, Redis, backend, and worker test services are available. They are not required for a manager-led UI test.
+## 15. API Test 5 - Console Log Upload And Validation
 
-```powershell
-$env:OPENAPI_TEST_BASE_URL = "http://localhost:4200"
-npm run test:openapi:endpoints
-```
+Use this when testing browser console logs through REST APIs.
 
-For stress testing, start with a smaller profile before using a large file profile:
+Upload uses the same chunk endpoints, but `fileType` should be `log`.
 
 ```powershell
-$env:STRESS_BASE_URL = "http://localhost:4200"
-$env:STRESS_SIZE_MB = "128"
-$env:STRESS_ENTRIES = "25000"
-$env:STRESS_STREAM_UPLOAD = "1"
-npm run test:openapi:stress
+$baseUrl = "http://10.65.39.163:4000"
+$filePath = "C:\path\to\browser-console.log"
+$fileName = Split-Path $filePath -Leaf
+$fileId = "file_" + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+$chunkSize = 8MB
+$fileInfo = Get-Item $filePath
+$totalChunks = [Math]::Ceiling($fileInfo.Length / $chunkSize)
+
+$inputStream = [System.IO.File]::OpenRead($filePath)
+try {
+  for ($i = 0; $i -lt $totalChunks; $i++) {
+    $buffer = New-Object byte[] $chunkSize
+    $bytesRead = $inputStream.Read($buffer, 0, $chunkSize)
+    $chunkPath = Join-Path $env:TEMP "$fileId`_chunk_$i"
+    $outputStream = [System.IO.File]::Create($chunkPath)
+    try {
+      $outputStream.Write($buffer, 0, $bytesRead)
+    } finally {
+      $outputStream.Close()
+    }
+
+    curl.exe -X POST "$baseUrl/api/upload/chunk" `
+      -F "fileId=$fileId" `
+      -F "chunkIndex=$i" `
+      -F "totalChunks=$totalChunks" `
+      -F "chunk=@$chunkPath;filename=$fileName.part$i"
+
+    Remove-Item $chunkPath -Force
+  }
+} finally {
+  $inputStream.Close()
+}
+
+$body = @{
+  fileId = $fileId
+  totalChunks = $totalChunks
+  fileName = $fileName
+  fileType = "log"
+} | ConvertTo-Json
+
+Invoke-RestMethod "$baseUrl/api/upload/complete" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body $body
 ```
 
-Only run 1 GB stress profiles when the machine has enough disk, memory, and time budget for a long-running test.
+Poll status:
 
-## 8. Expected Test Evidence To Capture
+```powershell
+do {
+  $status = Invoke-RestMethod "$baseUrl/api/console-log/$fileId/status"
+  $status
+  Start-Sleep -Seconds 2
+} while ($status.status -ne "ready" -and $status.status -ne "error")
+```
+
+Read console log output:
+
+```powershell
+Invoke-RestMethod "$baseUrl/api/console-log/$fileId/stats"
+Invoke-RestMethod "$baseUrl/api/console-log/$fileId/entries?levels=error&limit=25"
+Invoke-RestMethod "$baseUrl/api/console-log/$fileId/search?search=ORDS"
+```
+
+Expected:
+
+- Console log status reaches `ready`.
+- Errors and warnings are parsed.
+- ORDS/CORS evidence can be searched and reviewed.
+
+---
+
+## 16. Negative And Edge Case Tests
+
+These tests confirm error handling.
+
+| Test | Command / Action | Expected Result |
+|---|---|---|
+| Unknown HAR file | `Invoke-RestMethod "$baseUrl/api/v1/har/file_missing/summary"` | `404 File not found` |
+| Invalid file ID | Use path-like value such as `../bad` | `400 Invalid fileId` |
+| Missing chunks | Call upload complete before chunk upload | `400 Missing chunks` |
+| Oversized chunk | Upload chunk above server limit | `413 Upload chunk too large` |
+| Processing file | Call v1 endpoint before status is ready | `202 Accepted` or processing response |
+| No-error HAR | Use HAR with only 2xx responses | Summary succeeds, errors endpoint returns empty list |
+| AI unavailable | OCA token expired/unavailable | Summary/errors still work; insights may return fallback or clear AI failure behavior |
+
+When a negative test fails, capture:
+
+- Full command used.
+- Full response body.
+- Timestamp.
+- File ID, if applicable.
+
+---
+
+## 17. Large File And Performance Testing
+
+Large-file testing should be planned because it can consume disk, worker memory, queue time, and MongoDB storage.
+
+Recommended staged approach:
+
+| Stage | File Size | Purpose |
+|---|---:|---|
+| Small | Less than 20 MB | Basic upload, processing, and endpoint behavior |
+| Medium | 100 MB to 250 MB | Chunking, queue behavior, response timing |
+| Large | 1 GB, only with approval | Stress behavior and operational sizing |
+| High-entry | Many small entries | MongoDB insert and pagination behavior |
+
+For large files, verify:
+
+- Upload completes with 8 MB chunks.
+- Processing reaches `ready`.
+- Summary endpoint remains responsive.
+- Errors endpoint supports pagination.
+- AI context remains bounded.
+- Worker does not repeatedly restart.
+- Disk usage remains acceptable.
+
+Do not run repeated large tests without confirming retention cleanup and available disk space.
+
+---
+
+## 18. Evidence Capture Checklist
 
 For every test round, capture:
 
-- Tester name.
-- Date and time.
-- Tool URL used.
-- File type tested: HAR, console log, compare pair, API upload.
-- File size.
-- Whether upload succeeded.
-- Whether processing reached `ready`.
-- Key tab or endpoint tested.
-- Screenshot or copied response for any issue.
-- Whether AI output was `oca` or `deterministic_fallback`.
-- Any confusing UI behavior or unexpected result.
+| Evidence | Required? |
+|---|---|
+| Tester name | Yes |
+| Date and time | Yes |
+| Tool URL used | Yes |
+| File type tested: HAR, console log, compare pair, API upload | Yes |
+| File size | Yes |
+| File ID for API tests | Yes |
+| Upload result | Yes |
+| Processing status result | Yes |
+| Screenshot for UI issue | Yes, if UI issue |
+| API response body for API issue | Yes, if API issue |
+| Whether AI source was `oca` or `deterministic_fallback` | Yes, for AI test |
+| Business impact | Yes, for defects |
 
-## 9. Feedback Template
+---
+
+## 19. Feedback Template
 
 Use this format when reporting feedback:
 
@@ -428,6 +641,7 @@ Date:
 Tool URL:
 File type:
 File size:
+File ID:
 Scenario tested:
 
 Result:
@@ -447,77 +661,131 @@ Low / Medium / High
 Suggested improvement:
 ```
 
-## 10. Known Limitations During Testing
+---
 
-- Access control is still expected to be finalized before wider enterprise exposure.
-- OCA tokens can expire. If AI fails but summary/errors still work, ask the tool owner to refresh the backend token.
-- Very large HAR files need chunked upload. Single payload upload can fail if the file exceeds the 12 MB chunk limit.
-- The worker must be running. If files stay in processing, check the worker service.
-- AI output should support diagnosis, not replace engineer review.
-- Retention cleanup is configurable, but should be run in dry-run mode before deleting test artifacts.
-- The current API is intended for trusted internal testing. Wider OCI exposure should align on authentication, retention, and data handling policy first.
-
-## 11. Pass Criteria
+## 20. Pass Criteria
 
 The testing cycle is successful if:
 
 - Non-technical users can upload a HAR and understand the high-level issue.
 - Support engineers can filter and inspect failed requests quickly.
-- AI Insights gives useful, evidence-backed guidance or deterministic fallback.
-- Request Flow helps validate sequence-related findings.
+- Authentication/session/performance symptoms can be traced through Analyzer, AI Insights, and Request Flow.
 - Console log analysis identifies high-priority browser issues such as ORDS/CORS.
-- REST/OpenAPI users can upload, poll, summarize, list errors, and generate insights without using the UI.
+- REST/OpenAPI users can upload, poll, summarize, list errors, build AI context, and generate insights without using the UI.
+- The OpenAPI contract is reachable and contains the required automation endpoints.
+- Known limitations are documented rather than hidden.
 
-## 12. Technical Appendix
+---
 
-### Main UI URL
+## 21. Known Limitations During Testing
+
+- Access control is still expected to be finalized before wider enterprise exposure.
+- The current API is intended for trusted internal testing.
+- OCA tokens can expire. If AI fails but summary/errors still work, ask the tool owner to refresh the backend token.
+- Very large HAR files must use chunked upload.
+- Worker process must be running. If files stay in processing, the worker service needs to be checked.
+- AI output should support diagnosis, not replace engineer review.
+- Retention cleanup is configurable, but dry-run should be reviewed before deleting test artifacts.
+- OCI exposure should align on authentication, retention, and data handling policy before broader rollout.
+
+---
+
+## 22. Troubleshooting
+
+| Symptom | Likely Cause | What To Check |
+|---|---|---|
+| UI does not load | Frontend process unavailable or VPN issue | Open `http://10.65.39.163:3000` again and confirm VPN |
+| API health fails | Backend unavailable | Check `http://10.65.39.163:4000/health` |
+| Upload succeeds but status never becomes ready | Worker issue or queue backlog | Report file ID and timestamp |
+| API returns `404 File not found` | Wrong file ID or cleanup removed file | Recheck file ID from upload response |
+| API returns `413 Upload chunk too large` | Chunk size too large | Use 8 MB chunk size |
+| AI insights fail but summary works | OCA token/connectivity issue | Capture response and ask owner to refresh token |
+| Console log search returns no ORDS/CORS entry | Log file may not contain relevant text or parser did not classify it | Search manually for `ORDS`, `CORS`, `Access-Control-Allow-Origin`, or `preflight` |
+
+---
+
+## 23. OpenAPI Endpoint Reference
+
+Main discovery:
 
 ```text
-http://10.65.39.163:3000
-```
-
-### Main Backend URL
-
-```text
-http://10.65.39.163:4000
-```
-
-### OpenAPI
-
-```text
-GET /openapi.json
+GET /health
 GET /api-docs
+GET /openapi.json
 ```
 
-### Main REST Flow
+Upload:
 
 ```text
 POST /api/upload/chunk
 POST /api/upload/complete
-GET  /api/har/{fileId}/status
+GET  /api/upload/progress/{fileId}
+```
+
+HAR status and UI-backed data:
+
+```text
+GET /api/har/{fileId}/status
+GET /api/har/{fileId}/entries
+GET /api/har/{fileId}/entries/{index}
+GET /api/har/{fileId}/stats
+GET /api/har/{fileId}/search
+```
+
+Stable HAR automation endpoints:
+
+```text
 GET  /api/v1/har/{fileId}/summary
 GET  /api/v1/har/{fileId}/errors
 GET  /api/v1/har/{fileId}/insights/context
 POST /api/v1/har/{fileId}/insights
 ```
 
-### Recommended Technical Validation Commands
+Console log:
 
-For local or controlled technical validation, use:
-
-```powershell
-$env:OPENAPI_TEST_BASE_URL = "http://localhost:4200"
-npm run test:openapi:endpoints
-
-$env:STRESS_BASE_URL = "http://localhost:4200"
-$env:STRESS_SIZE_MB = "128"
-$env:STRESS_ENTRIES = "25000"
-$env:STRESS_STREAM_UPLOAD = "1"
-npm run test:openapi:stress
+```text
+GET /api/console-log/{fileId}/status
+GET /api/console-log/{fileId}/entries
+GET /api/console-log/{fileId}/entries/{index}
+GET /api/console-log/{fileId}/stats
+GET /api/console-log/{fileId}/search
 ```
 
-The stress test can validate large files using streamed generated uploads. For a 1 GB profile, ensure there is enough disk space before running.
+Sanitization:
 
-### Deployment And Operations Reference
+```text
+GET  /api/sanitize/{fileId}/scan
+POST /api/sanitize/{fileId}
+```
 
-Use [VM_RUNBOOK.md](../VM_RUNBOOK.md) for VM deployment, PM2 process recovery, proxy handling, OCA token refresh, worker restart behavior, and retention cleanup commands.
+AI:
+
+```text
+GET  /api/ai/status
+POST /api/ai/insights
+POST /api/ai/chat
+```
+
+---
+
+## 24. Final Recommendation For Confluence
+
+Use this as the primary Confluence page:
+
+```text
+HAR File Analyzer - One Page Validation, OpenAPI, And Testing Guide
+```
+
+For most users, this one page is enough. Link to the live API documentation at:
+
+```text
+http://10.65.39.163:4000/api-docs
+```
+
+Link to the machine-readable OpenAPI contract at:
+
+```text
+http://10.65.39.163:4000/openapi.json
+```
+
+Keep VM operations and deployment recovery steps separate and restricted to maintainers, because those notes contain operational commands and environment-specific details.

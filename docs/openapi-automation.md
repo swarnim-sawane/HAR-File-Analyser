@@ -2,14 +2,14 @@
 
 This document explains how external automation, such as OCI workflows, can discover and call the HAR File Analyzer backend.
 
-For a shorter OCI-facing summary, see [oci-openapi-integration-brief.md](./oci-openapi-integration-brief.md). For a broader tester-facing guide that can be copied into Confluence, see [confluence-user-testing-guide.md](./confluence-user-testing-guide.md).
+For the single Confluence-ready validation guide, including UI testing, OpenAPI testing, REST-only upload, expected responses, and evidence capture, see [confluence-user-testing-guide.md](./confluence-user-testing-guide.md).
 
 ## OpenAPI Endpoints
 
-The backend exposes:
+The deployed VM backend exposes:
 
-- `GET /openapi.json` - machine-readable OpenAPI 3.0 document
-- `GET /api-docs` - lightweight human-readable API landing page
+- `GET http://10.65.39.163:4000/openapi.json` - machine-readable OpenAPI 3.0 document
+- `GET http://10.65.39.163:4000/api-docs` - human-readable API documentation page
 
 Set `OPENAPI_SERVER_URL` or `PUBLIC_API_URL` in the backend environment when the service is behind a proxy or gateway and the generated server URL should not be derived from the incoming request host.
 
@@ -59,7 +59,7 @@ The current implementation already avoids frontend context-building for HAR file
 Use chunk upload for files larger than the 12 MB per-chunk limit. A safe default chunk size is 8 MB.
 
 ```powershell
-$baseUrl = "http://localhost:4200"
+$baseUrl = "http://10.65.39.163:4000"
 $filePath = "C:\Users\ssawane\Downloads\DE2_vbcs (1).har"
 $fileName = Split-Path $filePath -Leaf
 $fileId = "file_" + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()

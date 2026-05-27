@@ -69,7 +69,7 @@ describe('OpenAPI document', () => {
     expect(html).toContain('/api/v1/har/{fileId}/insights');
     expect(html).toContain('deterministic fallback');
     expect(html).toContain('PowerShell Smoke Test');
-    expect(html).toContain('Required Local Services');
+    expect(html).toContain('Deployed VM Services');
     expect(html).toContain('202 Accepted');
   });
 });

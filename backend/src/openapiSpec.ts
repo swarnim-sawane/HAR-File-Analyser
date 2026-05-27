@@ -1296,20 +1296,20 @@ export function renderOpenApiDocsHtml(specUrl = '/openapi.json'): string {
           </section>
 
           <section id="services" class="grid">
-            <div class="panel">
-              <h2>Required Local Services</h2>
+        <div class="panel">
+              <h2>Deployed VM Services</h2>
               <p>
-                For local development, run <code>npm run dev:all</code> from the project root to start all
-                three services together. The command is a wrapper around the separate processes below.
+                Testers should use the deployed VM endpoints below. The backend API is the integration surface
+                for OpenAPI and OCI automation; the worker runs as a background service after upload completion.
               </p>
               <table class="table">
                 <thead>
-                  <tr><th>Process</th><th>Command</th><th>Purpose</th></tr>
+                  <tr><th>Service</th><th>Access</th><th>Purpose</th></tr>
                 </thead>
                 <tbody>
-                  <tr><td>Frontend</td><td><code>npm run dev</code></td><td>Browser UI on port <code>3000</code>.</td></tr>
-                  <tr><td>Backend</td><td><code>npm run dev</code> from <code>backend</code></td><td>REST API on port <code>4000</code>.</td></tr>
-                  <tr><td>Worker</td><td><code>npm run dev:worker</code> from <code>backend</code></td><td>Parses uploaded files into MongoDB.</td></tr>
+              <tr><td>Frontend</td><td><code>http://10.65.39.163:3000</code></td><td>Browser UI for upload, Analyzer, AI Insights, Request Flow, Compare, and Console Logs.</td></tr>
+              <tr><td>Backend</td><td><code>http://10.65.39.163:4000</code></td><td>REST/OpenAPI surface used by UI and automation.</td></tr>
+              <tr><td>Worker</td><td>VM background service</td><td>Parses uploaded files into MongoDB after upload completion.</td></tr>
                 </tbody>
               </table>
             </div>
@@ -1408,13 +1408,14 @@ export function renderOpenApiDocsHtml(specUrl = '/openapi.json'): string {
             <p class="section-label">Validation</p>
             <h2>PowerShell Smoke Test</h2>
             <p class="note">Replace the sample value with a file ID from a fresh upload that has reached <code>status: ready</code>.</p>
-            <pre id="smokeCode"><code>$fileId = "file_1779708244860_pgj5w9e3m"
+            <pre id="smokeCode"><code>$baseUrl = "http://10.65.39.163:4000"
+$fileId = "file_1779708244860_pgj5w9e3m"
 
-Invoke-RestMethod "http://localhost:4000/api/har/$fileId/status"
-Invoke-RestMethod "http://localhost:4000/api/v1/har/$fileId/summary"
-Invoke-RestMethod "http://localhost:4000/api/v1/har/$fileId/errors"
-Invoke-RestMethod "http://localhost:4000/api/v1/har/$fileId/insights/context"
-Invoke-RestMethod "http://localhost:4000/api/v1/har/$fileId/insights" -Method Post</code></pre>
+Invoke-RestMethod "$baseUrl/api/har/$fileId/status"
+Invoke-RestMethod "$baseUrl/api/v1/har/$fileId/summary"
+Invoke-RestMethod "$baseUrl/api/v1/har/$fileId/errors"
+Invoke-RestMethod "$baseUrl/api/v1/har/$fileId/insights/context"
+Invoke-RestMethod "$baseUrl/api/v1/har/$fileId/insights" -Method Post</code></pre>
             <button class="copy-button" type="button" data-copy-target="smokeCode">Copy smoke test</button>
           </section>
 
