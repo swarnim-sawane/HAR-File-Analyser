@@ -1,13 +1,18 @@
 import express from 'express';
 import http from 'http';
+import path from 'path';
 import cors from 'cors';
 import { Server as SocketIOServer } from 'socket.io';
 import dotenv from 'dotenv';
-import { connectDatabases, closeDatabases, getRedis } from './config/database';
+import { connectDatabases, closeDatabases, getMongoDb, getRedis } from './config/database';
 import { configureOutboundProxy } from './config/outboundProxy';
 import { buildAllowedOrigins } from './config/corsOrigins';
 import { setSocketIOInstance } from './utils/socketHelper';
 import { buildOpenApiDocument, renderOpenApiDocsHtml } from './openapiSpec';
+import {
+  cleanupExpiredAnalysisData,
+  parseRetentionCleanupConfig,
+} from './services/retentionCleanupService';
 
 dotenv.config();
 const outboundProxyUrl = configureOutboundProxy();
@@ -185,8 +190,42 @@ function setupRedisSubscriber(io: SocketIOServer) {
   return subscriber;
 }
 
+function setupRetentionCleanup(): NodeJS.Timeout | null {
+  const config = parseRetentionCleanupConfig(process.env);
+  if (!config.enabled) {
+    console.log('Retention cleanup disabled. Set RETENTION_CLEANUP_ENABLED=true to enable scheduled cleanup.');
+    return null;
+  }
+
+  const uploadDir = path.resolve(process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads'));
+  const processedDir = path.resolve(process.env.PROCESSED_DIR || path.join(process.cwd(), 'processed'));
+
+  const runCleanup = async () => {
+    try {
+      const result = await cleanupExpiredAnalysisData({
+        db: getMongoDb(),
+        redis: getRedis(),
+        uploadDir,
+        processedDir,
+        maxAgeHours: config.maxAgeHours,
+        dryRun: config.dryRun,
+      });
+      console.log('Retention cleanup complete:', result);
+    } catch (error) {
+      console.error('Retention cleanup failed:', error);
+    }
+  };
+
+  console.log(
+    `Retention cleanup enabled: maxAge=${config.maxAgeHours}h interval=${config.intervalMinutes}m dryRun=${config.dryRun}`,
+  );
+  void runCleanup();
+  return setInterval(runCleanup, config.intervalMinutes * 60 * 1000);
+}
+
 async function startServer() {
   let redisSubscriber: any = null;
+  let retentionCleanupTimer: NodeJS.Timeout | null = null;
 
   try {
     console.log('🚀 Starting HAR Analyzer Backend...\n');
@@ -197,6 +236,7 @@ async function startServer() {
 
     // 2. Set up Redis subscriber for worker events
     redisSubscriber = await setupRedisSubscriber(io);
+    retentionCleanupTimer = setupRetentionCleanup();
 
     // 3. Import routes AFTER database connection
     const uploadRoutes = (await import('./routes/uploadRoutes')).default;
@@ -255,6 +295,11 @@ async function startServer() {
         await redisSubscriber.unsubscribe('socket:events');
         await redisSubscriber.quit();
         console.log('✅ Redis subscriber closed');
+      }
+
+      if (retentionCleanupTimer) {
+        clearInterval(retentionCleanupTimer);
+        console.log('Retention cleanup timer stopped');
       }
 
       server.close(async () => {

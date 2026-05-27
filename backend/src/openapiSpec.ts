@@ -292,6 +292,19 @@ export function buildOpenApiDocument(serverUrl: string): OpenApiDocument {
           '500': errorResponse,
         },
       }),
+      '/api/v1/har/{fileId}/insights': path('post', {
+        tags: ['Automation'],
+        summary: 'Generate AI insights for a processed HAR file',
+        operationId: 'generateHarAutomationInsights',
+        parameters: [automationFileIdParam],
+        responses: {
+          '200': jsonResponse('#/components/schemas/AutomationHarInsightsResponse'),
+          '202': jsonResponse('#/components/schemas/AutomationHarPendingResponse', 'File is still processing'),
+          '400': errorResponse,
+          '404': errorResponse,
+          '500': errorResponse,
+        },
+      }),
       '/api/sanitize/{fileId}/scan': path('get', {
         tags: ['Sanitize'],
         summary: 'Scan a HAR for sensitive fields',
@@ -619,6 +632,39 @@ export function buildOpenApiDocument(serverUrl: string): OpenApiDocument {
             entrySampleCount: { type: 'integer' },
           },
         },
+        AutomationHarInsightsResponse: {
+          type: 'object',
+          properties: {
+            fileId: { type: 'string' },
+            fileName: { type: 'string', nullable: true },
+            sourceType: { type: 'string', enum: ['har'] },
+            entrySampleCount: { type: 'integer' },
+            result: { $ref: '#/components/schemas/AiInsightsResult' },
+            ai: { $ref: '#/components/schemas/AiExecutionMetadata' },
+          },
+        },
+        AiExecutionMetadata: {
+          type: 'object',
+          properties: {
+            source: { type: 'string', enum: ['oca', 'deterministic_fallback'] },
+            fallbackReason: { type: 'string' },
+          },
+        },
+        AiInsightsResult: {
+          type: 'object',
+          properties: {
+            overallHealth: { type: 'string', enum: ['critical', 'degraded', 'warning', 'healthy'] },
+            summary: { type: 'string' },
+            sections: {
+              type: 'array',
+              items: { type: 'object' },
+            },
+            detectedProducts: {
+              type: 'array',
+              items: { type: 'object' },
+            },
+          },
+        },
         Pagination: {
           type: 'object',
           properties: {
@@ -671,7 +717,8 @@ export function buildOpenApiDocument(serverUrl: string): OpenApiDocument {
         AiInsightsResponse: {
           type: 'object',
           properties: {
-            result: { type: 'object' },
+            result: { $ref: '#/components/schemas/AiInsightsResult' },
+            ai: { $ref: '#/components/schemas/AiExecutionMetadata' },
           },
         },
         AiChatRequest: {
@@ -938,6 +985,13 @@ export function renderOpenApiDocsHtml(specUrl = '/openapi.json'): string {
             <div class="note">Backend-built AI context that prioritizes 5xx, then 4xx, then slow requests.</div>
           </div>
         </div>
+        <div class="endpoint">
+          <span class="method">POST</span>
+          <div>
+            <code>/api/v1/har/{fileId}/insights</code>
+            <div class="note">One-call insight generation for a processed HAR. Returns OCA output when available, otherwise deterministic fallback findings.</div>
+          </div>
+        </div>
       </section>
 
       <section class="panel">
@@ -948,7 +1002,8 @@ export function renderOpenApiDocsHtml(specUrl = '/openapi.json'): string {
 Invoke-RestMethod "http://localhost:4000/api/har/$fileId/status"
 Invoke-RestMethod "http://localhost:4000/api/v1/har/$fileId/summary"
 Invoke-RestMethod "http://localhost:4000/api/v1/har/$fileId/errors"
-Invoke-RestMethod "http://localhost:4000/api/v1/har/$fileId/insights/context"</code></pre>
+Invoke-RestMethod "http://localhost:4000/api/v1/har/$fileId/insights/context"
+Invoke-RestMethod "http://localhost:4000/api/v1/har/$fileId/insights" -Method Post</code></pre>
       </section>
 
       <section class="panel">
@@ -968,7 +1023,8 @@ Invoke-RestMethod "http://localhost:4000/api/v1/har/$fileId/insights/context"</c
         <ul>
           <li>Use <code>${specUrl}</code> as the OpenAPI import/discovery contract.</li>
           <li>Use <code>/api/v1</code> endpoints for stable automation responses.</li>
-          <li>Use <code>/api/ai/insights</code> with the context returned by <code>/api/v1/har/{fileId}/insights/context</code> when AI output is required.</li>
+          <li>Use <code>POST /api/v1/har/{fileId}/insights</code> when AI output is required from an already processed HAR.</li>
+          <li>Use <code>/api/ai/insights</code> directly only when the integration needs to supply its own context string.</li>
           <li>Confirm the deployment access model before exposing the API outside trusted internal networks.</li>
         </ul>
       </section>

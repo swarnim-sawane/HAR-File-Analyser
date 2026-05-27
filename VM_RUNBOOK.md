@@ -101,6 +101,8 @@ pm2 show har-worker | grep "interpreter args"
 curl -I http://localhost:3000
 curl http://localhost:4000/health
 curl http://localhost:4000/openapi.json | grep "/api/v1/har"
+# Optional after a ready HAR exists:
+# curl -X POST http://localhost:4000/api/v1/har/PASTE_READY_FILEID/insights
 
 pm2 save
 ```
@@ -234,6 +236,31 @@ redis-cli --scan --pattern 'bull:log-processing:*' | xargs -r redis-cli DEL
 pm2 start /tmp/worker.config.cjs
 ```
 
+### 8. Retention cleanup for large diagnostic files
+Retention cleanup is disabled unless `RETENTION_CLEANUP_ENABLED=true` is set in `backend/.env`. Use dry-run first so the deletion counts can be reviewed before removing customer diagnostic artifacts.
+
+```bash
+cd /refresh/home/Downloads/har-analyzer/backend
+npm run build
+
+# Dry-run: prints JSON counts without deleting files or database records.
+RETENTION_MAX_AGE_HOURS=168 RETENTION_CLEANUP_DRY_RUN=true npm run cleanup:retention
+
+# Actual cleanup after reviewing dry-run output.
+RETENTION_MAX_AGE_HOURS=168 RETENTION_CLEANUP_DRY_RUN=false npm run cleanup:retention
+```
+
+For scheduled cleanup through the backend process, add these to `backend/.env` and restart `har-backend`:
+
+```bash
+RETENTION_CLEANUP_ENABLED=true
+RETENTION_MAX_AGE_HOURS=168
+RETENTION_CLEANUP_INTERVAL_MINUTES=60
+RETENTION_CLEANUP_DRY_RUN=false
+```
+
+The cleanup removes expired `har_files`, `har_entries`, `console_log_files`, `console_logs`, Redis metadata/status keys, processed files, and stale upload chunks that are older than the configured cutoff.
+
 ***
 
 ## Debugging Cheatsheet
@@ -308,6 +335,12 @@ REDIS_HOST=localhost
 REDIS_PORT=6379
 UPLOAD_DIR=/tmp/har-processed
 PROCESSED_DIR=/tmp/har-processed
+
+# Retention cleanup (disabled unless explicitly enabled)
+RETENTION_CLEANUP_ENABLED=false
+RETENTION_MAX_AGE_HOURS=168
+RETENTION_CLEANUP_INTERVAL_MINUTES=60
+RETENTION_CLEANUP_DRY_RUN=false
 
 # Corporate proxy (required for Node.js fetch to reach OCA)
 HTTPS_PROXY=http://www-proxy-phx.oraclecorp.com:80

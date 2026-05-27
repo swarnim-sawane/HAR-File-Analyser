@@ -237,6 +237,8 @@ The DNS hostname is also supported:
 
 Both frontend origins are allowed by the backend CORS configuration.
 
+For a Confluence-ready validation guide that can be shared with managers, support engineers, developers, and OCI automation reviewers, see [docs/confluence-user-testing-guide.md](./docs/confluence-user-testing-guide.md).
+
 ## REST API And OpenAPI
 
 The backend exposes REST APIs for upload, HAR analysis, console log analysis, sanitization, AI status, AI insights, and AI chat. The API contract is available from the running backend at:
@@ -251,6 +253,7 @@ The stable HAR automation endpoints are:
 - `GET /api/v1/har/{fileId}/summary`
 - `GET /api/v1/har/{fileId}/errors`
 - `GET /api/v1/har/{fileId}/insights/context`
+- `POST /api/v1/har/{fileId}/insights`
 
 ## VM Deployment
 

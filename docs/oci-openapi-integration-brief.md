@@ -20,6 +20,7 @@ The current REST API supports:
 - Automation-ready HAR summary via `/api/v1/har/{fileId}/summary`
 - Automation-ready HAR 4xx/5xx error list via `/api/v1/har/{fileId}/errors`
 - Backend-built HAR AI context via `/api/v1/har/{fileId}/insights/context`
+- One-call HAR insight generation via `POST /api/v1/har/{fileId}/insights`
 - HAR statistics, entry retrieval, and search
 - Console log processing status
 - Console log statistics, entry retrieval, and search
@@ -35,16 +36,15 @@ The current REST API supports:
 2. Complete upload assembly
 3. Poll processing status
 4. Fetch v1 HAR summary and failed requests
-5. Fetch backend-built AI context
-6. Generate AI insights using the existing AI insights endpoint
-7. Return structured diagnostic result to OCI workflow
+5. Generate HAR insights by file ID with `POST /api/v1/har/{fileId}/insights`
+6. Return structured diagnostic result to OCI workflow
 ```
 
 ## Important Integration Note
 
-`POST /api/ai/insights` accepts a prepared diagnostic `context` string. In the UI flow, the React frontend builds this context before calling the backend.
+`POST /api/v1/har/{fileId}/insights` is now the preferred HAR automation endpoint after processing is complete. It builds the diagnostic context server-side, calls OCA when available, and returns deterministic fallback findings when OCA is unavailable or returns unusable output.
 
-For OCI automation, HAR context generation is now backend-owned through `GET /api/v1/har/{fileId}/insights/context`. OCI does not need to reproduce frontend-specific context-building logic for HAR files.
+`POST /api/ai/insights` remains available for advanced callers that already have their own prepared diagnostic `context` string. OCI does not need to reproduce frontend-specific context-building logic for HAR files.
 
 Current v1 HAR endpoints:
 
@@ -52,13 +52,7 @@ Current v1 HAR endpoints:
 GET  /api/v1/har/{fileId}/summary
 GET  /api/v1/har/{fileId}/errors
 GET  /api/v1/har/{fileId}/insights/context
-```
-
-Recommended next convenience endpoints, if OCI wants a single call that generates AI output directly by file ID:
-
-```text
 POST /api/v1/har/{fileId}/insights
-POST /api/v1/console-log/{fileId}/insights
 ```
 
 ## Items To Align With OCI
@@ -70,7 +64,9 @@ POST /api/v1/console-log/{fileId}/insights
 - Required response shape for automation consumers
 - Required outputs: summary, failed requests, AI insights, scorecard, raw entries, or all of these
 - Logging, retention, and data handling expectations for customer diagnostic files
+- Retention policy values: `RETENTION_MAX_AGE_HOURS`, cleanup interval, and dry-run validation process
+- OCI sizing validation: disk, MongoDB storage, backend cluster count, worker count, and queue concurrency under realistic customer HAR volumes
 
 ## Recommended Positioning
 
-The application is REST-backed today, exposes an OpenAPI contract for integration review, and now includes a stable `/api/v1` HAR automation layer for summary, failed-request triage, and backend-built AI context. It is ready for OCI API evaluation, with the next hardening step being direct v1 AI insight generation by `fileId` and equivalent v1 endpoints for console logs.
+The application is REST-backed today, exposes an OpenAPI contract for integration review, and now includes a stable `/api/v1` HAR automation layer for summary, failed-request triage, backend-built AI context, and direct v1 AI insight generation by `fileId`. It is ready for OCI API evaluation, with the next hardening steps being access control alignment, OCI sizing validation, and equivalent v1 insight endpoints for console logs.

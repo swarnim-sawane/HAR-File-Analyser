@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getMongoDb, getRedis } from '../config/database';
 import type { ParsedHarEntry } from '../services/streamingParser';
+import { generateInsightsForContext } from './aiRoutes';
 import {
   buildHarAutomationPendingResponse,
   buildHarAutomationSummary,
@@ -163,6 +164,35 @@ router.get('/har/:fileId/insights/context', async (req: Request, res: Response) 
   } catch (error) {
     console.error('Failed to build HAR automation insight context:', error);
     return res.status(500).json({ error: 'Failed to build HAR automation insight context' });
+  }
+});
+
+router.post('/har/:fileId/insights', async (req: Request, res: Response) => {
+  try {
+    const { fileId } = req.params;
+    if (!validateFileId(fileId, res)) return;
+
+    const file = await getHarFile(fileId);
+    if (!file) {
+      return sendPendingOrNotFound(fileId, res);
+    }
+
+    const entries = await getInsightContextEntries(fileId);
+    const context = buildHarInsightContext(entries, file.stats);
+    const insights = await generateInsightsForContext(context, 'har', {
+      allowDeterministicFallback: true,
+    });
+
+    return res.json({
+      fileId: file.fileId,
+      fileName: file.fileName ?? null,
+      sourceType: 'har',
+      entrySampleCount: entries.length,
+      ...insights,
+    });
+  } catch (error) {
+    console.error('Failed to generate HAR automation insights:', error);
+    return res.status(500).json({ error: 'Failed to generate HAR automation insights' });
   }
 });
 

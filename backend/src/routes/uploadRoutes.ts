@@ -13,6 +13,7 @@ import {
   buildChunkTooLargeResponse,
   isMulterFileTooLargeError,
 } from '../config/uploadLimits';
+import { isSafeUploadFileId, isSupportedUploadFileType } from '../utils/uploadValidation';
 
 const router = express.Router();
 const redis = getRedis();
@@ -80,7 +81,7 @@ const handleChunkUpload = async (req: Request, res: Response) => {
 
     // Prevent path traversal: fileId is used directly in a path.join below.
     // Only allow alphanumeric chars, underscores, and hyphens.
-    if (!/^[a-zA-Z0-9_-]+$/.test(fileId)) {
+    if (!isSafeUploadFileId(fileId)) {
       await fs.unlink(req.file.path).catch(() => {});
       return res.status(400).json({ error: 'Invalid fileId' });
     }
@@ -166,6 +167,14 @@ router.post('/complete', async (req: Request, res: Response) => {
 
     if (!fileId || !totalChunks || !fileName || !fileType) {
       return res.status(400).json({ error: 'Missing parameters' });
+    }
+
+    if (!isSafeUploadFileId(fileId)) {
+      return res.status(400).json({ error: 'Invalid fileId' });
+    }
+
+    if (!isSupportedUploadFileType(fileType)) {
+      return res.status(400).json({ error: 'Invalid fileType' });
     }
 
     console.log(`📦 Assembling file: ${fileName} (${totalChunks} chunks)`);

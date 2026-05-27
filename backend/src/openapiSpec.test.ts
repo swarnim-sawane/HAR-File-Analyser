@@ -23,6 +23,7 @@ describe('OpenAPI document', () => {
       '/api/v1/har/{fileId}/summary',
       '/api/v1/har/{fileId}/errors',
       '/api/v1/har/{fileId}/insights/context',
+      '/api/v1/har/{fileId}/insights',
       '/api/sanitize/{fileId}/scan',
       '/api/sanitize/{fileId}',
       '/api/console-log/{fileId}/status',
@@ -40,6 +41,8 @@ describe('OpenAPI document', () => {
     expect(document.paths['/api/v1/har/{fileId}/summary'].get.responses['202']).toBeDefined();
     expect(document.paths['/api/v1/har/{fileId}/errors'].get.operationId).toBe('listHarAutomationErrors');
     expect(document.paths['/api/v1/har/{fileId}/insights/context'].get.operationId).toBe('getHarAutomationInsightContext');
+    expect(document.paths['/api/v1/har/{fileId}/insights'].post.operationId).toBe('generateHarAutomationInsights');
+    expect(document.components.schemas.AutomationHarInsightsResponse).toBeDefined();
     expect(document.paths['/api/upload/chunk'].post.requestBody.content['multipart/form-data']).toBeDefined();
     expect(document.paths['/api/har/{fileId}/entries'].get.parameters).toEqual(
       expect.arrayContaining([
@@ -60,6 +63,8 @@ describe('OpenAPI document', () => {
     expect(html).toContain('/api/v1/har/{fileId}/summary');
     expect(html).toContain('/api/v1/har/{fileId}/errors');
     expect(html).toContain('/api/v1/har/{fileId}/insights/context');
+    expect(html).toContain('/api/v1/har/{fileId}/insights');
+    expect(html).toContain('deterministic fallback');
     expect(html).toContain('PowerShell Smoke Test');
     expect(html).toContain('Required Local Services');
     expect(html).toContain('202 Accepted');

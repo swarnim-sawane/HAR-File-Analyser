@@ -57,6 +57,19 @@ interface InsightsResult {
   }>;
 }
 
+export interface InsightsGenerationResponse {
+  result: InsightsResult;
+  ai: {
+    source: 'oca' | 'deterministic_fallback';
+    fallbackReason?: string;
+  };
+}
+
+export interface GenerateInsightsOptions {
+  allowDeterministicFallback?: boolean;
+  requestId?: string;
+}
+
 const HEALTH_VALUES: HealthLevel[] = ['critical', 'degraded', 'warning', 'healthy'];
 const SECTION_VALUES: InsightSectionType[] = [
   'analyzer_evidence',
@@ -455,6 +468,212 @@ function parseInsightsPayload(rawContent: string): unknown {
   }
 }
 
+function detectedProductsPayload(detectedProducts: DetectedOracleProduct[]) {
+  return detectedProducts.map(p => ({
+    product: p.product,
+    shortName: p.shortName,
+    components: p.components,
+    matchedUrls: p.matchedUrls,
+  }));
+}
+
+function buildDeterministicFallbackResponse(
+  context: string,
+  sourceType: InsightsSourceType,
+  detectedProducts: DetectedOracleProduct[],
+  fallbackReason: string,
+): InsightsGenerationResponse {
+  const deterministicSections = buildDeterministicInsights(context, sourceType);
+  const result: InsightsResult = {
+    overallHealth: deterministicSections.length > 0
+      ? deriveOverallHealth(deterministicSections)
+      : 'warning',
+    summary: fallbackSummary(deterministicSections, sourceType),
+    sections: deterministicSections,
+    detectedProducts: detectedProductsPayload(detectedProducts),
+  };
+
+  return {
+    result,
+    ai: {
+      source: 'deterministic_fallback',
+      fallbackReason,
+    },
+  };
+}
+
+export async function generateInsightsForContext(
+  context: string,
+  rawSourceType: unknown = 'har',
+  options: GenerateInsightsOptions = {},
+): Promise<InsightsGenerationResponse> {
+  const requestId = options.requestId ?? randomUUID();
+  const sourceType = normalizeInsightsSourceType(rawSourceType);
+  const detectedProducts = detectOracleProductsFromContext(context);
+  const oracleContext = buildOracleKbPrompt(detectedProducts);
+  const oracleSpecificityTokens = buildOracleSpecificityTokens(detectedProducts);
+  const oracleSpecificityRequired = detectedProducts.length > 0;
+  const oracleSpecificityInstruction = oracleSpecificityRequired
+    ? '\nOracle specificity rule: findings must explicitly reference detected Oracle product/component names in title, why, or fix.'
+    : '';
+
+  const insightsSystemPrompt = `${INSIGHTS_SYSTEM_PROMPT}${
+    oracleContext ? `\n\n${oracleContext}` : ''
+  }${oracleSpecificityInstruction}`;
+
+  const log = (msg: string) => console.info(`[ai-insights:${requestId}] ${msg}`);
+  const fallback = (reason: string) => {
+    log(`fallback | ${reason}`);
+    return buildDeterministicFallbackResponse(context, sourceType, detectedProducts, reason);
+  };
+
+  log(
+    `request accepted | products_detected=${detectedProducts.length} (${
+      detectedProducts.map(p => p.shortName).join(',') || 'none'
+    }) | source=${sourceType} | context_chars=${context.length}`
+  );
+
+  const chatMessages = [
+    { role: 'system', content: insightsSystemPrompt },
+    {
+      role: 'user',
+      content: `Analyze this ${sourceType === 'console' ? 'browser console log' : 'HAR'} context and return strict JSON insights only.\n\n${context}`,
+    },
+  ];
+
+  const ocaBaseUrl = process.env.OCA_BASE_URL;
+  if (!ocaBaseUrl || !process.env.OCA_TOKEN) {
+    const reason = 'OCA is not configured (missing OCA_BASE_URL or OCA_TOKEN).';
+    if (options.allowDeterministicFallback) return fallback(reason);
+    throw new Error(reason);
+  }
+
+  try {
+    log(`-> OCA fetch start | model=${process.env.OCA_MODEL || 'oca/gpt-5.4'}`);
+
+    const upstream = await fetch(`${ocaBaseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${process.env.OCA_TOKEN}`,
+      },
+      body: JSON.stringify({
+        model: process.env.OCA_MODEL || 'oca/gpt-5.4',
+        messages: chatMessages,
+        stream: true,
+        temperature: 0.15,
+        max_tokens: 3500,
+      }),
+    });
+
+    log(`<- OCA responded | status=${upstream.status}`);
+
+    if (!upstream.ok) {
+      const errText = await upstream.text();
+      const reason = `OCA request failed (${upstream.status}). Verify VPN and token. ${errText.slice(0, 200)}`;
+      log(`OCA error | ${upstream.status} | ${errText.slice(0, 200)}`);
+      if (options.allowDeterministicFallback) return fallback(reason);
+      throw new Error(reason);
+    }
+
+    const reader = upstream.body?.getReader();
+    if (!reader) {
+      const reason = 'OCA returned no response body.';
+      if (options.allowDeterministicFallback) return fallback(reason);
+      throw new Error(reason);
+    }
+
+    const decoder = new TextDecoder();
+    let buf = '';
+    let accumulatedContent = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop() ?? '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (!data || data === '[DONE]') continue;
+
+        try {
+          const parsed = JSON.parse(data);
+          const delta = parsed?.choices?.[0]?.delta?.content;
+          const message = parsed?.choices?.[0]?.message?.content;
+          const content = typeof delta === 'string' ? delta
+                        : typeof message === 'string' ? message
+                        : '';
+          if (content) accumulatedContent += content;
+        } catch {
+          // skip malformed chunk
+        }
+      }
+    }
+
+    log(`OCA stream complete | chars=${accumulatedContent.length}`);
+
+    const rawContent = accumulatedContent;
+    if (!rawContent.trim()) {
+      const reason = 'OCA returned empty content.';
+      if (options.allowDeterministicFallback) return fallback(reason);
+      throw new Error(reason);
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = parseInsightsPayload(rawContent);
+    } catch (parseErr) {
+      const reason = `Failed to parse model JSON response: ${String(parseErr)}`;
+      log(`JSON parse failed | ${String(parseErr)}`);
+      log(`raw dump: ${rawContent.slice(0, 500)}`);
+      if (options.allowDeterministicFallback) return fallback(reason);
+      throw new Error(reason);
+    }
+
+    const normalized = normalizeInsights(
+      parsed,
+      { oracleSpecificityRequired, oracleSpecificityTokens, sourceType },
+      detectedProducts
+    );
+    const deterministicSections = buildDeterministicInsights(context, sourceType);
+    const mergedSections = mergeDeterministicInsights(
+      normalized.sections,
+      deterministicSections
+    );
+    const result: InsightsResult = {
+      ...normalized,
+      sections: mergedSections,
+      overallHealth: deterministicSections.length > 0
+        ? deriveOverallHealth(mergedSections)
+        : normalized.overallHealth,
+      summary: deterministicSections.length > 0
+        ? fallbackSummary(mergedSections, sourceType)
+        : normalized.summary,
+      detectedProducts: detectedProductsPayload(detectedProducts),
+    };
+
+    log(
+      `done | sections=${result.sections.length} findings=${result.sections.reduce(
+        (s, sec) => s + sec.findings.length, 0
+      )} deterministic_sections=${deterministicSections.length} health=${result.overallHealth}`
+    );
+
+    return {
+      result,
+      ai: { source: 'oca' },
+    };
+  } catch (err) {
+    const reason = `Insights failed: ${(err as Error)?.message ?? String(err)}`;
+    log(`ERROR: ${String(err)}`);
+    if (options.allowDeterministicFallback) return fallback(reason);
+    throw err;
+  }
+}
+
 // ─── Multi-backend helpers ────────────────────────────────────────────────────
 
 const OCA_CONNECT_TIMEOUT_MS = 10000;
@@ -591,167 +810,14 @@ router.post('/insights', async (req: Request, res: ExpressResponse) => {
     return res.status(400).json({ error: 'context is required' });
   }
 
-  const requestId = randomUUID();
-  const sourceType = normalizeInsightsSourceType(rawSourceType);
-  const detectedProducts = detectOracleProductsFromContext(context);
-  const oracleContext = buildOracleKbPrompt(detectedProducts);
-  const oracleSpecificityTokens = buildOracleSpecificityTokens(detectedProducts);
-  const oracleSpecificityRequired = detectedProducts.length > 0;
-  const oracleSpecificityInstruction = oracleSpecificityRequired
-    ? '\nOracle specificity rule: findings must explicitly reference detected Oracle product/component names in title, why, or fix.'
-    : '';
-
-  const insightsSystemPrompt = `${INSIGHTS_SYSTEM_PROMPT}${
-    oracleContext ? `\n\n${oracleContext}` : ''
-  }${oracleSpecificityInstruction}`;
-
-  const log = (msg: string) => console.info(`[ai-insights:${requestId}] ${msg}`);
-
-  log(
-    `request accepted | products_detected=${detectedProducts.length} (${
-      detectedProducts.map(p => p.shortName).join(',') || 'none'
-    }) | source=${sourceType} | context_chars=${context.length}`
-  );
-
-  const chatMessages = [
-    { role: 'system', content: insightsSystemPrompt },
-    {
-      role: 'user',
-      content: `Analyze this ${sourceType === 'console' ? 'browser console log' : 'HAR'} context and return strict JSON insights only.\n\n${context}`,
-    },
-  ];
-
   try {
-    const ocaBaseUrl = process.env.OCA_BASE_URL;
-    if (!ocaBaseUrl || !process.env.OCA_TOKEN) {
-      log('ERROR: OCA config missing');
-      return res.status(503).json({ error: 'OCA is not configured.' });
-    }
-
-    log(`-> OCA fetch start | model=${process.env.OCA_MODEL || 'oca/gpt-5.4'}`);
-
-    // OCA fetch (streaming from OCA, accumulated server-side)
-    const upstream = await fetch(`${ocaBaseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.OCA_TOKEN}`,
-      },
-      body: JSON.stringify({
-        model: process.env.OCA_MODEL || 'oca/gpt-5.4',
-        messages: chatMessages,
-        stream: true, // OCA requires stream=true; server accumulates chunks
-        temperature: 0.15,
-        max_tokens: 3500,
-      }),
-    });
-
-    log(`<- OCA responded | status=${upstream.status}`);
-
-    if (!upstream.ok) {
-      const errText = await upstream.text();
-      log(`OCA error | ${upstream.status} | ${errText.slice(0, 200)}`);
-      return res.status(502).json({
-        error: `OCA request failed (${upstream.status}). Verify VPN and token.`,
-      });
-    }
-
-    // Accumulate the full streamed response into one string
-    const reader = upstream.body?.getReader();
-    if (!reader) {
-      return res.status(502).json({ error: 'OCA returned no response body.' });
-    }
-
-    const decoder = new TextDecoder();
-    let buf = '';
-    let accumulatedContent = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buf += decoder.decode(value, { stream: true });
-      const lines = buf.split('\n');
-      buf = lines.pop() ?? '';
-
-      for (const line of lines) {
-        if (!line.startsWith('data:')) continue;
-        const data = line.slice(5).trim();
-        if (!data || data === '[DONE]') continue;
-
-        try {
-          const parsed = JSON.parse(data);
-          const delta   = parsed?.choices?.[0]?.delta?.content;
-          const message = parsed?.choices?.[0]?.message?.content;
-          const content = typeof delta === 'string' ? delta
-                        : typeof message === 'string' ? message
-                        : '';
-          if (content) accumulatedContent += content;
-        } catch {
-          // skip malformed chunk
-        }
-      }
-    }
-
-    log(`OCA stream complete | chars=${accumulatedContent.length}`);
-
-    const rawContent = accumulatedContent;
-    if (!rawContent.trim()) {
-      return res.status(502).json({ error: 'OCA returned empty content.' });
-    }
-
-    // Parse the JSON the model returned
-    let parsed: unknown;
-    try {
-      parsed = parseInsightsPayload(rawContent);
-    } catch (parseErr) {
-      log(`JSON parse failed | ${String(parseErr)}`);
-      log(`raw dump: ${rawContent.slice(0, 500)}`);
-      return res.status(502).json({ error: 'Failed to parse model JSON response.' });
-    }
-
-    const normalized = normalizeInsights(
-      parsed,
-      { oracleSpecificityRequired, oracleSpecificityTokens, sourceType },
-      detectedProducts
+    const responsePayload = await generateInsightsForContext(
+      context,
+      rawSourceType,
+      { allowDeterministicFallback: true },
     );
-    const deterministicSections = buildDeterministicInsights(context, sourceType);
-    const mergedSections = mergeDeterministicInsights(
-      normalized.sections,
-      deterministicSections
-    );
-    const result: InsightsResult = {
-      ...normalized,
-      sections: mergedSections,
-      overallHealth: deterministicSections.length > 0
-        ? deriveOverallHealth(mergedSections)
-        : normalized.overallHealth,
-      summary: deterministicSections.length > 0
-        ? fallbackSummary(mergedSections, sourceType)
-        : normalized.summary,
-    };
-
-    log(
-      `done | sections=${result.sections.length} findings=${result.sections.reduce(
-        (s, sec) => s + sec.findings.length, 0
-      )} deterministic_sections=${deterministicSections.length} health=${result.overallHealth}`
-    );
-
-    // Return detected products in the response too
-    const responsePayload = {
-      ...result,
-      detectedProducts: detectedProducts.map(p => ({
-        product: p.product,
-        shortName: p.shortName,
-        components: p.components,
-        matchedUrls: p.matchedUrls,
-      })),
-    };
-
-    return res.json({ result: responsePayload });
-
+    return res.json(responsePayload);
   } catch (err) {
-    log(`ERROR: ${String(err)}`);
     return res.status(500).json({
       error: `Insights failed: ${(err as Error)?.message ?? String(err)}`,
     });

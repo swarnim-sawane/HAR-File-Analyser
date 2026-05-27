@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "start": "node dist/server.js",
     "worker": "node dist/worker.js",
+    "cleanup:retention": "node dist/scripts/runRetentionCleanup.js",
     "test": "vitest run",
     "test:watch": "vitest"
   },

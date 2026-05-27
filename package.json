@@ -9,6 +9,8 @@
     "preview": "vite preview",
     "lint": "eslint src --ext ts,tsx",
     "test": "vitest run",
+    "test:openapi:endpoints": "node scripts/openapi-endpoint-test.cjs",
+    "test:openapi:stress": "node scripts/openapi-stress-test.cjs",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },
