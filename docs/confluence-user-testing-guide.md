@@ -2,7 +2,7 @@
 
 ## 1. Purpose Of This Page
 
-This is the single Confluence page to share with managers, support engineers, developers, and OCI automation reviewers for testing the HAR File Analyzer.
+This is the single Confluence page to share with cross-functional reviewers, support engineers, developers, and OCI automation reviewers for testing the HAR File Analyzer.
 
 The page explains:
 
@@ -34,11 +34,11 @@ The tool now also exposes REST/OpenAPI endpoints so automation flows, including 
 
 Recommended result of this testing cycle: confirm that the tool is usable by non-technical reviewers, useful for support engineers, and ready for OCI API evaluation with clear remaining gaps documented.
 
-### Manager Read This First
+### Validation Focus
 
 This validation is not only checking whether the UI opens. It is checking whether the tool can become a reliable support diagnostic and automation surface.
 
-Managers should review three outcomes:
+The review should focus on three outcomes:
 
 | Question | What To Look For | Where To Validate |
 |---|---|---|
@@ -56,18 +56,18 @@ At the end of testing, reviewers should be able to decide one of the following:
 | Proceed with OCI/API evaluation only | REST/OpenAPI flows are ready for integration review, even if UI feedback remains open |
 | Hold for fixes | Core upload, processing, summary, or insight flows fail repeatedly |
 
-### Critical Links To Highlight In Confluence
+### Key Links To Highlight In Confluence
 
 Place these links near the top of the Confluence page so reviewers do not have to search for them:
 
 | Link | Purpose |
 |---|---|
-| `http://10.65.39.163:3000` | Main tool UI for managers, support engineers, and general testers |
+| `http://10.65.39.163:3000` | Main tool UI for business validation, support workflows, and general testing |
 | `http://10.65.39.163:4000/api-docs` | Human-readable API documentation page for developers and OCI reviewers |
 | `http://10.65.39.163:4000/openapi.json` | Machine-readable OpenAPI contract for automation integration |
 | `http://10.65.39.163:4000/health` | Quick backend availability check |
 
-For management review, the most important API page is `http://10.65.39.163:4000/api-docs`. The most important integration artifact for OCI is `http://10.65.39.163:4000/openapi.json`.
+For the API review, the most important human-readable page is `http://10.65.39.163:4000/api-docs`. The most important integration artifact for OCI is `http://10.65.39.163:4000/openapi.json`.
 
 ---
 
@@ -77,7 +77,7 @@ Use these URLs over VPN.
 
 | Surface | URL | Used By |
 |---|---|---|
-| Browser UI | `http://10.65.39.163:3000` | Managers, support engineers, general testers |
+| Browser UI | `http://10.65.39.163:3000` | Business reviewers, support engineers, general testers |
 | Browser UI hostname | `http://celvpvm05798.us.oracle.com:3000` | Same UI through hostname |
 | Backend API base URL | `http://10.65.39.163:4000` | API testers, OCI automation reviewers |
 | Health check | `http://10.65.39.163:4000/health` | Quick API availability check |
@@ -130,24 +130,24 @@ Backend API on VM :4000
 
 | Tester Type | Recommended Sections |
 |---|---|
-| Managers / reviewers | Sections 6, 7, 8, 14, 15 |
+| Business / functional reviewers | Sections 6, 7, 8, 14, 15 |
 | Support engineers | Sections 6, 7, 8, 9, 10, 14, 15 |
 | Developers | Sections 9 through 18 |
 | OCI automation reviewers | Sections 10 through 18 |
 | Security/data reviewers | Sections 7, 8, 14, 16, 17 |
 
-For a short business review, complete the UI checklist and capture screenshots. For an API readiness review, complete the REST/OpenAPI tests.
+For a short functional review, complete the UI checklist and capture screenshots. For an API readiness review, complete the REST/OpenAPI tests.
 
 ### Recommended Testing Lanes
 
 | Lane | Time Required | Audience | Goal |
 |---|---:|---|---|
-| Executive smoke test | 15-20 minutes | Managers / reviewers | Confirm the tool is understandable and produces visible diagnostic value |
+| Functional smoke test | 15-20 minutes | Cross-functional reviewers | Confirm the tool is understandable and produces visible diagnostic value |
 | Support workflow test | 30-45 minutes | Support engineers | Confirm Analyzer, AI Insights, Request Flow, Console Log, and Compare workflows |
 | API/OpenAPI test | 30-60 minutes | Developers / OCI reviewers | Confirm REST upload, polling, summary, errors, context, and insights |
 | Stress/large-file test | Planned separately | Technical owners only | Confirm sizing behavior under larger files and high-entry HARs |
 
-Managers do not need to run every API command personally. They should confirm that the API flow is documented, repeatable, and produces evidence that a developer or OCI reviewer can validate.
+Not every reviewer needs to run API commands personally. The API evidence should be captured by a technical tester and should be clear enough for non-API reviewers to understand the outcome.
 
 ---
 
@@ -179,7 +179,7 @@ Do not upload customer-sensitive files unless the testing owner has approved the
 
 Use this for a 15 to 20 minute business/support validation.
 
-For managers: this is the minimum recommended demo validation. The tester should be able to explain what the tool found, which tab showed the evidence, and whether the finding is supported by request details or Request Flow.
+For a short walkthrough, this is the minimum recommended validation. The tester should be able to explain what the tool found, which tab showed the evidence, and whether the finding is supported by request details or Request Flow.
 
 | Step | Action | Expected Result |
 |---|---|---|
@@ -198,7 +198,7 @@ For managers: this is the minimum recommended demo validation. The tester should
 
 Testing passes when the user can move from upload to a clear diagnostic explanation without reading raw HAR JSON.
 
-Manager acceptance criteria:
+Walkthrough acceptance criteria:
 
 - The redaction/sanitization step is visible before analysis.
 - The Analyzer helps narrow the request set rather than showing only raw volume.
@@ -325,7 +325,7 @@ http://10.65.39.163:4000/health
 
 For OCI, `openapi.json` should be treated as the contract. The human-readable `/api-docs` page is for quick onboarding and manual validation.
 
-Manager emphasis:
+OpenAPI review emphasis:
 
 - `/api-docs` proves that the API is documented for human reviewers.
 - `/openapi.json` proves that the API is discoverable by automation tooling.
@@ -730,8 +730,8 @@ Evidence expectations by audience:
 
 | Audience | Minimum Evidence |
 |---|---|
-| Manager reviewer | UI screenshots showing upload/redaction, Analyzer filter, AI Insights, and Request Flow |
-| Support engineer | Same as manager, plus failed request details and diagnostic explanation |
+| Functional reviewer | UI screenshots showing upload/redaction, Analyzer filter, AI Insights, and Request Flow |
+| Support engineer | Same as functional reviewer, plus failed request details and diagnostic explanation |
 | Developer / OCI reviewer | API command, file ID, status response, v1 endpoint responses, and OpenAPI link |
 | Security/data reviewer | Redaction screen, sensitive-data handling notes, and retention/cleanup expectations |
 
