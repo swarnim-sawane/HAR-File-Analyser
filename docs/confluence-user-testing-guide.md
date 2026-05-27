@@ -34,6 +34,41 @@ The tool now also exposes REST/OpenAPI endpoints so automation flows, including 
 
 Recommended result of this testing cycle: confirm that the tool is usable by non-technical reviewers, useful for support engineers, and ready for OCI API evaluation with clear remaining gaps documented.
 
+### Manager Read This First
+
+This validation is not only checking whether the UI opens. It is checking whether the tool can become a reliable support diagnostic and automation surface.
+
+Managers should review three outcomes:
+
+| Question | What To Look For | Where To Validate |
+|---|---|---|
+| Can a support engineer diagnose faster? | Failed requests, auth/session issues, slow requests, and request sequence are easier to isolate than manual HAR review | Sections 7 and 8 |
+| Can OCI or another automation flow call the tool? | OpenAPI contract is reachable, REST upload works, status polling works, and v1 endpoints return structured output | Sections 9 through 14 |
+| Is the tool ready for broader internal testing? | Known risks are documented, evidence capture is defined, and failures have clear troubleshooting steps | Sections 18 through 22 |
+
+### Decision This Testing Supports
+
+At the end of testing, reviewers should be able to decide one of the following:
+
+| Decision | Meaning |
+|---|---|
+| Proceed with broader internal testing | UI and API flows work for approved test files, and defects are manageable |
+| Proceed with OCI/API evaluation only | REST/OpenAPI flows are ready for integration review, even if UI feedback remains open |
+| Hold for fixes | Core upload, processing, summary, or insight flows fail repeatedly |
+
+### Critical Links To Highlight In Confluence
+
+Place these links near the top of the Confluence page so reviewers do not have to search for them:
+
+| Link | Purpose |
+|---|---|
+| `http://10.65.39.163:3000` | Main tool UI for managers, support engineers, and general testers |
+| `http://10.65.39.163:4000/api-docs` | Human-readable API documentation page for developers and OCI reviewers |
+| `http://10.65.39.163:4000/openapi.json` | Machine-readable OpenAPI contract for automation integration |
+| `http://10.65.39.163:4000/health` | Quick backend availability check |
+
+For management review, the most important API page is `http://10.65.39.163:4000/api-docs`. The most important integration artifact for OCI is `http://10.65.39.163:4000/openapi.json`.
+
 ---
 
 ## 3. Deployed Environment
@@ -50,6 +85,13 @@ Use these URLs over VPN.
 | OpenAPI contract | `http://10.65.39.163:4000/openapi.json` | Machine-readable integration contract |
 
 Do not paste the full OpenAPI JSON into Confluence. Link to `openapi.json` so automation users always receive the live contract.
+
+Important:
+
+- Use the VM URLs above for shared testing.
+- Do not send testers to local development URLs.
+- If the UI works but API tests fail, capture the exact API URL, command, and response.
+- If API health fails, stop API testing and report the outage before continuing.
 
 ---
 
@@ -96,6 +138,17 @@ Backend API on VM :4000
 
 For a short business review, complete the UI checklist and capture screenshots. For an API readiness review, complete the REST/OpenAPI tests.
 
+### Recommended Testing Lanes
+
+| Lane | Time Required | Audience | Goal |
+|---|---:|---|---|
+| Executive smoke test | 15-20 minutes | Managers / reviewers | Confirm the tool is understandable and produces visible diagnostic value |
+| Support workflow test | 30-45 minutes | Support engineers | Confirm Analyzer, AI Insights, Request Flow, Console Log, and Compare workflows |
+| API/OpenAPI test | 30-60 minutes | Developers / OCI reviewers | Confirm REST upload, polling, summary, errors, context, and insights |
+| Stress/large-file test | Planned separately | Technical owners only | Confirm sizing behavior under larger files and high-entry HARs |
+
+Managers do not need to run every API command personally. They should confirm that the API flow is documented, repeatable, and produces evidence that a developer or OCI reviewer can validate.
+
 ---
 
 ## 6. Recommended Test Files
@@ -126,6 +179,8 @@ Do not upload customer-sensitive files unless the testing owner has approved the
 
 Use this for a 15 to 20 minute business/support validation.
 
+For managers: this is the minimum recommended demo validation. The tester should be able to explain what the tool found, which tab showed the evidence, and whether the finding is supported by request details or Request Flow.
+
 | Step | Action | Expected Result |
 |---|---|---|
 | 1 | Open `http://10.65.39.163:3000` | Upload/home screen loads |
@@ -142,6 +197,14 @@ Use this for a 15 to 20 minute business/support validation.
 | 12 | Try Compare with two HAR files | Differences in requests, failures, or timings are visible |
 
 Testing passes when the user can move from upload to a clear diagnostic explanation without reading raw HAR JSON.
+
+Manager acceptance criteria:
+
+- The redaction/sanitization step is visible before analysis.
+- The Analyzer helps narrow the request set rather than showing only raw volume.
+- AI Insights gives a concise explanation, not just a list of URLs.
+- Request Flow helps validate sequence-related conclusions.
+- The tester can capture screenshots and explain the evidence in plain language.
 
 ---
 
@@ -244,6 +307,8 @@ Expected result:
 
 The backend exposes a machine-readable OpenAPI 3.0.3 contract.
 
+This section is important for OCI and automation discussions. The API docs page is the human-readable guide, while the OpenAPI JSON is the contract that automation systems should import.
+
 | Endpoint | Purpose |
 |---|---|
 | `GET /api-docs` | Human-readable API documentation page |
@@ -260,11 +325,19 @@ http://10.65.39.163:4000/health
 
 For OCI, `openapi.json` should be treated as the contract. The human-readable `/api-docs` page is for quick onboarding and manual validation.
 
+Manager emphasis:
+
+- `/api-docs` proves that the API is documented for human reviewers.
+- `/openapi.json` proves that the API is discoverable by automation tooling.
+- `/api/v1/har/...` endpoints are the stable automation surface for HAR diagnostics.
+
 ---
 
 ## 10. REST/OpenAPI Test Flow
 
 Use this flow when testing the API without the UI.
+
+For normal engineers: follow the numbered flow exactly. Do not skip polling. The diagnostic endpoints should be called only after the uploaded file reaches `ready`.
 
 ```text
 1. Check backend health
@@ -286,6 +359,18 @@ Important behavior:
 - Server rejects chunks above the configured upload limit.
 - Worker must be running for status to reach `ready`.
 - API consumers should poll until `ready` before calling final analysis endpoints.
+
+What good looks like:
+
+```text
+health succeeds -> OpenAPI loads -> upload completes -> status becomes ready -> summary/errors/context/insights return structured data
+```
+
+What should be escalated:
+
+```text
+health fails, upload cannot complete, status remains processing for a long time, file enters error state, or v1 endpoints return unexpected 5xx errors
+```
 
 ---
 
@@ -418,6 +503,8 @@ Do not call final diagnostic endpoints until status is `ready`.
 
 Run after the file reaches `ready`.
 
+This is the most important API validation section. If OCI asks whether the tool has REST APIs enabled, this section demonstrates the answer.
+
 ```powershell
 Invoke-RestMethod "$baseUrl/api/v1/har/$fileId/summary"
 Invoke-RestMethod "$baseUrl/api/v1/har/$fileId/errors"
@@ -478,6 +565,16 @@ deterministic_fallback
 ```
 
 That is not automatically a test failure. It means the backend returned conservative rule-based findings instead of failing the diagnostic request.
+
+Minimum evidence for API readiness:
+
+- Screenshot or copied response from `/health`.
+- Screenshot or copied response showing OpenAPI `3.0.3`.
+- Upload response showing `fileId`.
+- Status response showing `ready`.
+- Summary response.
+- Errors response.
+- Insights response showing either `ai.source = oca` or `ai.source = deterministic_fallback`.
 
 ---
 
@@ -629,6 +726,15 @@ For every test round, capture:
 | Whether AI source was `oca` or `deterministic_fallback` | Yes, for AI test |
 | Business impact | Yes, for defects |
 
+Evidence expectations by audience:
+
+| Audience | Minimum Evidence |
+|---|---|
+| Manager reviewer | UI screenshots showing upload/redaction, Analyzer filter, AI Insights, and Request Flow |
+| Support engineer | Same as manager, plus failed request details and diagnostic explanation |
+| Developer / OCI reviewer | API command, file ID, status response, v1 endpoint responses, and OpenAPI link |
+| Security/data reviewer | Redaction screen, sensitive-data handling notes, and retention/cleanup expectations |
+
 ---
 
 ## 19. Feedback Template
@@ -674,6 +780,20 @@ The testing cycle is successful if:
 - REST/OpenAPI users can upload, poll, summarize, list errors, build AI context, and generate insights without using the UI.
 - The OpenAPI contract is reachable and contains the required automation endpoints.
 - Known limitations are documented rather than hidden.
+
+Partial pass is acceptable when:
+
+- UI analysis works but AI is temporarily unavailable and deterministic fallback behavior is documented.
+- Small and medium files pass but large-file testing is deferred to a planned sizing exercise.
+- API upload and summary work but OCI-specific authentication or gateway policy is still pending.
+
+Fail should be recorded when:
+
+- Upload fails for approved normal-size files.
+- Files do not reach `ready`.
+- Analyzer cannot show parsed requests.
+- OpenAPI contract is not reachable.
+- v1 summary/errors/insights endpoints fail for a ready file.
 
 ---
 
