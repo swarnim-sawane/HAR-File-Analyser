@@ -252,6 +252,8 @@ async function startServer() {
         status: 'ok',
         timestamp: new Date().toISOString(),
         services: {
+          documentStore: 'connected',
+          cache: 'connected',
           mongodb: 'connected',
           redis: 'connected',
           qdrant: 'connected'

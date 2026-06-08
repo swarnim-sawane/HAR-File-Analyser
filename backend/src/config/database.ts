@@ -1,5 +1,5 @@
 import { MongoClient, Db, type CreateIndexesOptions, type IndexSpecification } from 'mongodb';
-import Redis from 'ioredis';
+import Redis, { type RedisOptions } from 'ioredis';
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { reconcileConsoleLogEntryIndex } from './consoleLogIndexBootstrap';
 
@@ -7,6 +7,71 @@ let mongoClient: MongoClient;
 let db: Db;
 let redisClient: Redis;
 let qdrantClient: QdrantClient;
+
+interface CacheConnectionConfig {
+  url?: string;
+  options: RedisOptions;
+  description: string;
+}
+
+function parseBoolean(value: string | undefined): boolean {
+  return ['1', 'true', 'yes', 'on'].includes(String(value ?? '').trim().toLowerCase());
+}
+
+function parsePort(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function firstEnv(env: NodeJS.ProcessEnv, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = env[key];
+    if (value !== undefined && value !== '') return value;
+  }
+  return undefined;
+}
+
+export function buildCacheConnectionConfig(env: NodeJS.ProcessEnv = process.env): CacheConnectionConfig {
+  const url = firstEnv(env, ['OCI_CACHE_URL', 'CACHE_URL', 'REDIS_URL']);
+  const username = firstEnv(env, ['OCI_CACHE_USERNAME', 'CACHE_USERNAME', 'REDIS_USERNAME']);
+  const password = firstEnv(env, ['OCI_CACHE_PASSWORD', 'CACHE_PASSWORD', 'REDIS_PASSWORD']);
+  const tlsEnabled = parseBoolean(firstEnv(env, ['OCI_CACHE_TLS', 'CACHE_TLS', 'REDIS_TLS']));
+
+  const options: RedisOptions = {
+    retryStrategy: (times) => {
+      const delay = Math.min(times * 50, 2000);
+      return delay;
+    },
+    maxRetriesPerRequest: null, // Required for BullMQ
+    enableReadyCheck: false,
+    enableOfflineQueue: true,
+    ...(username ? { username } : {}),
+    ...(password ? { password } : {}),
+    ...(tlsEnabled ? { tls: {} } : {}),
+  };
+
+  if (url) {
+    return {
+      url,
+      options,
+      description: new URL(url).host,
+    };
+  }
+
+  const host = firstEnv(env, ['OCI_CACHE_HOST', 'CACHE_HOST', 'REDIS_HOST']) || 'localhost';
+  const port = parsePort(firstEnv(env, ['OCI_CACHE_PORT', 'CACHE_PORT', 'REDIS_PORT']), 6379);
+  const db = firstEnv(env, ['OCI_CACHE_DB', 'CACHE_DB', 'REDIS_DB']);
+
+  return {
+    options: {
+      ...options,
+      host,
+      port,
+      ...(db ? { db: Number.parseInt(db, 10) || 0 } : {}),
+    },
+    description: `${host}:${port}`,
+  };
+}
 
 interface ExistingMongoIndex {
   key?: Record<string, unknown>;
@@ -132,29 +197,22 @@ export async function connectDatabases() {
     
     console.log('✅ MongoDB indexes created');
     
-    // Redis - FIXED for BullMQ
-    redisClient = new Redis({
-      host: process.env.REDIS_HOST || 'localhost',
-      port: parseInt(process.env.REDIS_PORT || '6379'),
-      retryStrategy: (times) => {
-        const delay = Math.min(times * 50, 2000);
-        return delay;
-      },
-      maxRetriesPerRequest: null, // Required for BullMQ
-      enableReadyCheck: false,
-      enableOfflineQueue: true
-    });
+    // Cache/queue backend: local Redis-compatible service or Oracle-managed OCI Cache.
+    const cacheConfig = buildCacheConnectionConfig();
+    redisClient = cacheConfig.url
+      ? new Redis(cacheConfig.url, cacheConfig.options)
+      : new Redis(cacheConfig.options);
     
     redisClient.on('error', (err) => {
-      console.error('❌ Redis error:', err);
+      console.error('❌ Cache error:', err);
     });
     
     redisClient.on('connect', () => {
-      console.log('✅ Redis connected');
+      console.log(`✅ Cache connected: ${cacheConfig.description}`);
     });
     
     redisClient.on('ready', () => {
-      console.log('✅ Redis ready');
+      console.log('✅ Cache ready');
     });
     
     // Qdrant (Optional - for future AI embeddings)
