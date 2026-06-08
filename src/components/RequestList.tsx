@@ -1,5 +1,5 @@
 // src/components/RequestList.tsx
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowUp, ArrowDown, ArrowUpDown,
   CornerDownRight, HardDrive, Clock, AlertTriangle,
@@ -7,6 +7,7 @@ import {
 import { Entry } from '../types/har';
 import { HarAnalyzer } from '../utils/harAnalyzer';
 import { formatBytes, formatTime } from '../utils/formatters';
+import type { RequestFlowFocusPath } from '../utils/requestFlowFocus';
 
 export const formatTimestamp = (iso: string): string => {
   const tIdx = iso.indexOf('T');
@@ -69,6 +70,9 @@ interface RequestListProps {
   selectedEntry: Entry | null;
   onSelectEntry: (entry: Entry) => void;
   timingType: 'relative' | 'independent';
+  focusEntry?: Entry | null;
+  focusPath?: RequestFlowFocusPath | null;
+  scrollToSelectedSignal?: number;
 }
 
 type SortField = 'status' | 'method' | 'url' | 'size' | 'time' | 'timestamp';
@@ -79,9 +83,14 @@ const RequestList: React.FC<RequestListProps> = ({
   selectedEntry,
   onSelectEntry,
   timingType,
+  focusEntry = null,
+  focusPath = null,
+  scrollToSelectedSignal = 0,
 }) => {
   const [sortField, setSortField] = useState<SortField>('timestamp');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+  const selectedRowRef = useRef<HTMLDivElement | null>(null);
+  const handledScrollSignalRef = useRef(0);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -129,6 +138,19 @@ const RequestList: React.FC<RequestListProps> = ({
     return Math.max(...entries.map(e => e.time), 1);
   }, [entries]);
 
+  useEffect(() => {
+    if (!selectedEntry || scrollToSelectedSignal <= 0) return;
+    if (handledScrollSignalRef.current === scrollToSelectedSignal) return;
+    if (!selectedRowRef.current) return;
+
+    selectedRowRef.current.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center',
+      inline: 'nearest',
+    });
+    handledScrollSignalRef.current = scrollToSelectedSignal;
+  }, [scrollToSelectedSignal, selectedEntry, sortedEntries]);
+
   const getStatusClass = (status: number): string => {
     if (status >= 200 && status < 300) return 'status-2xx';
     if (status >= 300 && status < 400) return 'status-3xx';
@@ -146,6 +168,8 @@ const RequestList: React.FC<RequestListProps> = ({
 
   const renderEntry = (entry: Entry, index: number) => {
     const isSelected = selectedEntry === entry;
+    const isFocusEntry = focusEntry === entry && Boolean(focusPath);
+    const focusLabel = focusPath?.confidence === 'low' ? 'Worth checking' : 'Likely issue';
     const timingBreakdown = HarAnalyzer.getTimingBreakdown(entry);
     const totalTime = entry.time;
     const badges = getAnalysisBadges(entry);
@@ -153,7 +177,8 @@ const RequestList: React.FC<RequestListProps> = ({
     return (
       <div
         key={index}
-        className={`request-item ${isSelected ? 'selected' : ''}`}
+        ref={isSelected ? selectedRowRef : null}
+        className={`request-item ${isSelected ? 'selected' : ''} ${isFocusEntry ? 'likely-issue' : ''} ${isFocusEntry && focusPath?.confidence === 'low' ? 'focus-low' : ''}`}
         onClick={() => onSelectEntry(entry)}
       >
         <span
@@ -171,6 +196,11 @@ const RequestList: React.FC<RequestListProps> = ({
           <span className="request-url" title={entry.request.url}>
             {entry.request.url}
           </span>
+          {isFocusEntry && (
+            <span className="request-focus-pill" title={focusPath?.summary}>
+              {focusLabel}
+            </span>
+          )}
           {badges.length > 0 && (
             <span className="analysis-badges">
               {badges.map(b => (

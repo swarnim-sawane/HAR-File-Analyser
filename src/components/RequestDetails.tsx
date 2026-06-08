@@ -1,19 +1,42 @@
 // src/components/RequestDetails.tsx
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Entry } from '../types/har';
 import { HarAnalyzer } from '../utils/harAnalyzer';
 import { formatBytes, formatCapturedDate, formatTime } from '../utils/formatters';
+import type { RequestFlowFocusPath, RequestFlowNextInspection } from '../utils/requestFlowFocus';
 
 interface RequestDetailsProps {
     entry: Entry;
     onClose: () => void;
+    focusPath?: RequestFlowFocusPath | null;
 }
 
 type TabType = 'request' | 'response' | 'response headers' | 'request headers' | 'cookies' | 'timing';
 
-const RequestDetails: React.FC<RequestDetailsProps> = ({ entry, onClose }) => {
-    const [activeTab, setActiveTab] = useState<TabType>('request');
+function getTabForInspection(nextInspection?: RequestFlowNextInspection): TabType {
+    switch (nextInspection) {
+        case 'headers':
+            return 'response headers';
+        case 'response':
+        case 'preview':
+            return 'response';
+        case 'timings':
+            return 'timing';
+        case 'initiator':
+        case 'general':
+        default:
+            return 'request';
+    }
+}
+
+const RequestDetails: React.FC<RequestDetailsProps> = ({ entry, onClose, focusPath = null }) => {
+    const [activeTab, setActiveTab] = useState<TabType>(() => getTabForInspection(focusPath?.nextInspection));
     const [copied, setCopied] = useState(false);
+    const focusLabel = focusPath?.confidence === 'low' ? 'Worth checking' : 'Likely issue';
+
+    useEffect(() => {
+        setActiveTab(getTabForInspection(focusPath?.nextInspection));
+    }, [entry, focusPath?.nextInspection]);
 
     const copyToClipboard = async (text: string) => {
     try {
@@ -459,6 +482,22 @@ const RequestDetails: React.FC<RequestDetailsProps> = ({ entry, onClose }) => {
                 <h3>Request Details</h3>
                 <button className="btn-close" onClick={onClose}>×</button>
             </div>
+
+            {focusPath && (
+                <div className={`request-focus-summary tone-${focusPath.confidence}`}>
+                    <div className="request-focus-summary-head">
+                        <span className="request-focus-pill">{focusLabel}</span>
+                        <span className="request-focus-summary-copy">{focusPath.summary}</span>
+                    </div>
+                    {focusPath.reasonLabels.length > 0 && (
+                        <div className="request-focus-chip-list" aria-label="Focus evidence">
+                            {focusPath.reasonLabels.map((label) => (
+                                <span key={label} className="request-focus-chip">{label}</span>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
 
             <div className="details-tabs">
                 <button className={`tab ${activeTab === 'request' ? 'active' : ''}`} onClick={() => setActiveTab('request')}>

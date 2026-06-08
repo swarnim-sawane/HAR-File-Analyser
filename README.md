@@ -154,6 +154,12 @@ For day-to-day local testing, you can start the frontend, backend API, and worke
 npm run dev:all
 ```
 
+Expected result:
+
+- Frontend starts on `http://localhost:3000`
+- Backend API starts on `http://localhost:4000`
+- Worker starts and processes queued HAR/console log uploads
+
 This is only a local convenience wrapper. It still starts the same three separate processes used by the normal architecture.
 
 ### Start the backend API

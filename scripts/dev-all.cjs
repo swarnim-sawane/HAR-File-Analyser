@@ -14,7 +14,7 @@ const services = [
   { name: 'worker', cwd: backendDir, args: ['run', 'dev:worker'] },
 ];
 
-if (process.argv.includes('--dry-run')) {
+if (process.argv.includes('--dry-run') || process.env.npm_config_dry_run === 'true') {
   for (const service of services) {
     const { command, args } = getSpawnCommand(service);
     console.log(`${service.name}: ${command} ${args.join(' ')} (cwd: ${service.cwd})`);

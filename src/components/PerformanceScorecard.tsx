@@ -22,6 +22,7 @@ import {
 
 interface ScorecardProps {
   harData: HarFile;
+  onSelectRequest?: (entry: Entry) => void;
 }
 
 type Level = 'err' | 'warn' | 'ok' | 'info';
@@ -694,7 +695,7 @@ const FindingCard: React.FC<{ finding: Finding }> = ({ finding }) => (
   </article>
 );
 
-const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData }) => {
+const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData, onSelectRequest }) => {
   const { score, data, findings, scoreRules } = useMemo(() => {
     const entries = harData.log.entries;
     if (entries.length === 0) {
@@ -899,9 +900,9 @@ const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData }) => {
             const badgeLabel = entry.response.status >= 400 ? 'Error' : entry.response.status >= 300 ? 'Redirect' : 'Observed';
             const badgeTone = entry.response.status >= 400 ? 'danger' : 'info';
             const barWidth = `${Math.max(10, Math.round((time / maxTime) * 100))}%`;
-
-            return (
-              <article key={`${entry.request.method}-${entry.request.url}-${entry.startedDateTime}`} className="scorecard-traffic-card">
+            const requestKey = `${entry.request.method}-${entry.request.url}-${entry.startedDateTime}`;
+            const requestCardContent = (
+              <>
                 <div className="scorecard-traffic-head">
                   <strong title={entry.request.url}>{getPathLabel(entry.request.url)}</strong>
                   <div className="scorecard-traffic-metrics">
@@ -930,6 +931,26 @@ const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData }) => {
                     <strong>{fmtB(getTransferSize(entry))}</strong>
                   </div>
                 </div>
+              </>
+            );
+
+            if (onSelectRequest) {
+              return (
+                <button
+                  key={requestKey}
+                  type="button"
+                  className="scorecard-traffic-card is-clickable"
+                  onClick={() => onSelectRequest(entry)}
+                  aria-label={`Open request details for ${entry.request.method} ${entry.request.url}`}
+                >
+                  {requestCardContent}
+                </button>
+              );
+            }
+
+            return (
+              <article key={requestKey} className="scorecard-traffic-card">
+                {requestCardContent}
               </article>
             );
           })}

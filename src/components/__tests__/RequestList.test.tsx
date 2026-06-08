@@ -1,6 +1,6 @@
 // src/components/__tests__/RequestList.test.tsx
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import RequestList, { formatTimestamp } from '../RequestList';
 import { Entry } from '../../types/har';
@@ -142,5 +142,34 @@ describe('RequestList — analysis badges', () => {
     expect(screen.queryByTitle('Cached')).not.toBeInTheDocument();
     expect(screen.queryByTitle('Slow (>3s)')).not.toBeInTheDocument();
     expect(screen.queryByTitle('Large response (>1MB)')).not.toBeInTheDocument();
+  });
+});
+
+describe('RequestList — selected row scrolling', () => {
+  it('scrolls the selected request row into view when a scroll signal changes', async () => {
+    const scrollIntoView = vi.fn();
+    window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    const selectedEntry = makeEntry({
+      startedDateTime: '2026-03-18T06:18:00.000Z',
+      request: { ...makeEntry().request, url: 'https://example.com/api/selected' },
+    });
+
+    render(
+      <RequestList
+        entries={[makeEntry(), selectedEntry]}
+        selectedEntry={selectedEntry}
+        onSelectEntry={noop}
+        timingType="relative"
+        scrollToSelectedSignal={1}
+      />
+    );
+
+    await waitFor(() => {
+      expect(scrollIntoView).toHaveBeenCalledWith({
+        behavior: 'smooth',
+        block: 'center',
+        inline: 'nearest',
+      });
+    });
   });
 });
