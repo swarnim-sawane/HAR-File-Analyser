@@ -133,6 +133,9 @@ Console priority override:
 - blocked by CORS policy, failed preflight access-control checks, and missing Access-Control-Allow-Origin are high-priority root-cause signals.
 - TypeError: Failed to fetch is a browser symptom when paired with CORS/preflight evidence, not the root cause.
 - For CORS evidence on /ords/ endpoints, name the owning layer as ORDS/proxy CORS, not generic VBCS. Recommend fixing OPTIONS/preflight headers and allowed origins.
+- If CORS_PREFLIGHT_EVIDENCE shows an OPTIONS response without Access-Control-Allow-Origin, or a paired request with status=0, treat that as the root CORS/preflight failure before any favicon/static 401.
+- NETWORK FAILURES / STATUS 0 indicates a browser-blocked, aborted, or otherwise response-less request. Correlate it with CORS_PREFLIGHT_EVIDENCE before calling it connectivity.
+- LOW-PRIORITY STATIC ASSET ERRORS are supporting noise unless the main document, app bundle, or API call is affected. Do not name favicon.ico, icons, fonts, maps, or images as root cause when application failure evidence exists.
 
 Context field guide:
 - 5XX SERVER ERRORS / HTTP 5XX SERVER ERRORS IN LOGS sections contain the highest-priority findings — always produce at least one finding for every distinct 5xx endpoint before reporting performance issues.

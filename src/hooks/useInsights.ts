@@ -1,6 +1,6 @@
 // src/hooks/useInsights.ts
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { HarFile } from '../types/har';
+import { Entry, HarFile } from '../types/har';
 
 export type InsightSeverity = 'critical' | 'high' | 'medium' | 'low';
 export type InsightHealth = 'critical' | 'degraded' | 'warning' | 'healthy';
@@ -39,13 +39,83 @@ interface UseInsightsReturn {
 }
 
 const insightsCache = new Map<string, InsightsResult>();
+const STATIC_ASSET_PATTERN = /\.(?:avif|bmp|css|gif|ico|jpe?g|js|map|mjs|mp4|otf|png|svg|ttf|webp|woff2?)(?:$|[?#])/i;
+
+function getHeader(headers: Array<{ name: string; value: string }> | undefined, name: string): string {
+  return headers?.find((header) => header.name.toLowerCase() === name.toLowerCase())?.value ?? '';
+}
+
+function pathFromUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    return `${url.hostname}${url.pathname}`;
+  } catch {
+    return value;
+  }
+}
+
+function endpointKey(entry: Entry): string {
+  return pathFromUrl(entry.request.url).toLowerCase();
+}
+
+function isStaticAsset(entry: Entry): boolean {
+  const mime = entry.response.content?.mimeType ?? '';
+  return STATIC_ASSET_PATTERN.test(entry.request.url) || /^(?:image|font)\//i.test(mime);
+}
+
+function isNetworkFailure(entry: Entry): boolean {
+  return entry.response.status === 0;
+}
+
+function isFailedEntry(entry: Entry): boolean {
+  return entry.response.status >= 400 || isNetworkFailure(entry);
+}
+
+function buildCorsPreflightEvidence(entries: Entry[]): string[] {
+  const lines: string[] = [];
+
+  for (const preflight of entries) {
+    if (preflight.request.method.toUpperCase() !== 'OPTIONS') continue;
+
+    const origin = getHeader(preflight.request.headers, 'origin');
+    const requestedMethod = getHeader(preflight.request.headers, 'access-control-request-method');
+    if (!origin || !requestedMethod) continue;
+
+    const allowOrigin = getHeader(preflight.response.headers, 'access-control-allow-origin');
+    const allowOriginMatches =
+      allowOrigin === '*' || allowOrigin.toLowerCase() === origin.toLowerCase();
+    const pairedRequest = entries.find((entry) =>
+      entry !== preflight &&
+      entry.request.method.toUpperCase() === requestedMethod.toUpperCase() &&
+      endpointKey(entry) === endpointKey(preflight) &&
+      isNetworkFailure(entry)
+    );
+
+    if (allowOrigin && allowOriginMatches && !pairedRequest) continue;
+
+    lines.push([
+      `OPTIONS ${pathFromUrl(preflight.request.url)} status=${preflight.response.status}`,
+      `origin=${origin}`,
+      `requested_method=${requestedMethod.toUpperCase()}`,
+      `requested_headers=${getHeader(preflight.request.headers, 'access-control-request-headers') || 'none'}`,
+      `access-control-allow-origin=${allowOrigin || 'missing'}`,
+      pairedRequest ? `paired_request=${pairedRequest.request.method} ${pathFromUrl(pairedRequest.request.url)} status=0` : '',
+    ].filter(Boolean).join(' '));
+  }
+
+  return lines;
+}
 
 export function buildHarContext(harData: HarFile): string {
   const entries = harData.log.entries;
-  const errors = entries.filter((e) => e.response.status >= 400);
+  const errors = entries.filter(isFailedEntry);
+  const httpErrors = entries.filter((e) => e.response.status >= 400);
+  const staticHttpErrors = httpErrors.filter(isStaticAsset);
+  const applicationErrors = errors.filter((e) => !isStaticAsset(e));
+  const networkFailures = entries.filter(isNetworkFailure);
   // Split errors by HTTP severity tier for priority-ordered analysis
-  const serverErrors = errors.filter((e) => e.response.status >= 500);          // 5xx
-  const clientErrors = errors.filter((e) => e.response.status >= 400 && e.response.status < 500); // 4xx
+  const serverErrors = applicationErrors.filter((e) => e.response.status >= 500);          // 5xx
+  const clientErrors = applicationErrors.filter((e) => e.response.status >= 400 && e.response.status < 500); // 4xx
   const totalMs = entries.reduce((s, e) => s + e.time, 0);
   const domains = [
     ...new Set(
@@ -70,7 +140,7 @@ export function buildHarContext(harData: HarFile): string {
   );
   const finalEntry = [...sortedByStart].reverse().find((e) => {
     const mime = e.response.content?.mimeType ?? '';
-    return mime.includes('html') || mime.includes('json') || e.response.status >= 400;
+    return !isStaticAsset(e) && (mime.includes('html') || mime.includes('json') || isFailedEntry(e));
   }) ?? sortedByStart[sortedByStart.length - 1];
   let finalUrl = '';
   try { finalUrl = new URL(finalEntry?.request.url ?? '').pathname; } catch { finalUrl = finalEntry?.request.url ?? ''; }
@@ -78,7 +148,10 @@ export function buildHarContext(harData: HarFile): string {
 
   // Known error page path patterns — used to flag chains ending on error pages
   const ERROR_PATH_PATTERNS = /servererror|errorpage|error\.jsp|\/error\b|\/oops|\/unavailable|\/fault/i;
-  const endsOnErrorPage = ERROR_PATH_PATTERNS.test(finalUrl) || finalStatus >= 400;
+  const endsOnErrorPage =
+    Boolean(finalEntry) &&
+    !isStaticAsset(finalEntry) &&
+    (ERROR_PATH_PATTERNS.test(finalUrl) || finalStatus >= 400 || finalStatus === 0);
 
   // ── Redirect chain detection ───────────────────────────────────────────────
   // Group sequential redirects into chains so the AI sees the compounding flow.
@@ -90,6 +163,8 @@ export function buildHarContext(harData: HarFile): string {
     `requests:${entries.length}`,
     serverErrors.length > 0 ? `5xx:${serverErrors.length}` : null,
     clientErrors.length > 0 ? `4xx:${clientErrors.length}` : null,
+    networkFailures.length > 0 ? `network_failures:${networkFailures.length}` : null,
+    staticHttpErrors.length > 0 ? `static_4xx:${staticHttpErrors.length}` : null,
     redirects.length > 0 ? `3xx:${redirects.length}` : null,
     `domains:${domains.length}`,
     `total_session:${sessionMs.toFixed(0)}ms`,
@@ -123,7 +198,7 @@ export function buildHarContext(harData: HarFile): string {
         let locPath = '';
         try { locPath = new URL(loc).pathname; } catch { locPath = loc; }
 
-        const isError = ERROR_PATH_PATTERNS.test(path) || e.response.status >= 400;
+        const isError = !isStaticAsset(e) && (ERROR_PATH_PATTERNS.test(path) || isFailedEntry(e));
         const errorFlag = isError ? ' ⚠ ERROR_DEST' : '';
         const redirectArrow = locPath ? ` → ${locPath}` : '';
 
@@ -177,9 +252,25 @@ export function buildHarContext(harData: HarFile): string {
     return `${e.request.method} ${path} status:${e.response.status} totalms:${e.time.toFixed(0)}ms`;
   });
 
+  const networkFailureLines = networkFailures.slice(0, 10).map((e) => {
+    let path = e.request.url;
+    try { const u = new URL(e.request.url); path = u.hostname + u.pathname; } catch { /* keep raw */ }
+    const t = e.timings ?? {};
+    const blocked = (t.blocked ?? -1) >= 0 ? ` blocked=${(t.blocked ?? 0).toFixed(0)}ms` : '';
+    return `${e.request.method} ${path} status:0 totalms:${e.time.toFixed(0)}ms${blocked}`;
+  });
+
+  const staticAssetErrorLines = staticHttpErrors.slice(0, 10).map((e) => {
+    let path = e.request.url;
+    try { const u = new URL(e.request.url); path = u.hostname + u.pathname; } catch { /* keep raw */ }
+    return `${e.request.method} ${path} status:${e.response.status} totalms:${e.time.toFixed(0)}ms`;
+  });
+
+  const corsPreflightLines = buildCorsPreflightEvidence(sortedByStart);
+
   // ── Error Clusters: same endpoint failing repeatedly ────────────────────────
   const errorClusterMap = new Map<string, { count: number; statuses: number[] }>();
-  for (const e of errors) {
+  for (const e of applicationErrors) {
     let path = e.request.url;
     try { const u = new URL(e.request.url); path = u.hostname + u.pathname; } catch { /* keep raw */ }
     const key = `${e.request.method} ${path}`;
@@ -207,6 +298,12 @@ export function buildHarContext(harData: HarFile): string {
   const parts = [
     `HAR SUMMARY: ${summary}`,
     ...(redirectChainSection ? [redirectChainSection] : []),
+    ...(corsPreflightLines.length
+      ? [`CORS_PREFLIGHT_EVIDENCE (${corsPreflightLines.length} total - inspect before static/auth noise):\n${corsPreflightLines.join('\n')}`]
+      : []),
+    ...(applicationErrors.length === 0 && staticAssetErrorLines.length > 0
+      ? ['NO_DECISIVE_APPLICATION_FAILURE only static asset failures are present; do not treat favicon/icon/static asset 401/404 as the root cause of the user flow']
+      : []),
     // 5xx is highest priority — placed before slow-request analysis
     ...(serverErrorLines.length
       ? [`5XX SERVER ERRORS (${serverErrors.length} total — analyse first, highest severity):\n${serverErrorLines.join('\n')}`]
@@ -215,9 +312,15 @@ export function buildHarContext(harData: HarFile): string {
     ...(clientErrorLines.length
       ? [`4XX CLIENT ERRORS (${clientErrors.length} total):\n${clientErrorLines.join('\n')}`]
       : []),
+    ...(networkFailureLines.length
+      ? [`NETWORK FAILURES / STATUS 0 (${networkFailures.length} total - inspect CORS/preflight, blocked requests, or aborted browser fetches):\n${networkFailureLines.join('\n')}`]
+      : []),
     // Repeated failures on same endpoint
     ...(errorClusterLines.length
       ? [`ERROR CLUSTERS (same endpoint failing repeatedly — look for cascades):\n${errorClusterLines.join('\n')}`]
+      : []),
+    ...(staticAssetErrorLines.length
+      ? [`LOW-PRIORITY STATIC ASSET ERRORS (${staticHttpErrors.length} total - do not treat favicon/icon/static asset failures as root cause unless the main page/app bundle is affected):\n${staticAssetErrorLines.join('\n')}`]
       : []),
     // Performance slow-path last (2xx timing analysis)
     `TOP SLOW:\n${topSlow.join('\n')}`,
