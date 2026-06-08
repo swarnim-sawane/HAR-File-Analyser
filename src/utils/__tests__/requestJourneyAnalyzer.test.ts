@@ -229,14 +229,14 @@ describe('analyzeJourney', () => {
 
     expect(callbackPhase?.summary).toMatch(/returned control/i);
     expect(staticPhase?.domains).toEqual(['static.oracle.com']);
-    expect(staticPhase?.issues.map((issue) => issue.title).join(' ')).toMatch(/static dependency burst/i);
+    expect(staticPhase?.issues.map((issue) => issue.title).join(' ')).toMatch(/static load/i);
     expect(staticPhase?.stats.bytes).toBeGreaterThan(9 * 1024 * 1024);
     expect(consentPhase?.stats.status0Count).toBe(1);
     expect(consentPhase?.stats.errorCount).toBe(0);
-    expect(consentPhase?.issues.map((issue) => issue.title).join(' ')).toMatch(/cancelled or blocked/i);
+    expect(consentPhase?.issues.map((issue) => issue.title).join(' ')).toMatch(/1 consent request cancelled/i);
     expect(logoutPhase?.stats.redirectCount).toBe(2);
     expect(logoutPhase?.stats.errorCount).toBe(1);
-    expect(logoutPhase?.issues.map((issue) => issue.title).join(' ')).toMatch(/logout endpoint returned 404/i);
+    expect(logoutPhase?.issues.map((issue) => issue.title).join(' ')).toMatch(/logout returned 404/i);
   });
 
   it('classifies long 101 event requests as persistent connections instead of slow errors', () => {

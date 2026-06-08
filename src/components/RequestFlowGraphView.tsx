@@ -8,7 +8,7 @@ import ReactFlow, {
   useEdgesState,
   useNodesState,
 } from 'reactflow';
-import type { Edge, Node } from 'reactflow';
+import type { Edge, Node, ReactFlowInstance } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { Entry, FilterOptions } from '../types/har';
 import type { RequestFlowFocusMode } from '../types/requestFlow';
@@ -17,6 +17,7 @@ import {
   requestMatchesFlowFocus,
 } from '../utils/requestFlowFilters';
 import { analyzeFlow, TYPE_COLOR, type ZoneRequest } from '../utils/requestFlowAnalyzer';
+import { analyzeRequestFlowFocus, type RequestFlowFocusPath } from '../utils/requestFlowFocus';
 import { AlertIcon, FlameIcon, GlobeIcon, SearchIcon, SparklesIcon } from './Icons';
 import {
   DefaultNode,
@@ -31,6 +32,9 @@ interface RequestFlowGraphViewProps {
   onFiltersChange: (filters: Partial<FilterOptions>) => void;
   focusMode: RequestFlowFocusMode;
   onFocusModeChange: (mode: RequestFlowFocusMode) => void;
+  issueFocusPath?: RequestFlowFocusPath | null;
+  issueFocusEnabled?: boolean;
+  onIssueFocusEnabledChange?: (enabled: boolean) => void;
   onNodeClick?: (entry: Entry) => void;
 }
 
@@ -38,15 +42,6 @@ const NODE_TYPES = {
   request: DefaultNode,
   requestError: ErrorNode,
 };
-
-const LEGEND_ITEMS = [
-  { label: 'Document', color: TYPE_COLOR.document },
-  { label: 'Script', color: TYPE_COLOR.script },
-  { label: 'XHR', color: TYPE_COLOR.xhr },
-  { label: 'Stylesheet', color: TYPE_COLOR.stylesheet },
-  { label: 'Image', color: TYPE_COLOR.image },
-  { label: 'Error', color: '#ef4444' },
-];
 
 const STATUS_FILTERS: Array<{ code: keyof FilterOptions['statusCodes']; label: string }> = [
   { code: '0', label: '0' },
@@ -75,11 +70,31 @@ const parseHostname = (url: string) => {
   }
 };
 
+const getErrorJumpPathLabel = (url: string) => {
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname || '/';
+  } catch {
+    return url.split('?')[0] || url;
+  }
+};
+
+const compactPathLabel = (path: string, maxLength = 34) => {
+  if (path.length <= maxLength) return path;
+
+  const segments = path.split('/').filter(Boolean);
+  const lastSegment = segments[segments.length - 1];
+  if (lastSegment && lastSegment.length + 2 <= maxLength) return `/${lastSegment}`;
+
+  return `${path.slice(0, maxLength - 1)}…`;
+};
+
 function buildGraphElements(
   entries: Entry[],
   onEntrySelect?: (entryIndex: number) => void
 ) {
   const flowData = analyzeFlow(entries);
+  const focusPath = analyzeRequestFlowFocus(entries);
   const requestByIndex = new Map<number, ZoneRequest>();
   const domainMetaByIndex = new Map<number, { domainLabel: string; productLabel?: string }>();
 
@@ -137,9 +152,18 @@ function buildGraphElements(
       data: {
         type,
         status: request?.status ?? entry.response.status,
+        statusText: entry.response.statusText,
         method: request?.method ?? entry.request.method,
         url: request?.url ?? entry.request.url,
         time: request?.time ?? entry.time,
+        startedDateTime: entry.startedDateTime,
+        mimeType: entry.response.content?.mimeType,
+        responseSize:
+          typeof entry.response.content?.size === 'number' && entry.response.content.size >= 0
+            ? entry.response.content.size
+            : entry.response.bodySize,
+        requestSize: entry.request.bodySize,
+        timings: entry.timings,
         isSlow: request?.isSlow ?? (entry.time || 0) >= flowData.p90,
         entryIndex: index,
         domainLabel: domainMeta?.domainLabel || domain,
@@ -198,6 +222,7 @@ function buildGraphElements(
     nodes,
     edges,
     criticalNodeIds: Array.from(criticalNodeIds),
+    focusPath,
     totalRequests,
     failedCount,
     slowCount,
@@ -234,11 +259,18 @@ const RequestFlowGraphView: React.FC<RequestFlowGraphViewProps> = ({
   onFiltersChange,
   focusMode,
   onFocusModeChange,
+  issueFocusPath,
+  issueFocusEnabled,
+  onIssueFocusEnabledChange,
   onNodeClick,
 }) => {
   const onNodeClickRef = useRef(onNodeClick);
   const searchInputId = useId();
-  const [highlightCriticalPath, setHighlightCriticalPath] = useState(false);
+  const reactFlowInstanceRef = useRef<ReactFlowInstance | null>(null);
+  const hasAutoFitFocusRef = useRef<string | null>(null);
+  const [focusLikelyIssue, setFocusLikelyIssue] = useState(true);
+  const [selectedErrorNodeId, setSelectedErrorNodeId] = useState<string | null>(null);
+  const [previewNodeId, setPreviewNodeId] = useState<string | null>(null);
 
   useEffect(() => {
     onNodeClickRef.current = onNodeClick;
@@ -258,19 +290,52 @@ const RequestFlowGraphView: React.FC<RequestFlowGraphViewProps> = ({
     () => buildGraphElements(entries, handleEntrySelection),
     [entries, handleEntrySelection]
   );
+  const errorJumpItems = useMemo(
+    () =>
+      entries
+        .map((entry, index) => ({
+          index,
+          status: entry.response.status,
+          pathLabel: compactPathLabel(getErrorJumpPathLabel(entry.request.url)),
+        }))
+        .filter((item) => item.status >= 400),
+    [entries]
+  );
   const visibleRequestIndexes = useMemo(
     () => getVisibleRequestIndexes(entries, visibleEntries),
     [entries, visibleEntries]
   );
   const {
-    criticalNodeIds,
+    focusPath: computedFocusPath,
     totalRequests,
     failedCount,
     slowCount,
-    successRate,
     p90,
   } = graphModel;
-  const criticalNodeIdSet = useMemo(() => new Set(criticalNodeIds), [criticalNodeIds]);
+  const focusPath = issueFocusPath ?? computedFocusPath;
+  const focusLikelyIssueActive = issueFocusEnabled ?? focusLikelyIssue;
+  const focusAnchorLabel = focusPath?.confidence === 'low' ? 'Worth checking' : 'Likely issue';
+  const focusNodeIdSet = useMemo(
+    () => new Set((focusPath?.nodeIndexes ?? []).map((index) => `request-${index}`)),
+    [focusPath]
+  );
+  const focusAnchorNodeId = focusPath ? `request-${focusPath.anchorIndex}` : null;
+  const focusStepByNodeId = useMemo(() => {
+    const steps = new Map<string, number>();
+    if (!focusPath) return steps;
+
+    const orderedIndexes = [
+      focusPath.anchorIndex,
+      ...focusPath.nodeIndexes.filter((index) => index !== focusPath.anchorIndex),
+    ];
+
+    orderedIndexes.forEach((index, pathIndex) => {
+      steps.set(`request-${index}`, pathIndex + 1);
+    });
+
+    return steps;
+  }, [focusPath]);
+  const focusPrimaryReason = focusPath?.reasonLabels[0] ?? focusPath?.summary ?? '';
   const [nodes, setNodes, onNodesChange] = useNodesState(graphModel.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(graphModel.edges);
 
@@ -278,6 +343,28 @@ const RequestFlowGraphView: React.FC<RequestFlowGraphViewProps> = ({
     setNodes(graphModel.nodes);
     setEdges(graphModel.edges);
   }, [graphModel, setEdges, setNodes]);
+
+  useEffect(() => {
+    setSelectedErrorNodeId(null);
+    setPreviewNodeId(null);
+  }, [entries]);
+
+  useEffect(() => {
+    if (!focusLikelyIssueActive || !focusPath || !reactFlowInstanceRef.current) return;
+
+    const focusKey = `${focusPath.anchorIndex}:${focusPath.nodeIndexes.join(',')}`;
+    if (hasAutoFitFocusRef.current === focusKey) return;
+
+    hasAutoFitFocusRef.current = focusKey;
+    window.requestAnimationFrame(() => {
+      reactFlowInstanceRef.current?.fitView({
+        nodes: focusPath.nodeIndexes.map((index) => ({ id: `request-${index}` })),
+        padding: 0.28,
+        maxZoom: 1.05,
+        duration: 500,
+      });
+    });
+  }, [focusLikelyIssueActive, focusPath]);
 
   const focusedNodeIdSet = useMemo(() => {
     const focused = new Set<string>();
@@ -312,12 +399,31 @@ const RequestFlowGraphView: React.FC<RequestFlowGraphViewProps> = ({
     [onFiltersChange]
   );
 
+  const handleErrorJump = useCallback(
+    (entryIndex: number) => {
+      const nodeId = `request-${entryIndex}`;
+      setSelectedErrorNodeId(nodeId);
+      reactFlowInstanceRef.current?.fitView({
+        nodes: [{ id: nodeId }],
+        padding: 0.62,
+        maxZoom: 1.12,
+        duration: 420,
+      });
+    },
+    []
+  );
+
   const renderedNodes = useMemo(
     () =>
       nodes.map((node) => {
-        const isCritical = highlightCriticalPath && criticalNodeIdSet.has(node.id);
+        const isIssueFocused = focusLikelyIssueActive && Boolean(focusPath);
+        const isFocusPath = isIssueFocused && focusNodeIdSet.has(node.id);
+        const isFocusAnchor = isIssueFocused && node.id === focusAnchorNodeId;
+        const isErrorJumpSelected = selectedErrorNodeId === node.id;
+        const isPreviewOpen = previewNodeId === node.id;
         const matchesFlowVisibility = focusedNodeIdSet.has(node.id);
-        const isDimmed = !matchesFlowVisibility || (highlightCriticalPath && !isCritical);
+        const isCritical = Boolean(isFocusPath || isErrorJumpSelected);
+        const isDimmed = !matchesFlowVisibility || (isIssueFocused && !isFocusPath && !isErrorJumpSelected);
 
         return {
           ...node,
@@ -325,31 +431,55 @@ const RequestFlowGraphView: React.FC<RequestFlowGraphViewProps> = ({
             ...node.data,
             isCritical,
             isDimmed,
+            isFocusPath,
+            isFocusAnchor,
+            isErrorJumpSelected,
+            focusLabel: focusAnchorLabel,
+            focusSeverity: focusPath?.severity,
+            focusStep: isFocusPath ? focusStepByNodeId.get(node.id) : undefined,
+            focusReason: isFocusAnchor ? focusPrimaryReason : undefined,
+            onPreviewOpen: () => setPreviewNodeId(node.id),
+            onPreviewClose: () => setPreviewNodeId((current) => current === node.id ? null : current),
           },
           style: {
             ...(node.style || {}),
-            zIndex: isCritical ? 2 : 1,
+            zIndex: isPreviewOpen ? 1000 : isErrorJumpSelected ? 4 : isFocusAnchor ? 3 : isFocusPath ? 2 : 1,
           },
         };
       }),
-    [nodes, highlightCriticalPath, criticalNodeIdSet, focusedNodeIdSet]
+    [
+      nodes,
+      focusLikelyIssueActive,
+      focusPath,
+      focusNodeIdSet,
+      focusAnchorNodeId,
+      focusAnchorLabel,
+      focusedNodeIdSet,
+      focusStepByNodeId,
+      focusPrimaryReason,
+      selectedErrorNodeId,
+      previewNodeId,
+    ]
   );
 
   const renderedEdges = useMemo(
     () =>
       edges.map((edge) => {
-        const edgeIsCritical =
-          criticalNodeIdSet.has(edge.source) && criticalNodeIdSet.has(edge.target);
+        const isIssueFocused = focusLikelyIssueActive && Boolean(focusPath);
+        const edgeIsFocusPath =
+          isIssueFocused &&
+          focusNodeIdSet.has(edge.source) &&
+          focusNodeIdSet.has(edge.target);
         const edgeMatchesFlowVisibility =
           focusedNodeIdSet.has(edge.source) && focusedNodeIdSet.has(edge.target);
         const shouldDimForFocus = !edgeMatchesFlowVisibility;
-        const shouldDimForCritical = highlightCriticalPath && !edgeIsCritical;
-        const shouldDim = shouldDimForFocus || shouldDimForCritical;
+        const shouldDimForIssueFocus = isIssueFocused && !edgeIsFocusPath;
+        const shouldDim = shouldDimForFocus || shouldDimForIssueFocus;
         const baseStyle = edge.style || {};
         const baseStroke = String(baseStyle.stroke || '#94a3b8');
-        const highlightStroke = baseStroke === '#d4d4d4' ? '#5b8def' : baseStroke;
-        const edgeStroke = highlightCriticalPath && edgeIsCritical && !shouldDimForFocus
-          ? highlightStroke
+        const focusStroke = focusPath?.severity === 'critical' ? '#ef4444' : '#f97316';
+        const edgeStroke = edgeIsFocusPath
+          ? focusStroke
           : baseStroke;
         const markerEnd =
           edge.markerEnd && typeof edge.markerEnd === 'object'
@@ -362,19 +492,33 @@ const RequestFlowGraphView: React.FC<RequestFlowGraphViewProps> = ({
         return {
           ...edge,
           animated: shouldDim ? false : edge.animated,
+          data: {
+            ...(edge.data || {}),
+            isFocusPath: edgeIsFocusPath,
+          },
           style: {
             ...baseStyle,
             opacity: shouldDim ? 0.38 : 1,
             stroke: edgeStroke,
-            strokeWidth: highlightCriticalPath && edgeIsCritical && !shouldDimForFocus
-              ? Math.max(Number(baseStyle.strokeWidth ?? 1.2), 2.4)
+            strokeWidth: edgeIsFocusPath
+              ? Math.max(Number(baseStyle.strokeWidth ?? 1.2), 3)
               : Number(baseStyle.strokeWidth ?? 1.2),
+            filter: edgeIsFocusPath ? `drop-shadow(0 0 7px ${focusStroke}66)` : undefined,
           },
           markerEnd,
         };
       }),
-    [edges, highlightCriticalPath, criticalNodeIdSet, focusedNodeIdSet]
+    [edges, focusLikelyIssueActive, focusPath, focusNodeIdSet, focusedNodeIdSet]
   );
+
+  const handleIssueFocusToggle = (enabled: boolean) => {
+    if (onIssueFocusEnabledChange) {
+      onIssueFocusEnabledChange(enabled);
+      return;
+    }
+
+    setFocusLikelyIssue(enabled);
+  };
 
   if (entries.length === 0) {
     return (
@@ -398,6 +542,9 @@ const RequestFlowGraphView: React.FC<RequestFlowGraphViewProps> = ({
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           nodeTypes={NODE_TYPES}
+          onInit={(instance) => {
+            reactFlowInstanceRef.current = instance;
+          }}
           fitView
           fitViewOptions={{ padding: 0.16, maxZoom: 1.05 }}
           nodesDraggable
@@ -419,103 +566,93 @@ const RequestFlowGraphView: React.FC<RequestFlowGraphViewProps> = ({
           />
 
           <Panel position="top-left">
-            <div className="request-flow-scattered-panel request-flow-scattered-filter-panel">
-              <div className="request-flow-scattered-panel-title">Request Filters</div>
+            <div className="request-flow-diagnostic-toolbar" aria-label="Scattered view diagnostic controls">
+              <div className="request-flow-diagnostic-toolbar-row">
+                <div className="request-flow-diagnostic-focus-list" aria-label="Request Flow focus">
+                  {FOCUS_OPTIONS.map((option) => (
+                    <button
+                      key={option.mode}
+                      type="button"
+                      className={`request-flow-diagnostic-chip ${focusMode === option.mode ? 'is-active' : ''}`}
+                      aria-pressed={focusMode === option.mode}
+                      onClick={() => onFocusModeChange(option.mode)}
+                    >
+                      <span aria-hidden="true">{option.icon}</span>
+                      <span>{option.label}</span>
+                    </button>
+                  ))}
+                </div>
 
-              <div className="request-flow-scattered-focus-list" aria-label="Request Flow focus">
-                {FOCUS_OPTIONS.map((option) => (
-                  <button
-                    key={option.mode}
-                    type="button"
-                    className={`request-flow-scattered-focus-chip ${focusMode === option.mode ? 'is-active' : ''}`}
-                    aria-pressed={focusMode === option.mode}
-                    onClick={() => onFocusModeChange(option.mode)}
-                  >
-                    <span aria-hidden="true">{option.icon}</span>
-                    <span>{option.label}</span>
-                  </button>
-                ))}
-              </div>
-
-              <div className="request-flow-scattered-filter-count">
-                Focused: <strong>{focusedRequestCount}</strong> of <strong>{totalRequests}</strong>
-              </div>
-
-              <div className="request-flow-scattered-divider" />
-
-              <div className="request-flow-scattered-status-grid" aria-label="Status filters">
-                {STATUS_FILTERS.map((item) => (
-                  <label key={item.code} className="request-flow-scattered-status-toggle">
-                    <input
-                      type="checkbox"
-                      checked={filters.statusCodes[item.code]}
-                      onChange={() => handleStatusCodeChange(item.code)}
-                    />
-                    <span className={`status-badge status-${item.code}`}>{item.label}</span>
-                  </label>
-                ))}
-              </div>
-
-              <label className="request-flow-scattered-search-label" htmlFor={searchInputId}>
-                <span>Search</span>
-                <span className="request-flow-scattered-search-box">
-                  <SearchIcon />
+                <label
+                  className={`request-flow-diagnostic-focus-toggle ${focusLikelyIssueActive && focusPath ? 'is-active' : ''}`}
+                >
                   <input
-                    id={searchInputId}
-                    type="search"
-                    value={filters.searchTerm}
-                    placeholder="URL, status, headers..."
-                    onChange={handleSearchTermChange}
+                    type="checkbox"
+                    checked={focusLikelyIssueActive && Boolean(focusPath)}
+                    disabled={!focusPath}
+                    onChange={(event) => handleIssueFocusToggle(event.target.checked)}
                   />
-                </span>
-              </label>
-            </div>
-          </Panel>
+                  <span>Focus issue</span>
+                </label>
+              </div>
 
-          <Panel position="bottom-left">
-            <div className="request-flow-scattered-panel request-flow-scattered-legend">
-              <div className="request-flow-scattered-panel-title">Legend</div>
-              <div className="request-flow-scattered-legend-list">
-                {LEGEND_ITEMS.map((item) => (
-                  <div key={item.label} className="request-flow-scattered-legend-item">
-                    <span
-                      className="request-flow-scattered-legend-dot"
-                      style={{ ['--legend-color' as string]: item.color } as React.CSSProperties}
-                    />
-                    <span>{item.label}</span>
+              <div className="request-flow-diagnostic-toolbar-row">
+                <div className="request-flow-diagnostic-status-list" aria-label="Status filters">
+                  {STATUS_FILTERS.map((item) => (
+                    <label key={item.code} className="request-flow-diagnostic-status-chip">
+                      <input
+                        type="checkbox"
+                        checked={filters.statusCodes[item.code]}
+                        onChange={() => handleStatusCodeChange(item.code)}
+                      />
+                      <span className={`status-badge status-${item.code}`}>{item.label}</span>
+                    </label>
+                  ))}
+                </div>
+
+                <div className="request-flow-diagnostic-count">
+                  <strong>{focusedRequestCount}</strong> / {totalRequests} shown
+                  {failedCount > 0 && <span className="is-danger"> · {failedCount} failed</span>}
+                  {slowCount > 0 && <span> · {slowCount} slow</span>}
+                  {p90 ? <span> · p90 {p90.toFixed(0)}ms</span> : null}
+                </div>
+              </div>
+
+              {errorJumpItems.length > 0 && (
+                <div className="request-flow-diagnostic-error-row" aria-label="Failed request jump list">
+                  <span className="request-flow-diagnostic-error-label">Errors</span>
+                  <div className="request-flow-diagnostic-error-list">
+                    {errorJumpItems.map((item) => {
+                      const nodeId = `request-${item.index}`;
+                      const selected = selectedErrorNodeId === nodeId;
+
+                      return (
+                        <button
+                          key={nodeId}
+                          type="button"
+                          className={`request-flow-diagnostic-error-chip ${selected ? 'is-selected' : ''}`}
+                          aria-pressed={selected}
+                          aria-label={`Open error ${item.status} ${item.pathLabel}`}
+                          onClick={() => handleErrorJump(item.index)}
+                        >
+                          <strong>{item.status}</strong>
+                          <span>{item.pathLabel}</span>
+                        </button>
+                      );
+                    })}
                   </div>
-                ))}
-              </div>
-            </div>
-          </Panel>
+                </div>
+              )}
 
-          <Panel position="top-right">
-            <div className="request-flow-scattered-panel request-flow-scattered-summary">
-              <div className="request-flow-scattered-panel-title">Request Flow Summary</div>
-              <div className="request-flow-scattered-summary-line">
-                Total Requests: <strong>{totalRequests}</strong>
-              </div>
-              <div className="request-flow-scattered-summary-line">
-                Failed:{' '}
-                <strong className={failedCount > 0 ? 'is-danger' : undefined}>{failedCount}</strong>
-              </div>
-              <div className="request-flow-scattered-summary-line">
-                Success Rate: <strong>{successRate}</strong>
-              </div>
-              <div className="request-flow-scattered-summary-line">
-                Slow ({'>='} p90): <strong>{slowCount}</strong>{' '}
-                {p90 ? <span>{`(${p90.toFixed(0)}ms+)`}</span> : null}
-              </div>
-              <div className="request-flow-scattered-divider" />
-              <label
-                className={`request-flow-scattered-checkbox ${highlightCriticalPath ? 'is-active' : ''}`}
-              >
+              <label className="request-flow-diagnostic-search" htmlFor={searchInputId}>
+                <SearchIcon />
                 <input
-                  type="checkbox"
-                  checked={highlightCriticalPath}
-                  onChange={(event) => setHighlightCriticalPath(event.target.checked)}
+                  id={searchInputId}
+                  type="search"
+                  value={filters.searchTerm}
+                  placeholder="Search URL, status, headers..."
+                  onChange={handleSearchTermChange}
                 />
-                <span>Highlight critical path</span>
               </label>
             </div>
           </Panel>

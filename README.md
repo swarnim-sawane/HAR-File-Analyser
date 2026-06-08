@@ -146,6 +146,20 @@ Expected result:
 
 - Frontend starts on `http://localhost:3000`
 
+### Start frontend, backend, and worker together
+
+From the project root:
+
+```powershell
+npm run dev:all
+```
+
+Expected result:
+
+- Frontend starts on `http://localhost:3000`
+- Backend API starts on `http://localhost:4000`
+- Worker starts and processes queued HAR/console log uploads
+
 ### Start the backend API
 
 From `backend`:

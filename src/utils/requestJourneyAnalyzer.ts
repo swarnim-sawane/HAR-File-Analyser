@@ -124,6 +124,33 @@ const STATIC_PATH_PATTERN = /(?:\/cdn\/|\/static\/|\/assets\/|\/resources\/|\.js
 const STATIC_TYPES = new Set(['script', 'stylesheet', 'font', 'image']);
 const LARGE_STATIC_BURST_BYTES = 5 * 1024 * 1024;
 
+const ISSUE_PHASE_LABEL: Record<JourneyPhaseKind, string> = {
+  initial: 'initial app',
+  auth: 'auth',
+  callback: 'callback',
+  'app-boot': 'app boot',
+  static: 'static',
+  consent: 'consent',
+  logout: 'logout',
+  persistent: 'persistent',
+  background: 'background',
+};
+
+function pluralize(count: number, singular: string, plural = `${singular}s`): string {
+  return count === 1 ? singular : plural;
+}
+
+function formatIssueBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(bytes >= 10 * 1024 * 1024 ? 1 : 2)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
+}
+
+function getStatusSummary(requests: JourneyRequest[]): string {
+  const statuses = Array.from(new Set(requests.map((request) => request.status))).filter(Boolean);
+  return statuses.length > 0 ? ` (${statuses.join('/')})` : '';
+}
+
 function parseRequestUrl(url: string): ParsedRequest {
   try {
     const parsedUrl = new URL(url);
@@ -279,8 +306,8 @@ function buildPhaseIssues(kind: JourneyPhaseKind, requests: JourneyRequest[], st
     issues.push({
       id: issueId('logout-404'),
       level: 'danger',
-      title: 'Logout endpoint returned 404',
-      description: 'The logout flow reached an application endpoint that was not found.',
+      title: 'Logout returned 404',
+      description: 'The logout flow reached an endpoint that was not found. Check whether the app logout URL, route mapping, or identity logout callback is wrong.',
       requestIndex: logout404.index,
     });
   }
@@ -291,8 +318,8 @@ function buildPhaseIssues(kind: JourneyPhaseKind, requests: JourneyRequest[], st
     issues.push({
       id: issueId('http-failures'),
       level: 'danger',
-      title: `${actionableFailures.length} server/client failure${actionableFailures.length === 1 ? '' : 's'}`,
-      description: 'At least one request returned an actionable 4xx or 5xx response.',
+      title: `${actionableFailures.length} ${ISSUE_PHASE_LABEL[kind]} ${pluralize(actionableFailures.length, 'request')} failed${getStatusSummary(actionableFailures)}`,
+      description: 'One or more requests returned an actionable 4xx or 5xx response. Start here before investigating secondary timing or asset noise.',
       requestIndex: firstFailure.index,
     });
   }
@@ -301,8 +328,10 @@ function buildPhaseIssues(kind: JourneyPhaseKind, requests: JourneyRequest[], st
     issues.push({
       id: issueId('static-burst'),
       level: stats.bytes >= LARGE_STATIC_BURST_BYTES ? 'warning' : 'info',
-      title: 'Static dependency burst',
-      description: 'The app downloaded a concentrated set of scripts, styles, images, or fonts.',
+      title: stats.bytes >= LARGE_STATIC_BURST_BYTES
+        ? `Static load: ${formatIssueBytes(stats.bytes)}`
+        : `${stats.requestCount} static ${pluralize(stats.requestCount, 'dependency', 'dependencies')} loaded`,
+      description: 'The browser downloaded a concentrated set of scripts, styles, images, or fonts. Large bursts can delay app boot even when requests succeed.',
       requestIndex: requests[0]?.index,
     });
   }
@@ -311,8 +340,8 @@ function buildPhaseIssues(kind: JourneyPhaseKind, requests: JourneyRequest[], st
     issues.push({
       id: issueId('status-0'),
       level: 'warning',
-      title: 'Cancelled or blocked background requests',
-      description: 'Status 0 usually means the browser cancelled, blocked, or did not receive a normal server response.',
+      title: `${stats.status0Count} ${ISSUE_PHASE_LABEL[kind]} ${pluralize(stats.status0Count, 'request')} cancelled`,
+      description: 'Status 0 means the browser cancelled, blocked, or never received a normal server response. Check navigation interruption, browser blocking, CORS, or client aborts for this URL.',
       requestIndex: requests.find((request) => request.status === 0)?.index,
     });
   }
@@ -331,7 +360,7 @@ function buildPhaseIssues(kind: JourneyPhaseKind, requests: JourneyRequest[], st
     issues.push({
       id: issueId('auth-redirects'),
       level: 'info',
-      title: 'Authentication redirect chain',
+      title: 'Identity redirect chain',
       description: 'Identity and login endpoints participated in the same sign-in sequence.',
       requestIndex: requests.find((request) => isRedirect(request.status, request.redirectTarget))?.index,
     });
@@ -351,7 +380,7 @@ function buildPhaseIssues(kind: JourneyPhaseKind, requests: JourneyRequest[], st
     issues.push({
       id: issueId('long-lived'),
       level: 'info',
-      title: 'Long-lived event connection kept open',
+      title: 'Persistent request kept open',
       description: 'This request is expected to stay open and is not treated as a normal slow request.',
       requestIndex: requests[0]?.index,
     });
@@ -362,8 +391,8 @@ function buildPhaseIssues(kind: JourneyPhaseKind, requests: JourneyRequest[], st
     issues.push({
       id: issueId('slow'),
       level: 'warning',
-      title: `${stats.slowCount} delayed request${stats.slowCount === 1 ? '' : 's'}`,
-      description: 'One or more requests took long enough to affect the visible journey.',
+      title: `${stats.slowCount} ${ISSUE_PHASE_LABEL[kind]} ${pluralize(stats.slowCount, 'request')} delayed`,
+      description: 'One or more requests took long enough to affect the visible journey. Compare wait time, payload size, and server status before blaming the client.',
       requestIndex: firstSlow?.index,
     });
   }

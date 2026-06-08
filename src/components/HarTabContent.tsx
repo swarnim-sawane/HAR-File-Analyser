@@ -2,7 +2,7 @@
 // Self-contained HAR analyzer instance. One is mounted per open file.
 // Hidden (display:none) when not active so state is preserved while switching tabs.
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import FilterPanel from './FilterPanel';
 import RequestList from './RequestList';
 import RequestDetails from './RequestDetails';
@@ -15,11 +15,23 @@ import RequestFlowTraceView from './RequestFlowTraceView';
 import PerformanceScorecard from './PerformanceScorecard';
 import AiInsights from './AiInsights';
 import { apiClient } from '../services/apiClient';
+import { analyzeRequestFlowFocus } from '../utils/requestFlowFocus';
 import { ChevronDownIcon, ClockIcon, FileIcon, NetworkIcon, RouteIcon, ServerIcon, TrashIcon, UploadIcon } from './Icons';
+import type { Entry, FilterOptions } from '../types/har';
 import type { RequestFlowFocusMode } from '../types/requestFlow';
 
 type HarTab = 'analyzer' | 'flow' | 'scorecard' | 'insights';
 type FlowViewMode = 'diagram' | 'nodes' | 'trace';
+type StatusBucket = keyof FilterOptions['statusCodes'];
+
+function getStatusBucket(status: number): StatusBucket {
+  if (status === 0) return '0';
+  if (status >= 100 && status < 200) return '1xx';
+  if (status >= 200 && status < 300) return '2xx';
+  if (status >= 300 && status < 400) return '3xx';
+  if (status >= 400 && status < 500) return '4xx';
+  return '5xx';
+}
 
 interface RecentFile {
   name: string;
@@ -54,11 +66,20 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
   const [activeTab, setActiveTab] = useState<HarTab>('analyzer');
   const [flowViewMode, setFlowViewMode] = useState<FlowViewMode>('nodes');
   const [requestFlowFocusMode, setRequestFlowFocusMode] = useState<RequestFlowFocusMode>('all');
+  const [issueFocusEnabled, setIssueFocusEnabled] = useState(true);
   const [detailsWidth, setDetailsWidth] = useState(450);
   const [isLoadingFile, setIsLoadingFile] = useState(true);
   const [showStickyRecent, setShowStickyRecent] = useState(false);
+  const [selectedEntryScrollSignal, setSelectedEntryScrollSignal] = useState(0);
   const flowViewRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const autoSelectedFocusKeyRef = useRef<string | null>(null);
+  const manualSelectionSuppressedRef = useRef(false);
   const flowSessionEntries = harState.harData?.log.entries ?? [];
+  const requestFlowIssueFocus = useMemo(
+    () => analyzeRequestFlowFocus(flowSessionEntries),
+    [flowSessionEntries]
+  );
+  const focusEntry = requestFlowIssueFocus ? flowSessionEntries[requestFlowIssueFocus.anchorIndex] ?? null : null;
   const DETAILS_MIN = 320;
   const DETAILS_MAX = 900;
   const flowViewOptions: Array<{ value: FlowViewMode; label: string; description: string; icon: React.ReactNode }> = [
@@ -139,6 +160,59 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
 
   const focusFlowView = (index: number) => {
     flowViewRefs.current[index]?.focus();
+  };
+
+  const requestSelectedEntryScroll = () => {
+    setSelectedEntryScrollSignal((signal) => signal + 1);
+  };
+
+  const revealEntryInAnalyzerFilters = (entry: Entry) => {
+    const statusBucket = getStatusBucket(entry.response.status);
+    const nextStatusCodes = harState.filters.statusCodes[statusBucket]
+      ? harState.filters.statusCodes
+      : {
+          ...harState.filters.statusCodes,
+          [statusBucket]: true,
+        };
+    const hasBlockingSearch = harState.filters.searchTerm.trim().length > 0;
+
+    if (nextStatusCodes !== harState.filters.statusCodes || hasBlockingSearch) {
+      harState.updateFilters({
+        statusCodes: nextStatusCodes,
+        searchTerm: hasBlockingSearch ? '' : harState.filters.searchTerm,
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (!issueFocusEnabled || !requestFlowIssueFocus || !focusEntry) return;
+    if (harState.selectedEntry || manualSelectionSuppressedRef.current) return;
+
+    const focusKey = `${fileId}:${requestFlowIssueFocus.anchorIndex}:${Math.round(requestFlowIssueFocus.score)}`;
+    if (autoSelectedFocusKeyRef.current === focusKey) return;
+
+    autoSelectedFocusKeyRef.current = focusKey;
+    harState.setSelectedEntry(focusEntry);
+    requestSelectedEntryScroll();
+  }, [
+    fileId,
+    focusEntry,
+    harState.selectedEntry,
+    harState.setSelectedEntry,
+    issueFocusEnabled,
+    requestFlowIssueFocus,
+  ]);
+
+  const selectEntryManually = (entry: Entry) => {
+    manualSelectionSuppressedRef.current = true;
+    harState.setSelectedEntry(entry);
+  };
+
+  const openEntryFromFlow = (entry: Entry) => {
+    revealEntryInAnalyzerFilters(entry);
+    selectEntryManually(entry);
+    requestSelectedEntryScroll();
+    setActiveTab('analyzer');
   };
 
   const moveFlowView = (index: number) => {
@@ -301,8 +375,11 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
                   <RequestList
                     entries={harState.filteredEntries}
                     selectedEntry={harState.selectedEntry}
-                    onSelectEntry={harState.setSelectedEntry}
+                    onSelectEntry={selectEntryManually}
                     timingType={harState.filters.timingType}
+                    focusEntry={focusEntry}
+                    focusPath={requestFlowIssueFocus}
+                    scrollToSelectedSignal={selectedEntryScrollSignal}
                   />
                 </div>
                 {harState.selectedEntry && (
@@ -311,6 +388,7 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
                     <RequestDetails
                       entry={harState.selectedEntry}
                       onClose={() => harState.setSelectedEntry(null)}
+                      focusPath={harState.selectedEntry === focusEntry ? requestFlowIssueFocus : null}
                     />
                   </aside>
                 )}
@@ -359,18 +437,14 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
                     onFiltersChange={harState.updateFilters}
                     focusMode={requestFlowFocusMode}
                     onFocusModeChange={setRequestFlowFocusMode}
-                    onNodeClick={(entry: any) => {
-                      harState.setSelectedEntry(entry);
-                      setActiveTab('analyzer');
-                    }}
+                    issueFocusPath={requestFlowIssueFocus}
+                    issueFocusEnabled={issueFocusEnabled}
+                    onNodeClick={openEntryFromFlow}
                   />
                 ) : flowViewMode === 'trace' ? (
                   <RequestFlowTraceView
                     entries={harState.filteredEntries}
-                    onNodeClick={(entry) => {
-                      harState.setSelectedEntry(entry);
-                      setActiveTab('analyzer');
-                    }}
+                    onNodeClick={openEntryFromFlow}
                   />
                 ) : (
                   <RequestFlowGraphView
@@ -380,10 +454,10 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
                     onFiltersChange={harState.updateFilters}
                     focusMode={requestFlowFocusMode}
                     onFocusModeChange={setRequestFlowFocusMode}
-                    onNodeClick={(entry) => {
-                      harState.setSelectedEntry(entry);
-                      setActiveTab('analyzer');
-                    }}
+                    issueFocusPath={requestFlowIssueFocus}
+                    issueFocusEnabled={issueFocusEnabled}
+                    onIssueFocusEnabledChange={setIssueFocusEnabled}
+                    onNodeClick={openEntryFromFlow}
                   />
                 )}
               </div>
@@ -392,7 +466,7 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
 
           {activeTab === 'scorecard' && (
             <div className="scorecard-wrapper">
-              <PerformanceScorecard harData={harState.harData} />
+              <PerformanceScorecard harData={harState.harData} onSelectRequest={openEntryFromFlow} />
             </div>
           )}
 

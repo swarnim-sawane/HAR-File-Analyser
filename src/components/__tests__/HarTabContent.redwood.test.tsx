@@ -1,9 +1,9 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import HarTabContent from '../HarTabContent';
 
-const { getHarDataMock, mockHarState, requestFlowDiagramMock, requestFlowGraphViewMock } = vi.hoisted(() => {
+const { getHarDataMock, mockHarState, requestFlowDiagramMock, requestFlowGraphViewMock, requestListMock } = vi.hoisted(() => {
   const sampleHarFile = {
     log: {
       version: '1.2',
@@ -87,6 +87,7 @@ const { getHarDataMock, mockHarState, requestFlowDiagramMock, requestFlowGraphVi
     getHarDataMock: vi.fn().mockResolvedValue(sampleHarFile),
     requestFlowDiagramMock: vi.fn(),
     requestFlowGraphViewMock: vi.fn(),
+    requestListMock: vi.fn(),
     mockHarState: {
       harData: sampleHarFile,
       filteredEntries: sampleHarFile.log.entries,
@@ -130,7 +131,10 @@ vi.mock('../FilterPanel', () => ({
 }));
 
 vi.mock('../RequestList', () => ({
-  default: () => <div>Request list mock</div>,
+  default: (props: any) => {
+    requestListMock(props);
+    return <div>Request list mock</div>;
+  },
 }));
 
 vi.mock('../RequestDetails', () => ({
@@ -178,9 +182,24 @@ describe('HarTabContent Redwood theme smoke test', () => {
     window.localStorage.setItem('theme', 'redwood');
     getHarDataMock.mockClear();
     mockHarState.filteredEntries = mockHarState.harData.log.entries;
+    mockHarState.filters = {
+      statusCodes: {
+        '0': false,
+        '1xx': false,
+        '2xx': true,
+        '3xx': true,
+        '4xx': true,
+        '5xx': true,
+      },
+      searchTerm: '',
+      timingType: 'relative' as const,
+    };
     mockHarState.loadHarData.mockClear();
     requestFlowDiagramMock.mockClear();
     requestFlowGraphViewMock.mockClear();
+    requestListMock.mockClear();
+    mockHarState.setSelectedEntry.mockClear();
+    mockHarState.updateFilters.mockClear();
   });
 
   it('renders the HAR analyzer shell in Redwood mode', async () => {
@@ -330,5 +349,65 @@ describe('HarTabContent Redwood theme smoke test', () => {
         focusMode: 'all',
       })
     );
+  });
+
+  it('redirects Request Flow node clicks back to Analyzer and requests selected-row scrolling', async () => {
+    const user = userEvent.setup();
+    const allEntries = mockHarState.harData.log.entries;
+    mockHarState.filters = {
+      ...mockHarState.filters,
+      searchTerm: 'currently-hiding-the-clicked-row',
+      statusCodes: {
+        ...mockHarState.filters.statusCodes,
+        '4xx': false,
+      },
+    };
+
+    render(
+      <HarTabContent
+        tabId="tab-1"
+        fileId="file-1"
+        fileName="session.har"
+        isActive
+        backendUrl="http://localhost:4000"
+        recentFiles={[]}
+        onAddNewTab={vi.fn()}
+        onLoadRecentNewTab={vi.fn()}
+        onClearRecent={vi.fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(getHarDataMock).toHaveBeenCalledWith('file-1');
+      expect(mockHarState.loadHarData).toHaveBeenCalled();
+    });
+
+    await user.click(screen.getByRole('button', { name: /request flow/i }));
+    const flowProps = requestFlowGraphViewMock.mock.calls.at(-1)?.[0];
+    expect(flowProps).toBeTruthy();
+
+    act(() => {
+      flowProps.onNodeClick(allEntries[1]);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Request list mock')).toBeInTheDocument();
+    });
+
+    expect(mockHarState.setSelectedEntry).toHaveBeenCalledWith(allEntries[1]);
+    expect(mockHarState.updateFilters).toHaveBeenCalledWith(
+      expect.objectContaining({
+        searchTerm: '',
+        statusCodes: expect.objectContaining({ '4xx': true }),
+      })
+    );
+
+    await waitFor(() => {
+      expect(requestListMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          scrollToSelectedSignal: expect.any(Number),
+        })
+      );
+    });
   });
 });
