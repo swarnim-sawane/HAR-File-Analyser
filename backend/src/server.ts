@@ -245,6 +245,8 @@ async function startServer() {
     const aiRoutes = (await import('./routes/aiRoutes')).default;
     const sanitizeRoutes = (await import('./routes/sanitizeRoutes')).default;
     const automationRoutes = (await import('./routes/automationRoutes')).default;
+    const opsModule = await import('./routes/opsRoutes');
+    const opsRoutes = opsModule.default;
 
     // 4. Health check endpoint
     app.get('/health', (req, res) => {
@@ -259,6 +261,20 @@ async function startServer() {
           qdrant: 'connected'
         }
       });
+    });
+
+    app.get('/ready', async (_req, res) => {
+      try {
+        const status = await opsModule.buildOpsStatus();
+        res.status(status.status === 'error' ? 503 : 200).json(status);
+      } catch (error) {
+        res.status(503).json({
+          status: 'error',
+          color: 'red',
+          timestamp: new Date().toISOString(),
+          error: error instanceof Error ? error.message : 'Readiness check failed',
+        });
+      }
     });
 
     app.get('/openapi.json', (req, res) => {
@@ -276,6 +292,7 @@ async function startServer() {
     app.use('/api/ai', aiRoutes);
     app.use('/api/sanitize', sanitizeRoutes);
     app.use('/api/v1', automationRoutes);
+    app.use('/api/ops', opsRoutes);
 
     // 6. Start HTTP server
     server.listen(PORT, () => {

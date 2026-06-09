@@ -5,6 +5,7 @@ import { streamParseHar, ParsedHarEntry } from '../services/streamingParser';
 import { promises as fs } from 'fs';
 import { publishToFile } from '../utils/socketHelper';
 import { prepareHarEntryForStorage } from './harEntryStorage';
+import { logError, logInfo, measureDurationMs } from '../config/observability';
 
 // ✅ REMOVED: import { emitToFile } from '../utils/socketHelper';
 // Now using Redis pub/sub instead
@@ -41,6 +42,7 @@ interface HarJobData {
  * ✅ FIXED: Events emitted via Redis pub/sub for cross-process communication
  */
 export async function processHarFile(data: HarJobData): Promise<void> {
+  const startedAt = Date.now();
   const { fileId, fileName, filePath, fileSize } = data;
   
   // Initialize redis if not already done
@@ -158,10 +160,23 @@ export async function processHarFile(data: HarJobData): Promise<void> {
     });
     
     await emitProgress(fileId, 'complete', 100);
+    logInfo('har.processing.completed', {
+      fileId,
+      fileSize,
+      totalEntries,
+      errors: stats.errors,
+      durationMs: measureDurationMs(startedAt),
+    });
     console.log(`✅ HAR file processing complete: ${fileId} (${totalEntries} entries)`);
     
   } catch (error) {
     console.error(`❌ HAR processing failed for ${fileId}:`, error);
+    logError('har.processing.failed', {
+      fileId,
+      fileSize,
+      error,
+      durationMs: measureDurationMs(startedAt),
+    });
     await updateFileStatus(fileId, 'error', { error: (error as Error).message });
     throw error;
   }

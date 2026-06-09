@@ -11,6 +11,8 @@ describe('OpenAPI document', () => {
 
     expect(Object.keys(document.paths)).toEqual(expect.arrayContaining([
       '/health',
+      '/ready',
+      '/api/ops/status',
       '/api/upload/chunk',
       '/api/upload/complete',
       '/api/upload/progress/{fileId}',
@@ -37,6 +39,9 @@ describe('OpenAPI document', () => {
     ]));
 
     expect(document.paths['/api/ai/insights'].post.operationId).toBe('generateAiInsights');
+    expect(document.paths['/ready'].get.operationId).toBe('getReadiness');
+    expect(document.paths['/api/ops/status'].get.operationId).toBe('getOpsStatus');
+    expect(document.components.schemas.OpsStatusResponse).toBeDefined();
     expect(document.paths['/api/v1/har/{fileId}/summary'].get.operationId).toBe('getHarAutomationSummary');
     expect(document.paths['/api/v1/har/{fileId}/summary'].get.responses['202']).toBeDefined();
     expect(document.paths['/api/v1/har/{fileId}/errors'].get.operationId).toBe('listHarAutomationErrors');

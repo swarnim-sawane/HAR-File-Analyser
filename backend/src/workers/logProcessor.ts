@@ -3,6 +3,7 @@ import { getRedis, getMongoDb } from '../config/database';
 import { LOG_QUEUE_NAME } from '../config/queueNames';
 import { streamParseConsoleLog, ParsedLogEntry } from '../services/streamingParser';
 import { publishToFile } from '../utils/socketHelper';
+import { logError, logInfo, measureDurationMs } from '../config/observability';
 
 // FIXED: Don't call getRedis() at module load time
 let redis: any = null;
@@ -34,6 +35,7 @@ interface LogJobData {
  * ✅ FIXED: Embeddings skipped (optional for future)
  */
 export async function processConsoleLog(data: LogJobData): Promise<void> {
+  const startedAt = Date.now();
   const { fileId, fileName, filePath, fileSize } = data;
 
   // Initialize redis if not already done
@@ -149,10 +151,25 @@ export async function processConsoleLog(data: LogJobData): Promise<void> {
     });
 
     await emitProgress(fileId, 'complete', 100);
+    logInfo('console_log.processing.completed', {
+      fileId,
+      fileSize,
+      totalEntries,
+      errors: stats.errors,
+      warnings: stats.warnings,
+      fallbackRows: stats.parseStatuses?.fallback ?? 0,
+      durationMs: measureDurationMs(startedAt),
+    });
     console.log(`✅ Console log processing complete: ${fileId} (${totalEntries} entries)`);
 
   } catch (error) {
     console.error(`❌ Log processing failed for ${fileId}:`, error);
+    logError('console_log.processing.failed', {
+      fileId,
+      fileSize,
+      error,
+      durationMs: measureDurationMs(startedAt),
+    });
     await updateFileStatus(fileId, 'error', { error: (error as Error).message });
     throw error;
   }

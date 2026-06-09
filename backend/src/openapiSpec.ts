@@ -106,6 +106,7 @@ export function buildOpenApiDocument(serverUrl: string): OpenApiDocument {
     servers: [{ url: normalizedServerUrl }],
     tags: [
       { name: 'Health', description: 'Service health and readiness.' },
+      { name: 'Operations', description: 'Runtime readiness, queue, storage, and optional dependency status.' },
       { name: 'Upload', description: 'Chunked file upload and progress tracking.' },
       { name: 'HAR', description: 'HAR retrieval, search, entry details, and statistics.' },
       { name: 'Automation', description: 'Stable v1 endpoints optimized for OCI automation flows.' },
@@ -120,6 +121,24 @@ export function buildOpenApiDocument(serverUrl: string): OpenApiDocument {
         operationId: 'getHealth',
         responses: {
           '200': jsonResponse('#/components/schemas/HealthResponse'),
+        },
+      }),
+      '/ready': path('get', {
+        tags: ['Operations'],
+        summary: 'Check runtime readiness',
+        operationId: 'getReadiness',
+        responses: {
+          '200': jsonResponse('#/components/schemas/OpsStatusResponse'),
+          '503': jsonResponse('#/components/schemas/OpsStatusResponse', 'Runtime is not ready'),
+        },
+      }),
+      '/api/ops/status': path('get', {
+        tags: ['Operations'],
+        summary: 'Get color-coded operational status',
+        operationId: 'getOpsStatus',
+        responses: {
+          '200': jsonResponse('#/components/schemas/OpsStatusResponse'),
+          '503': jsonResponse('#/components/schemas/OpsStatusResponse', 'One or more core runtime checks failed'),
         },
       }),
       '/api/upload/chunk': path('post', {
@@ -470,6 +489,56 @@ export function buildOpenApiDocument(serverUrl: string): OpenApiDocument {
             status: { type: 'string', example: 'ok' },
             timestamp: { type: 'string', format: 'date-time' },
             services: { type: 'object', additionalProperties: { type: 'string' } },
+          },
+        },
+        OpsStatusResponse: {
+          type: 'object',
+          properties: {
+            status: { type: 'string', enum: ['ok', 'warning', 'error', 'unknown'] },
+            color: { type: 'string', enum: ['green', 'amber', 'red', 'slate'] },
+            timestamp: { type: 'string', format: 'date-time' },
+            uptimeSeconds: { type: 'integer' },
+            checks: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' },
+                  label: { type: 'string' },
+                  status: { type: 'string', enum: ['ok', 'warning', 'error', 'unknown'] },
+                  color: { type: 'string', enum: ['green', 'amber', 'red', 'slate'] },
+                  detail: { type: 'string' },
+                  latencyMs: { type: 'number' },
+                  affectsOverall: { type: 'boolean' },
+                  data: { type: 'object' },
+                },
+              },
+            },
+            storage: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' },
+                  label: { type: 'string' },
+                  path: { type: 'string' },
+                  status: { type: 'string', enum: ['ok', 'warning', 'error', 'unknown'] },
+                  color: { type: 'string', enum: ['green', 'amber', 'red', 'slate'] },
+                  detail: { type: 'string' },
+                  fileCount: { type: 'integer' },
+                  sizeBytes: { type: 'integer' },
+                  affectsOverall: { type: 'boolean' },
+                },
+              },
+            },
+            runtime: {
+              type: 'object',
+              properties: {
+                nodeVersion: { type: 'string' },
+                platform: { type: 'string' },
+                pid: { type: 'integer' },
+              },
+            },
           },
         },
         ChunkUploadResponse: {
