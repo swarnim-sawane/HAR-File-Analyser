@@ -176,7 +176,6 @@ Expected local URLs:
 - Backend health: `http://localhost:4000/health`
 - Backend readiness: `http://localhost:4000/ready`
 - Operations status API: `http://localhost:4000/api/ops/status`
-- Operations status UI: `http://localhost:3000/ops`
 - OpenAPI docs: `http://localhost:4000/api-docs`
 
 Stop the development processes with `Ctrl+C`. Stop local containers when no longer needed:
@@ -344,7 +343,7 @@ Current API security posture:
 - CORS is restricted to local origins plus the known internal frontend origins, with additional origins configurable through `CORS_ORIGIN`.
 - Upload file IDs and file types are validated.
 - Upload chunks are bounded by size and chunk-count validation.
-- Lightweight observability is available through structured JSON logs, `/ready`, `/api/ops/status`, and the `/ops` frontend page.
+- Lightweight observability is available through structured JSON logs, `/ready`, and `/api/ops/status`.
 - The backend does not currently implement user authentication or authorization. Place it behind approved internal access controls before exposing it beyond trusted environments.
 
 ## AI Behavior

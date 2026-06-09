@@ -10,7 +10,6 @@ import {
   ConsoleLogEntry,
   ConsoleLogQuery,
 } from '../types/consolelog';
-import type { OpsStatusResponse } from '../types/ops';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
@@ -157,11 +156,6 @@ class ApiClient {
   // Health check
   async healthCheck() {
     const response = await this.client.get('/health');
-    return response.data;
-  }
-
-  async getOpsStatus(): Promise<OpsStatusResponse> {
-    const response = await this.client.get('/api/ops/status');
     return response.data;
   }
 }

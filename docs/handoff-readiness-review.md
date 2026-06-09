@@ -20,7 +20,7 @@ It should not be treated as internet-ready production software until authenticat
 - Console log analyzer now uses paged backend access for large server-processed logs.
 - OpenAPI 3.0 documentation is available from the running backend.
 - Stable `/api/v1` HAR endpoints exist for automation integration.
-- Lightweight observability is available through structured JSON logs, `/ready`, `/api/ops/status`, and a color-coded `/ops` frontend page.
+- Lightweight observability is available through structured JSON logs, `/ready`, and `/api/ops/status`.
 - Parser confidence and analyzer classification metadata reduce overclaiming.
 - `.env` files, upload directories, processed files, build outputs, and dependencies are ignored by Git.
 
@@ -35,7 +35,7 @@ It should not be treated as internet-ready production software until authenticat
 - Tightened numeric parsing for page, limit, status, and entry index values.
 - Added upload chunk count/index validation before chunk filenames, Redis progress, and assembly loops are used.
 - Added upload validation regression tests.
-- Added lightweight observability: structured upload/worker/processor logs, readiness/status endpoints, OpenAPI coverage, and a color-coded Operations UI.
+- Added lightweight observability: structured upload/worker/processor logs, readiness/status endpoints, and OpenAPI coverage.
 
 ## Architecture Assessment
 

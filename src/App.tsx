@@ -19,8 +19,7 @@ import SanitizeModal from './components/SanitizeModal';
 import BatchSanitizeModal from './components/BatchSanitizeModal';
 import HarSanitizer from './components/HarSanitizer';
 import DocumentationPage from './components/DocumentationPage';
-import OperationalStatusPage from './components/OperationalStatusPage';
-import { ArrowLeftIcon, FileTextIcon, ServerIcon } from './components/Icons';
+import { ArrowLeftIcon, FileTextIcon } from './components/Icons';
 import { applyTheme, resolveInitialTheme, ThemeMode } from './theme';
 import { HAR_FILE_INPUT_ACCEPT } from './utils/uploadFileTypes';
 import {
@@ -54,14 +53,10 @@ const BACKEND_URL =
   import.meta.env.VITE_API_URL ||
   'http://localhost:4000';
 
-type AppPath = '/' | '/docs' | '/ops';
+type AppPath = '/' | '/docs';
 
 const normalizePathname = (pathname: string): AppPath =>
-  pathname === '/docs' || pathname === '/docs/'
-    ? '/docs'
-    : pathname === '/ops' || pathname === '/ops/'
-      ? '/ops'
-      : '/';
+  pathname === '/docs' || pathname === '/docs/' ? '/docs' : '/';
 
 const App: React.FC = () => {
   const [theme, setTheme] = useState<ThemeMode>(() =>
@@ -590,11 +585,8 @@ const App: React.FC = () => {
     !isLogProcessing;
 
   const isDocsRoute = pathname === '/docs';
-  const isOpsRoute = pathname === '/ops';
   const headerTitle = isDocsRoute
     ? 'Documentation'
-    : isOpsRoute
-    ? 'Operations'
     : showUnifiedUploader
     ? 'File Analyzer'
     : activeTool === 'har'
@@ -604,8 +596,6 @@ const App: React.FC = () => {
     : 'Console Log Analyzer';
   const headerSubtitle = isDocsRoute
     ? 'Curated usage guide for HAR and console log analysis'
-    : isOpsRoute
-    ? 'Runtime health, queues, storage, and optional services'
     : showUnifiedUploader
     ? 'HAR & Console Log Analysis'
     : activeTool === 'har'
@@ -613,7 +603,10 @@ const App: React.FC = () => {
     : activeTool === 'compare'
     ? 'Side-by-side HAR comparison'
     : 'Console Log Analysis';
-  const handleBackToAnalyzer = () => navigateTo('/');
+  const headerActionLabel = isDocsRoute ? 'Back to Analyzer' : 'Documentation';
+  const handleHeaderAction = () => {
+    navigateTo(isDocsRoute ? '/' : '/docs');
+  };
 
   return (
     <div className="app-container">
@@ -658,23 +651,10 @@ const App: React.FC = () => {
           <span className="header-poc-badge">Proof of Concept</span>
         </div>
         <div className="app-header-actions">
-          {isDocsRoute || isOpsRoute ? (
-            <button type="button" className="app-header-action-button" onClick={handleBackToAnalyzer}>
-              <ArrowLeftIcon />
-              <span>Back to Analyzer</span>
-            </button>
-          ) : (
-            <>
-              <button type="button" className="app-header-action-button app-header-action-button-secondary" onClick={() => navigateTo('/ops')}>
-                <ServerIcon />
-                <span>Operations</span>
-              </button>
-              <button type="button" className="app-header-action-button" onClick={() => navigateTo('/docs')}>
-                <FileTextIcon />
-                <span>Documentation</span>
-              </button>
-            </>
-          )}
+          <button type="button" className="app-header-action-button" onClick={handleHeaderAction}>
+            {isDocsRoute ? <ArrowLeftIcon /> : <FileTextIcon />}
+            <span>{headerActionLabel}</span>
+          </button>
           <ThemeSwitcher theme={theme} onChange={handleThemeChange} />
         </div>
       </header>
@@ -682,8 +662,6 @@ const App: React.FC = () => {
       <main className="main-content">
         {isDocsRoute ? (
           <DocumentationPage onBackToAnalyzer={() => navigateTo('/')} />
-        ) : isOpsRoute ? (
-          <OperationalStatusPage />
         ) : (
           <>
         {/* ── Unified uploader — shown when no files are open in either tool ── */}
