@@ -164,11 +164,13 @@ Start local dependency containers:
 docker compose -f backend/docker-compose.yml up -d mongodb redis qdrant
 ```
 
-Start frontend, backend API, and worker together:
+Recommended one-command local startup from the repository root:
 
 ```powershell
 npm run dev:all
 ```
+
+This starts the Vite frontend, Express backend API, and backend worker in one terminal. Use this for normal local development after MongoDB, Redis, and Qdrant are running.
 
 Expected local URLs:
 
