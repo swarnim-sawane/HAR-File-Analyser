@@ -147,6 +147,7 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
     setMultiDone(0);
 
     const collectedResults: UploadResult[] = [];
+    const uploadErrors: string[] = [];
     for (const file of validFiles) {
       setStatusMessage(`Uploading ${file.name}...`);
       try {
@@ -155,7 +156,9 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
         void storeRecentFile('har', file);
         collectedResults.push(result);
       } catch (err) {
-        setError(`Failed to upload ${file.name}: ${(err as Error)?.message ?? 'Unknown error'}`);
+        const message = `Failed to upload ${file.name}: ${(err as Error)?.message ?? 'Unknown error'}`;
+        uploadErrors.push(message);
+        setError(message);
       }
       setMultiDone((prev) => prev + 1);
     }
@@ -167,7 +170,7 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
     setStatusMessage('');
 
     if (collectedResults.length === 0) {
-      setError('All HAR uploads failed. Please try again.');
+      setError(uploadErrors.length > 0 ? uploadErrors.join('; ') : 'All HAR uploads failed. Please try again.');
       return;
     }
 

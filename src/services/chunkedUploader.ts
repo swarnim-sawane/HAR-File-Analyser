@@ -32,6 +32,32 @@ export interface UploadResult {
   message: string;
 }
 
+function getBackendErrorMessage(data: unknown): string | null {
+  if (!data) return null;
+  if (typeof data === 'string') return data;
+  if (typeof data !== 'object') return null;
+
+  const record = data as Record<string, unknown>;
+  const value = record.error ?? record.message;
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+export function describeUploadError(error: unknown, stage: string): string {
+  if (axios.isAxiosError(error)) {
+    const response = error.response;
+    if (!response) {
+      return `Backend API is unreachable while uploading ${stage}. Confirm the backend is running and reachable.`;
+    }
+
+    const backendMessage = getBackendErrorMessage(response.data);
+    return `Upload completion failed during ${stage}: ${
+      backendMessage || `backend returned HTTP ${response.status}`
+    }`;
+  }
+
+  return `Upload failed during ${stage}: ${(error as Error)?.message || 'Unknown error'}`;
+}
+
 class ChunkedUploader {
   private async compressFile(file: File): Promise<{ blob: Blob; compressed: boolean }> {
     if (typeof CompressionStream === 'undefined') {
@@ -119,7 +145,7 @@ class ChunkedUploader {
       } catch (error) {
         if (attempt === MAX_RETRIES) {
           console.error(`Failed to upload chunk ${chunkIndex} after ${MAX_RETRIES} attempts:`, error);
-          throw new Error(`Chunk upload failed: ${chunkIndex}`);
+          throw new Error(describeUploadError(error, `chunk ${chunkIndex + 1}`));
         }
         // Exponential back-off: 1s, 2s, 4s
         const delay = 1000 * Math.pow(2, attempt - 1);
@@ -155,7 +181,7 @@ class ChunkedUploader {
       return response.data;
     } catch (error) {
       console.error('Failed to complete upload:', error);
-      throw new Error('Upload completion failed');
+      throw new Error(describeUploadError(error, 'upload completion'));
     }
   }
 
