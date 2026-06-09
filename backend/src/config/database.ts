@@ -108,6 +108,7 @@ export async function connectDatabases() {
     
     // HAR Entries indexes (for fast queries and filtering)
     await ensureMongoIndex(db.collection('har_entries'), { fileId: 1 });
+    await ensureMongoIndex(db.collection('har_entries'), { fileId: 1, index: 1 });
     await ensureMongoIndex(db.collection('har_entries'), { fileId: 1, 'request.method': 1 });
     await ensureMongoIndex(db.collection('har_entries'), { fileId: 1, 'response.status': 1 });
     await ensureMongoIndex(db.collection('har_entries'), { fileId: 1, 'request.url': 1 });

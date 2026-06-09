@@ -13,7 +13,13 @@ import {
   buildChunkTooLargeResponse,
   isMulterFileTooLargeError,
 } from '../config/uploadLimits';
-import { isSafeUploadFileId, isSupportedUploadFileType } from '../utils/uploadValidation';
+import {
+  isSafeUploadFileId,
+  isSupportedUploadFileType,
+  parseUploadChunkIndex,
+  parseUploadTotalChunks,
+} from '../utils/uploadValidation';
+import { logError, logInfo, logWarn, measureDurationMs } from '../config/observability';
 
 const router = express.Router();
 const redis = getRedis();
@@ -62,6 +68,7 @@ const upload = multer({
 const uploadChunk = upload.single('chunk');
 
 const handleChunkUpload = async (req: Request, res: Response) => {
+  const startedAt = Date.now();
   try {
     const { fileId, chunkIndex, totalChunks } = req.body;
 
@@ -70,12 +77,14 @@ const handleChunkUpload = async (req: Request, res: Response) => {
       if (req.file) {
         await fs.unlink(req.file.path).catch(() => {});
       }
+      logWarn('upload.chunk.invalid_request', { reason: 'missing_parameters' });
       return res.status(400).json({ error: 'Missing parameters' });
     }
 
     // Check if file was actually uploaded
     if (!req.file) {
       console.error('❌ No file in request!');
+      logWarn('upload.chunk.invalid_request', { fileId, reason: 'missing_file' });
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
@@ -83,14 +92,26 @@ const handleChunkUpload = async (req: Request, res: Response) => {
     // Only allow alphanumeric chars, underscores, and hyphens.
     if (!isSafeUploadFileId(fileId)) {
       await fs.unlink(req.file.path).catch(() => {});
+      logWarn('upload.chunk.invalid_request', { reason: 'invalid_file_id' });
       return res.status(400).json({ error: 'Invalid fileId' });
     }
 
+    const parsedTotalChunks = parseUploadTotalChunks(totalChunks);
+    const parsedChunkIndex = parsedTotalChunks === null
+      ? null
+      : parseUploadChunkIndex(chunkIndex, parsedTotalChunks);
+
+    if (parsedTotalChunks === null || parsedChunkIndex === null) {
+      await fs.unlink(req.file.path).catch(() => {});
+      logWarn('upload.chunk.invalid_request', { fileId, reason: 'invalid_chunk_parameters' });
+      return res.status(400).json({ error: 'Invalid chunk parameters' });
+    }
+
     // FIXED: Rename temp file to proper chunk name
-    const chunkPath = path.join(UPLOAD_DIR, `${fileId}_chunk_${chunkIndex}`);
+    const chunkPath = path.join(UPLOAD_DIR, `${fileId}_chunk_${parsedChunkIndex}`);
     await fs.rename(req.file.path, chunkPath);
 
-    console.log(`✓ Chunk ${chunkIndex}/${totalChunks} received for file ${fileId}`);
+    console.log(`✓ Chunk ${parsedChunkIndex}/${parsedTotalChunks} received for file ${fileId}`);
     console.log(`  Saved to: ${chunkPath}`);
     console.log(`  Size: ${req.file.size} bytes`);
 
@@ -104,11 +125,11 @@ const handleChunkUpload = async (req: Request, res: Response) => {
     }
 
     // Track received chunks in Redis
-    await redis.sadd(`upload:${fileId}:chunks`, chunkIndex);
+    await redis.sadd(`upload:${fileId}:chunks`, parsedChunkIndex.toString());
     const receivedChunks = await redis.scard(`upload:${fileId}:chunks`);
 
     // Update progress
-    const progress = (receivedChunks / parseInt(totalChunks)) * 100;
+    const progress = (receivedChunks / parsedTotalChunks) * 100;
     await redis.set(`upload:${fileId}:progress`, progress.toString());
     await redis.expire(`upload:${fileId}:progress`, 3600);
 
@@ -116,20 +137,35 @@ const handleChunkUpload = async (req: Request, res: Response) => {
       fileId,
       progress: Math.round(progress),
       receivedChunks,
-      totalChunks: parseInt(totalChunks)
+      totalChunks: parsedTotalChunks
+    });
+
+    logInfo('upload.chunk.received', {
+      fileId,
+      chunkIndex: parsedChunkIndex,
+      totalChunks: parsedTotalChunks,
+      receivedChunks,
+      chunkSize: req.file.size,
+      durationMs: measureDurationMs(startedAt),
     });
 
     res.json({
       success: true,
       fileId,
-      chunkIndex: parseInt(chunkIndex),
+      chunkIndex: parsedChunkIndex,
       receivedChunks,
-      totalChunks: parseInt(totalChunks),
+      totalChunks: parsedTotalChunks,
       progress: Math.round(progress)
     });
 
   } catch (error) {
     console.error('Chunk upload error:', error);
+    logError('upload.chunk.failed', {
+      fileId: req.body?.fileId,
+      chunkIndex: req.body?.chunkIndex,
+      error,
+      durationMs: measureDurationMs(startedAt),
+    });
     // Clean up temp file on error
     if (req.file) {
       await fs.unlink(req.file.path).catch(() => {});
@@ -162,31 +198,46 @@ router.post('/chunk', (req: Request, res: Response, next: NextFunction) => {
 
 // Complete upload (assemble chunks)
 router.post('/complete', async (req: Request, res: Response) => {
+  const startedAt = Date.now();
   try {
     const { fileId, totalChunks, fileName, fileType, compressed } = req.body;
 
     if (!fileId || !totalChunks || !fileName || !fileType) {
+      logWarn('upload.complete.invalid_request', { reason: 'missing_parameters' });
       return res.status(400).json({ error: 'Missing parameters' });
     }
 
     if (!isSafeUploadFileId(fileId)) {
+      logWarn('upload.complete.invalid_request', { reason: 'invalid_file_id' });
       return res.status(400).json({ error: 'Invalid fileId' });
     }
 
     if (!isSupportedUploadFileType(fileType)) {
+      logWarn('upload.complete.invalid_request', { fileId, reason: 'invalid_file_type', fileType });
       return res.status(400).json({ error: 'Invalid fileType' });
     }
 
-    console.log(`📦 Assembling file: ${fileName} (${totalChunks} chunks)`);
+    const parsedTotalChunks = parseUploadTotalChunks(totalChunks);
+    if (parsedTotalChunks === null) {
+      logWarn('upload.complete.invalid_request', { fileId, reason: 'invalid_total_chunks' });
+      return res.status(400).json({ error: 'Invalid totalChunks' });
+    }
+
+    console.log(`📦 Assembling file: ${fileName} (${parsedTotalChunks} chunks)`);
 
     // Verify all chunks received
     const receivedChunks = await redis.scard(`upload:${fileId}:chunks`);
-    if (receivedChunks !== totalChunks) {
-      console.error(`❌ Missing chunks: received ${receivedChunks}, expected ${totalChunks}`);
+    if (receivedChunks !== parsedTotalChunks) {
+      console.error(`❌ Missing chunks: received ${receivedChunks}, expected ${parsedTotalChunks}`);
+      logWarn('upload.complete.missing_chunks', {
+        fileId,
+        receivedChunks,
+        expectedChunks: parsedTotalChunks,
+      });
       return res.status(400).json({
         error: 'Missing chunks',
         received: receivedChunks,
-        expected: totalChunks
+        expected: parsedTotalChunks
       });
     }
 
@@ -214,7 +265,7 @@ router.post('/complete', async (req: Request, res: Response) => {
 
       (async () => {
         try {
-          for (let i = 0; i < totalChunks; i++) {
+          for (let i = 0; i < parsedTotalChunks; i++) {
             const chunkPath = path.join(UPLOAD_DIR, `${fileId}_chunk_${i}`);
             try {
               await fs.access(chunkPath);
@@ -252,7 +303,7 @@ router.post('/complete', async (req: Request, res: Response) => {
     console.log(`✓ File assembled (streaming): ${outputPath} (${(assembledSize / 1024 / 1024).toFixed(1)} MB)`);
 
     // Delete chunks
-    for (let i = 0; i < totalChunks; i++) {
+    for (let i = 0; i < parsedTotalChunks; i++) {
       const chunkPath = path.join(UPLOAD_DIR, `${fileId}_chunk_${i}`);
       await fs.unlink(chunkPath).catch(() => {});
     }
@@ -346,6 +397,14 @@ router.post('/complete', async (req: Request, res: Response) => {
     );
 
     console.log(`✅ File uploaded successfully: ${fileName} (Job: ${job.id})`);
+    logInfo('upload.complete.enqueued', {
+      fileId,
+      fileType,
+      fileSize: stats.size,
+      totalChunks: parsedTotalChunks,
+      jobId: job.id,
+      durationMs: measureDurationMs(startedAt),
+    });
 
     res.json({
       success: true,
@@ -359,6 +418,12 @@ router.post('/complete', async (req: Request, res: Response) => {
 
   } catch (error) {
     console.error('Complete upload error:', error);
+    logError('upload.complete.failed', {
+      fileId: req.body?.fileId,
+      fileType: req.body?.fileType,
+      error,
+      durationMs: measureDurationMs(startedAt),
+    });
     res.status(500).json({ 
       error: 'Failed to complete upload',
       details: error instanceof Error ? error.message : 'Unknown error'
