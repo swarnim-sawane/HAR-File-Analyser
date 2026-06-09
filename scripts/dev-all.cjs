@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
 const { spawn } = require('node:child_process');
+const fs = require('node:fs');
 const path = require('node:path');
 const readline = require('node:readline');
 
 const rootDir = path.resolve(__dirname, '..');
 const backendDir = path.join(rootDir, 'backend');
+const backendEnvPath = path.join(backendDir, '.env');
 const npmCmd = 'npm';
 
 const services = [
@@ -20,6 +22,54 @@ function firstEnv(env, keys) {
     if (value !== undefined && value !== '') return value;
   }
   return undefined;
+}
+
+function stripEnvQuotes(value) {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function parseDotEnvContent(content) {
+  const values = {};
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+
+    const normalized = line.startsWith('export ') ? line.slice(7).trim() : line;
+    const equalsIndex = normalized.indexOf('=');
+    if (equalsIndex <= 0) continue;
+
+    const key = normalized.slice(0, equalsIndex).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+
+    const value = normalized.slice(equalsIndex + 1);
+    values[key] = stripEnvQuotes(value);
+  }
+
+  return values;
+}
+
+function loadBackendEnv(filePath = backendEnvPath) {
+  try {
+    return parseDotEnvContent(fs.readFileSync(filePath, 'utf8'));
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return {};
+    throw error;
+  }
+}
+
+function buildDevEnvironment(shellEnv = process.env, backendEnv = loadBackendEnv()) {
+  return {
+    ...backendEnv,
+    ...shellEnv,
+  };
 }
 
 function validateLocalDevEnvironment(env = process.env) {
@@ -101,7 +151,8 @@ function main() {
     process.exit(0);
   }
 
-  const preflightErrors = validateLocalDevEnvironment(process.env);
+  const childEnv = buildDevEnvironment(process.env);
+  const preflightErrors = validateLocalDevEnvironment(childEnv);
   if (preflightErrors.length > 0) {
     console.error('Cannot start local development services:');
     for (const error of preflightErrors) {
@@ -118,7 +169,7 @@ function main() {
     const { command, args } = getSpawnCommand(service);
     const child = spawn(command, args, {
       cwd: service.cwd,
-      env: { ...process.env, FORCE_COLOR: '1' },
+      env: { ...childEnv, FORCE_COLOR: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -145,5 +196,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  buildDevEnvironment,
+  parseDotEnvContent,
   validateLocalDevEnvironment,
 };
