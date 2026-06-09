@@ -148,8 +148,8 @@ Recommended starting point for a controlled internal deployment:
 - Backend: 2-4 Node.js cluster workers
 - Worker: 2 PM2 worker processes with `--max-old-space-size=4096 --expose-gc`
 - Chunk size: 8 MB client-side chunks
-- Disk: at least 3x the largest expected active HAR size, plus MongoDB storage
-- Queue concurrency: start conservative, then increase after measuring CPU, RAM, and Mongo insert time
+- Disk: at least 3x the largest expected active HAR size, plus Oracle JSON storage
+- Queue concurrency: start conservative, then increase after measuring CPU, RAM, and database insert time
 - Monitoring: track upload failures, queue depth, processing duration, worker restarts, retention cleanup counts, and OCA fallback rate
 
 ## Security Note

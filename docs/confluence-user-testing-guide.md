@@ -55,7 +55,7 @@ blocked by CORS policy
 TypeError: Failed to fetch
 ```
 
-Large-file validation must be planned separately because it can consume disk, worker memory, queue time, and MongoDB storage.
+Large-file validation must be planned separately because it can consume disk, worker memory, queue time, and Oracle JSON storage.
 
 ---
 
@@ -529,7 +529,7 @@ Large-file validation must be controlled because it can consume disk, memory, qu
 | Small | Less than 20 MB | Basic upload, processing, and endpoint behavior |
 | Medium | 100 MB to 250 MB | Chunking, queue behavior, and response timing |
 | Large | 1 GB | Stress behavior and operational sizing |
-| High-entry | Many small entries | MongoDB insert and pagination behavior |
+| High-entry | Many small entries | Oracle JSON insert and pagination behavior |
 
 Validate:
 

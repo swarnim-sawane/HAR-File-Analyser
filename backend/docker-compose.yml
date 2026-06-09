@@ -1,16 +1,4 @@
-version: '3.8'
-
 services:
-  mongodb:
-    image: mongo:7
-    container_name: har-mongodb
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongodb_data:/data/db
-    environment:
-      - MONGO_INITDB_DATABASE=har_analyzer
-
   redis:
     image: redis:7-alpine
     container_name: har-redis
@@ -30,6 +18,5 @@ services:
       - qdrant_data:/qdrant/storage
 
 volumes:
-  mongodb_data:
   redis_data:
   qdrant_data:

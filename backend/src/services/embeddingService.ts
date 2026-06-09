@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { ollamaPool } from './ollamaPool';
-import { getQdrant, getMongoDb, getRedis } from '../config/database';
+import { getQdrant, getPersistenceDb, getRedis } from '../config/database';
 import { harEntryToText, logEntryToText, ParsedHarEntry, ParsedLogEntry } from './streamingParser';
 import { publishGlobal, publishToFile } from '../utils/socketHelper';
 
@@ -181,7 +181,7 @@ export async function indexLogEntries(
 }
 
 /**
- * Query with context from vector DB, with MongoDB fallback when vectors aren't available
+ * Query with context from vector DB, with Oracle JSON persistence fallback when vectors aren't available.
  */
 export async function queryWithContext(
   fileId: string,
@@ -213,19 +213,19 @@ export async function queryWithContext(
       return context;
     }
   } catch (err) {
-    console.log('ℹ️ Qdrant/Ollama unavailable, falling back to MongoDB context:', (err as Error).message);
+    console.log('ℹ️ Qdrant/Ollama unavailable, falling back to Oracle JSON context:', (err as Error).message);
   }
 
-  // MongoDB fallback: build context from stored stats + sample entries
-  return buildMongoContext(fileId, type);
+  // Persistence fallback: build context from stored stats + sample entries.
+  return buildPersistenceContext(fileId, type);
 }
 
 /**
- * Build LLM context from MongoDB data (stats + sample entries)
+ * Build LLM context from persisted analyzer data (stats + sample entries).
  * Used when Qdrant vectors are not available (e.g. embeddings skipped for performance)
  */
-async function buildMongoContext(fileId: string, type: 'har' | 'log'): Promise<string> {
-  const db = getMongoDb();
+async function buildPersistenceContext(fileId: string, type: 'har' | 'log'): Promise<string> {
+  const db = getPersistenceDb();
   const redis = getRedis();
 
   try {
@@ -366,7 +366,7 @@ async function buildMongoContext(fileId: string, type: 'har' | 'log'): Promise<s
 
     return context.trim() || 'No data found for this file.';
   } catch (err) {
-    console.error('Failed to build MongoDB context:', err);
+    console.error('Failed to build persisted analyzer context:', err);
     return 'Unable to retrieve file context.';
   }
 }

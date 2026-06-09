@@ -1,5 +1,5 @@
 import { Queue } from 'bullmq';
-import { getRedis, getMongoDb } from '../config/database';
+import { getRedis, getPersistenceDb } from '../config/database';
 import { HAR_QUEUE_NAME } from '../config/queueNames';
 import { streamParseHar, ParsedHarEntry } from '../services/streamingParser';
 import { promises as fs } from 'fs';
@@ -70,11 +70,11 @@ export async function processHarFile(data: HarJobData): Promise<void> {
       errors: 0
     };
 
-    // Step 1: Parse HAR file and store entries in MongoDB
-    const db = getMongoDb();
+    // Step 1: Parse HAR file and store entries in Oracle JSON persistence
+    const db = getPersistenceDb();
     const entriesCollection = db.collection('har_entries');
     let batchBuffer: ParsedHarEntry[] = [];
-    // Larger batches = fewer MongoDB round-trips per file.
+    // Larger batches = fewer database round-trips per file.
     // 2000 entries * ~2 KB avg = ~4 MB per insert, well within driver limits.
     const BATCH_SIZE = 2000;
     // Only push a progress event to Redis every N batches (= every 10 000 entries)
@@ -136,7 +136,7 @@ export async function processHarFile(data: HarJobData): Promise<void> {
     await redis.setex(`stats:${fileId}`, 86400, JSON.stringify(stats));
     await emitProgress(fileId, 'analyzing', 90);
 
-    // Step 3: Store file metadata in MongoDB
+    // Step 3: Store file metadata in Oracle JSON persistence
     await db.collection('har_files').insertOne({
       fileId,
       fileName,
@@ -150,7 +150,7 @@ export async function processHarFile(data: HarJobData): Promise<void> {
       status: 'ready'
     });
 
-    // ✅ CRITICAL FIX: Wait for MongoDB write to be fully committed
+    // Give the persistence layer a short read-after-write buffer before publishing ready status.
     await new Promise(resolve => setTimeout(resolve, 200));
 
     // Update status to ready

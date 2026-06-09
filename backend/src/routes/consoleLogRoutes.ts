@@ -1,10 +1,10 @@
 import express, { Request, Response } from 'express';
-import type { SortDirection } from 'mongodb';
-import { getMongoDb, getRedis } from '../config/database';
+import { getPersistenceDb, getRedis } from '../config/database';
 
 const router = express.Router();
 const SORT_FIELDS = ['timestamp', 'level', 'source', 'message', 'index'] as const;
 type SortField = (typeof SORT_FIELDS)[number];
+type SortDirection = 1 | -1;
 const ISSUE_FOCUS = new Set([
   'cors',
   'network',
@@ -117,7 +117,7 @@ function listProjection() {
   return {
     rawText: 0,
     args: 0,
-  };
+  } as const;
 }
 
 function parsePositiveInt(value: unknown, fallback: number, max?: number): number {
@@ -193,7 +193,7 @@ router.get('/:fileId/entries', async (req: Request, res: Response) => {
     const limit = parsePositiveInt(req.query.limit, 100, 1000);
     const skip = (page - 1) * limit;
 
-    const db = getMongoDb();
+    const db = getPersistenceDb();
     const logsCollection = db.collection('console_logs');
     const filter = buildLogFilter(fileId, req.query);
     const sort = buildSort(req.query);
@@ -240,7 +240,7 @@ router.get('/:fileId/entries/:index', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Invalid entry index' });
     }
 
-    const db = getMongoDb();
+    const db = getPersistenceDb();
     const logsCollection = db.collection('console_logs');
 
     const entry = await logsCollection.findOne({ fileId, index: entryIndex });
@@ -263,7 +263,7 @@ router.get('/:fileId/entries/:index', async (req: Request, res: Response) => {
 router.get('/:fileId/stats', async (req: Request, res: Response) => {
   try {
     const { fileId } = req.params;
-    const db = getMongoDb();
+    const db = getPersistenceDb();
 
     const file = await db.collection('console_log_files').findOne({ fileId });
     
@@ -285,7 +285,7 @@ router.get('/:fileId/stats', async (req: Request, res: Response) => {
 router.get('/:fileId/status', async (req: Request, res: Response) => {
   try {
     const { fileId } = req.params;
-    const db = getMongoDb();
+    const db = getPersistenceDb();
 
     const file = await db.collection('console_log_files').findOne({ fileId });
 
@@ -300,7 +300,7 @@ router.get('/:fileId/status', async (req: Request, res: Response) => {
       });
     }
 
-    // File not in MongoDB yet — check Redis for in-progress status
+    // File not persisted yet — check Redis for in-progress status
     // (the upload pipeline writes file:{fileId}:metadata immediately with status:'processing')
     const redis = getRedis();
     const metadata = await redis.get(`file:${fileId}:metadata`);
@@ -335,7 +335,7 @@ router.get('/:fileId/search', async (req: Request, res: Response) => {
     const limit = parsePositiveInt(req.query.limit, 100, 1000);
     const skip = (page - 1) * limit;
 
-    const db = getMongoDb();
+    const db = getPersistenceDb();
     const logsCollection = db.collection('console_logs');
 
     // Build filter query

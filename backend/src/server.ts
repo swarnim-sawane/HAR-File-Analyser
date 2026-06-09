@@ -4,7 +4,7 @@ import path from 'path';
 import cors from 'cors';
 import { Server as SocketIOServer } from 'socket.io';
 import dotenv from 'dotenv';
-import { connectDatabases, closeDatabases, getMongoDb, getRedis } from './config/database';
+import { connectDatabases, closeDatabases, getPersistenceDb, getRedis } from './config/database';
 import { configureOutboundProxy } from './config/outboundProxy';
 import { buildAllowedOrigins } from './config/corsOrigins';
 import { setSocketIOInstance } from './utils/socketHelper';
@@ -113,7 +113,7 @@ io.on('connection', (socket) => {
       const { queryWithContext } = await import('./services/embeddingService');
       const { streamLLMResponse } = await import('./services/ollamaPool');
 
-      // Build context from Qdrant (with MongoDB fallback)
+      // Build context from Qdrant, or from stored Oracle JSON data when vectors are unavailable.
       const context = await queryWithContext(fileId, query, (fileType as 'har' | 'log') || 'har');
 
       // Stream LLM response token-by-token via WebSocket
@@ -203,7 +203,7 @@ function setupRetentionCleanup(): NodeJS.Timeout | null {
   const runCleanup = async () => {
     try {
       const result = await cleanupExpiredAnalysisData({
-        db: getMongoDb(),
+        db: getPersistenceDb(),
         redis: getRedis(),
         uploadDir,
         processedDir,
@@ -254,10 +254,9 @@ async function startServer() {
         status: 'ok',
         timestamp: new Date().toISOString(),
         services: {
-          documentStore: 'connected',
+          documentStore: 'oracle-json-connected',
           cache: 'connected',
-          mongodb: 'connected',
-          redis: 'connected',
+          oracleJson: 'connected',
           qdrant: 'connected'
         }
       });

@@ -1,7 +1,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
-import type { Db } from 'mongodb';
 import type Redis from 'ioredis';
+import type { OracleJsonDatabase } from '../persistence/oracleJsonStore';
 
 export interface RetentionCleanupConfig {
   enabled: boolean;
@@ -17,7 +17,7 @@ interface RetentionFileDoc {
 }
 
 export interface RetentionCleanupOptions {
-  db: Db;
+  db: OracleJsonDatabase;
   redis: Redis;
   uploadDir: string;
   processedDir: string;

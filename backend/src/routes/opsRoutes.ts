@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { Queue } from 'bullmq';
-import { getMongoDb, getQdrant, getRedis } from '../config/database';
+import { getPersistenceDb, getQdrant, getRedis } from '../config/database';
 import {
   deriveOverallStatus,
   getOpsStatusColor,
@@ -59,25 +59,25 @@ function buildCheck(input: Omit<OpsCheck, 'color'>): OpsCheck {
   };
 }
 
-async function checkMongo(): Promise<OpsCheck> {
+async function checkOracleJson(): Promise<OpsCheck> {
   const startedAt = Date.now();
   try {
-    await getMongoDb().command({ ping: 1 });
+    await getPersistenceDb().command({ ping: 1 });
     return buildCheck({
-      id: 'mongodb',
-      label: 'MongoDB',
+      id: 'oracleJson',
+      label: 'Oracle JSON Database',
       status: 'ok',
       detail: 'Connected and responding to ping.',
       latencyMs: measureDurationMs(startedAt),
       affectsOverall: true,
     });
   } catch (error) {
-    logError('ops.mongodb.error', { error });
+    logError('ops.oracle_json.error', { error });
     return buildCheck({
-      id: 'mongodb',
-      label: 'MongoDB',
+      id: 'oracleJson',
+      label: 'Oracle JSON Database',
       status: 'error',
-      detail: error instanceof Error ? error.message : 'MongoDB ping failed.',
+      detail: error instanceof Error ? error.message : 'Oracle JSON Database ping failed.',
       latencyMs: measureDurationMs(startedAt),
       affectsOverall: true,
     });
@@ -273,8 +273,8 @@ export async function buildOpsStatus() {
   const uploadDir = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads');
   const processedDir = process.env.PROCESSED_DIR || path.join(process.cwd(), 'processed');
 
-  const [mongo, redis, harQueueStatus, logQueueStatus, qdrant, uploadsStorage, processedStorage] = await Promise.all([
-    checkMongo(),
+  const [oracleJson, redis, harQueueStatus, logQueueStatus, qdrant, uploadsStorage, processedStorage] = await Promise.all([
+    checkOracleJson(),
     checkRedis(),
     checkQueue('harQueue', 'HAR queue', HAR_QUEUE_NAME),
     checkQueue('logQueue', 'Console log queue', LOG_QUEUE_NAME),
@@ -284,7 +284,7 @@ export async function buildOpsStatus() {
   ]);
 
   const checks = [
-    mongo,
+    oracleJson,
     redis,
     harQueueStatus,
     logQueueStatus,

@@ -1,5 +1,5 @@
 import { Queue } from 'bullmq';
-import { getRedis, getMongoDb } from '../config/database';
+import { getRedis, getPersistenceDb } from '../config/database';
 import { LOG_QUEUE_NAME } from '../config/queueNames';
 import { streamParseConsoleLog, ParsedLogEntry } from '../services/streamingParser';
 import { publishToFile } from '../utils/socketHelper';
@@ -60,8 +60,8 @@ export async function processConsoleLog(data: LogJobData): Promise<void> {
       infos: 0
     };
 
-    // Step 1: Parse log file and store entries in MongoDB
-    const db = getMongoDb();
+    // Step 1: Parse log file and store entries in Oracle JSON persistence
+    const db = getPersistenceDb();
     const logsCollection = db.collection('console_logs');
     let batchBuffer: ParsedLogEntry[] = [];
     const BATCH_SIZE = 1000;
@@ -130,7 +130,7 @@ export async function processConsoleLog(data: LogJobData): Promise<void> {
     await redis.setex(`log_stats:${fileId}`, 86400, JSON.stringify(stats));
     await emitProgress(fileId, 'analyzing', 90);
 
-    // Step 3: Store file metadata in MongoDB
+    // Step 3: Store file metadata in Oracle JSON persistence
     await db.collection('console_log_files').insertOne({
       fileId,
       fileName,

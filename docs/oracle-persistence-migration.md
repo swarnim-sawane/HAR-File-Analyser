@@ -1,111 +1,91 @@
-# Oracle Persistence Migration Plan
+# Oracle JSON Persistence Migration
 
 ## Goal
 
-Move the HAR File Analyzer away from self-managed MongoDB and Redis while keeping the application deployable in Oracle-controlled infrastructure.
+Run HAR File Analyzer with Oracle-managed persistence. This branch stores analyzer documents in Oracle Database JSON storage and has no non-Oracle document-store runtime fallback.
 
-## Recommended Path
+## Current Branch Position
 
-### Phase 1: Oracle-managed compatibility mode
+- **Document persistence:** Oracle Database with JSON support.
+- **Node driver:** `oracledb`.
+- **Runtime fallback:** none. The backend requires Oracle Database credentials at startup.
+- **Cache / queue / pub-sub:** Redis-compatible cache remains required for BullMQ, upload progress, and Socket.IO event bridging. In OCI this should map to an approved Redis-compatible cache service.
+- **Vector store:** Qdrant remains optional for embedding retrieval paths.
 
-This is the lowest-risk rollout path because it keeps the existing application behavior and avoids a risky full persistence rewrite.
-
-- **Document store:** Oracle Database API for MongoDB / Autonomous Database JSON-compatible endpoint.
-  - Keep the current MongoDB Node driver.
-  - Point `MONGODB_URL` at the Oracle Database API for MongoDB connection string.
-  - Validate existing query operators used by the app: equality, `$in`, `$lt`, `$regex`, `$and`, `$or`, projection, sort, skip/limit, count, insertMany, deleteMany, and aggregation group/unwind.
-
-- **Cache / queue / pub-sub:** OCI Cache non-sharded Valkey/Redis-compatible cluster.
-  - Keep `ioredis` and BullMQ for now.
-  - Use `OCI_CACHE_URL` or `OCI_CACHE_HOST` / `OCI_CACHE_PORT`.
-  - Prefer a non-sharded cluster because BullMQ depends on Redis-compatible queue semantics and Lua scripting behavior.
-
-This branch adds cache configuration support for:
+## Required Backend Environment
 
 ```bash
-OCI_CACHE_URL=rediss://<cache-endpoint>:6379
-OCI_CACHE_TLS=true
-OCI_CACHE_USERNAME=<optional-user>
-OCI_CACHE_PASSWORD=<optional-password>
+PERSISTENCE_BACKEND=oracle-json
+ORACLE_DB_USER=<oracle-user>
+ORACLE_DB_PASSWORD=<oracle-password>
+ORACLE_DB_CONNECT_STRING=<oracle-connect-string>
+ORACLE_JSON_TABLE=HAR_ANALYZER_DOCS
+ORACLE_DB_POOL_MIN=1
+ORACLE_DB_POOL_MAX=10
+
+CACHE_HOST=<cache-host>
+CACHE_PORT=6379
+# or CACHE_URL=rediss://<cache-endpoint>:6379
+# CACHE_TLS=true
+# CACHE_USERNAME=<optional-user>
+# CACHE_PASSWORD=<optional-password>
 ```
 
-or:
+## Storage Model
 
-```bash
-OCI_CACHE_HOST=<cache-endpoint>
-OCI_CACHE_PORT=6379
-OCI_CACHE_TLS=true
-OCI_CACHE_PASSWORD=<optional-password>
-```
-
-Legacy local development variables still work:
-
-```bash
-MONGODB_URL=mongodb://localhost:27017/har-analyzer
-REDIS_HOST=localhost
-REDIS_PORT=6379
-```
-
-## Phase 2: Native Oracle persistence rewrite
-
-Use this only if OCI/security requires no MongoDB protocol and no Redis-compatible cache layer.
-
-### Database
-
-Replace direct Mongo collection calls with repository interfaces backed by Oracle Database:
+The adapter stores documents in one Oracle table by logical collection:
 
 - `har_files`
 - `har_entries`
 - `console_log_files`
 - `console_logs`
-- upload/session/cache metadata
 
-Recommended table shape:
+The table keeps hot query fields as indexed columns and stores the full analyzer payload in a JSON-checked CLOB column.
 
-- relational columns for hot filters: `file_id`, `entry_index`, `status`, `method`, `url`, `timestamp`, `level`, `source`, `inferred_severity`, `parse_status`, `parse_format`
-- native JSON column for full HAR/log payload
-- Oracle JSON/search indexes for URL/message/source search
+Hot indexed fields include:
 
-### Queue and status events
+- `collection_name`
+- `file_id`
+- `entry_index`
+- `uploaded_at`
+- HAR status/method/url/timing fields
+- console level/source/timestamp/severity fields
+- parser status and parser format
 
-Replace BullMQ/Redis with Oracle Transactional Event Queues or Advanced Queuing:
+## Compatibility Approach
 
-- `HAR_PROCESSING_QUEUE`
-- `LOG_PROCESSING_QUEUE`
-- optional `SOCKET_EVENT_QUEUE`
+Most routes and workers currently use a document-collection style API. The Oracle adapter intentionally exposes a small compatible API:
 
-Workers dequeue jobs from Oracle AQ/TxEventQ, process files, and write progress/status into Oracle tables. The backend can either consume socket events from AQ/TxEventQ or poll status rows for active uploads.
+- `collection(name)`
+- `find`, `findOne`, `sort`, `skip`, `limit`, `project`, `toArray`
+- `insertOne`, `insertMany`
+- `countDocuments`, `deleteMany`
+- selected aggregation stages used by console-log facets
 
-## Current Redis Responsibilities
+This keeps the migration scoped while avoiding a risky application-wide rewrite. The adapter remains an internal compatibility layer; Oracle JSON is the only configured document persistence backend on this branch.
 
-Redis is not just cache in this app:
+## Local Development
 
-- BullMQ queue backend for HAR and console-log processing
-- upload chunk tracking
-- upload progress
-- in-progress file metadata/status
-- stats cache
-- Socket.IO cross-process event bridge
-- session activity marker
-- retention cleanup key deletion
+Local compose starts only Redis and Qdrant:
 
-That is why replacing Redis with native Oracle AQ is a real rewrite, not a package swap.
+```powershell
+docker compose -f backend/docker-compose.yml up -d redis qdrant
+```
 
-## Acceptance Criteria
+An Oracle Database connect string must be supplied in `backend/.env` before starting the backend.
 
-Phase 1 is acceptable when:
+## Validation Checklist
 
-- Upload chunk flow works against OCI Cache.
-- HAR processing and console-log processing complete through BullMQ.
-- Socket progress events reach the browser from worker process to backend process.
-- Existing analyzer pagination/search/filter endpoints work against Oracle Database API for MongoDB.
-- Retention cleanup deletes Oracle-backed metadata and cache keys correctly.
+- Backend starts only when Oracle Database credentials are present.
+- Non-Oracle document-store backend settings are rejected.
+- HAR upload parses and stores file metadata and entries in Oracle JSON persistence.
+- Console-log upload parses and stores metadata and paged entries in Oracle JSON persistence.
+- Search, filters, sorting, pagination, details, retention cleanup, and automation endpoints continue to work.
+- Redis-compatible cache still delivers queue jobs, upload progress, and socket events.
 
-Phase 2 is acceptable when:
+## Remaining Hardening
 
-- No `mongodb`, `ioredis`, or `bullmq` runtime dependency is required.
-- All persistence access goes through repository/queue interfaces.
-- Oracle schema migrations are repeatable.
-- Large HAR and console-log files still stream into storage without loading the full file into memory.
-- Existing API and UI behavior remain unchanged.
-
+- Run against a real OCI Oracle Database instance with representative HAR and console-log volumes.
+- Confirm DDL permissions and table/index naming policy with the database-owning team.
+- Add migration/versioning scripts if the owning team wants schema changes managed outside app startup.
+- Decide whether Qdrant remains acceptable or should be replaced by an Oracle-approved retrieval service later.

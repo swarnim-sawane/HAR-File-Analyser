@@ -12,7 +12,7 @@ Use this content for a single-slide management update. Keep each section to one 
 - End-to-end internal pilot is live and being validated with engineers against the existing preferred tool; current slowdown is primarily due to resource limits in the current VCAP setup, with a higher-capacity environment in progress.
 
 ## Tools & Technologies
-- React/TypeScript frontend, Express/TypeScript backend, BullMQ worker-based processing, MongoDB, Redis, and Oracle Code Assist-powered AI insights.
+- React/TypeScript frontend, Express/TypeScript backend, BullMQ worker-based processing, Oracle JSON persistence, Redis-compatible cache, and Oracle Code Assist-powered AI insights.
 
 ## Results / Impact
 - Early pilot feedback is positive on analysis accuracy, UI clarity, and the ability to quickly identify slow requests, failed calls, and backend latency, reducing manual trace review effort.

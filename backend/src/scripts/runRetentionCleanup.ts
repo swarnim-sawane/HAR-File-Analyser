@@ -1,6 +1,6 @@
 import path from 'path';
 import dotenv from 'dotenv';
-import { closeDatabases, connectDatabases, getMongoDb, getRedis } from '../config/database';
+import { closeDatabases, connectDatabases, getPersistenceDb, getRedis } from '../config/database';
 import {
   cleanupExpiredAnalysisData,
   parseRetentionCleanupConfig,
@@ -19,7 +19,7 @@ async function main() {
   await connectDatabases();
   try {
     const result = await cleanupExpiredAnalysisData({
-      db: getMongoDb(),
+      db: getPersistenceDb(),
       redis: getRedis(),
       uploadDir,
       processedDir,

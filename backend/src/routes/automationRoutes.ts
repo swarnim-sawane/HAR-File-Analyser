@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { getMongoDb, getRedis } from '../config/database';
+import { getPersistenceDb, getRedis } from '../config/database';
 import type { ParsedHarEntry } from '../services/streamingParser';
 import { generateInsightsForContext } from './aiRoutes';
 import {
@@ -40,7 +40,7 @@ function validateFileId(fileId: string, res: Response): boolean {
 }
 
 async function getHarFile(fileId: string): Promise<HarAutomationFileDoc | null> {
-  const db = getMongoDb();
+  const db = getPersistenceDb();
   return db.collection('har_files').findOne({ fileId }) as Promise<HarAutomationFileDoc | null>;
 }
 
@@ -66,7 +66,7 @@ async function sendPendingOrNotFound(fileId: string, res: Response) {
 }
 
 async function getInsightContextEntries(fileId: string): Promise<ParsedHarEntry[]> {
-  const db = getMongoDb();
+  const db = getPersistenceDb();
   const entriesCollection = db.collection('har_entries');
 
   const [serverErrors, clientErrors, topSlow] = await Promise.all([
@@ -123,7 +123,7 @@ router.get('/har/:fileId/errors', async (req: Request, res: Response) => {
     }
 
     const { page, limit, skip } = parsePagination(req);
-    const db = getMongoDb();
+    const db = getPersistenceDb();
     const entriesCollection = db.collection('har_entries');
     const filter = { fileId, 'response.status': { $gte: 400 } };
 

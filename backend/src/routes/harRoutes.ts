@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import { createReadStream } from 'fs';
 import { createGzip } from 'zlib';
 import path from 'path';
-import { getMongoDb } from '../config/database';
+import { getPersistenceDb } from '../config/database';
 import { getRedis } from '../config/database';
 
 const router = express.Router();
@@ -33,12 +33,12 @@ function parseNonNegativeInt(value: unknown): number | null {
  * GET /api/har/:fileId
  *
  * Supports immediate read-after-upload by reading assembled file from disk
- * when Mongo metadata is not ready yet.
+ * when persisted metadata is not ready yet.
  */
 router.get('/:fileId', async (req: Request, res: Response) => {
   try {
     const { fileId } = req.params;
-    const db = getMongoDb();
+    const db = getPersistenceDb();
     const redis = getRedis();
 
     const fileDoc = await db.collection('har_files').findOne({ fileId });
@@ -115,7 +115,7 @@ router.get('/:fileId/entries', async (req: Request, res: Response) => {
     const limit = parsePositiveInt(req.query.limit, 100, 1000);
     const skip = (page - 1) * limit;
 
-    const db = getMongoDb();
+    const db = getPersistenceDb();
     const entriesCollection = db.collection('har_entries');
 
     // Get paginated entries
@@ -158,7 +158,7 @@ router.get('/:fileId/entries/:index', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Invalid entry index' });
     }
 
-    const db = getMongoDb();
+    const db = getPersistenceDb();
     const entriesCollection = db.collection('har_entries');
 
     const entry = await entriesCollection.findOne({ fileId, index: entryIndex });
@@ -181,7 +181,7 @@ router.get('/:fileId/entries/:index', async (req: Request, res: Response) => {
 router.get('/:fileId/stats', async (req: Request, res: Response) => {
   try {
     const { fileId } = req.params;
-    const db = getMongoDb();
+    const db = getPersistenceDb();
 
     const file = await db.collection('har_files').findOne({ fileId });
     
@@ -203,7 +203,7 @@ router.get('/:fileId/stats', async (req: Request, res: Response) => {
 router.get('/:fileId/status', async (req: Request, res: Response) => {
   try {
     const { fileId } = req.params;
-    const db = getMongoDb();
+    const db = getPersistenceDb();
     const redis = getRedis();
 
     const file = await db.collection('har_files').findOne({ fileId });
@@ -251,7 +251,7 @@ router.get('/:fileId/search', async (req: Request, res: Response) => {
     const limit = parsePositiveInt(req.query.limit, 100, 1000);
     const skip = (page - 1) * limit;
 
-    const db = getMongoDb();
+    const db = getPersistenceDb();
     const entriesCollection = db.collection('har_entries');
 
     // Build filter query

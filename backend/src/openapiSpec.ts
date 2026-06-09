@@ -1378,7 +1378,7 @@ export function renderOpenApiDocsHtml(specUrl = '/openapi.json'): string {
                 <tbody>
               <tr><td>Frontend</td><td><code>http://10.65.39.163:3000</code></td><td>Browser UI for upload, Analyzer, AI Insights, Request Flow, Compare, and Console Logs.</td></tr>
               <tr><td>Backend</td><td><code>http://10.65.39.163:4000</code></td><td>REST/OpenAPI surface used by UI and automation.</td></tr>
-              <tr><td>Worker</td><td>VM background service</td><td>Parses uploaded files into MongoDB after upload completion.</td></tr>
+              <tr><td>Worker</td><td>VM background service</td><td>Parses uploaded files into Oracle JSON persistence after upload completion.</td></tr>
                 </tbody>
               </table>
             </div>
@@ -1512,7 +1512,7 @@ Invoke-RestMethod "$baseUrl/api/v1/har/$fileId/insights" -Method Post</code></pr
               </thead>
               <tbody>
                 <tr><td>Chunk size</td><td>Use 8 MB client-side chunks.</td><td>Keeps uploads below the server multipart limit.</td></tr>
-                <tr><td>Worker</td><td>Keep the worker running with memory flags in deployed environments.</td><td>Uploads complete only after the worker parses files into MongoDB.</td></tr>
+                <tr><td>Worker</td><td>Keep the worker running with memory flags in deployed environments.</td><td>Uploads complete only after the worker parses files into Oracle JSON persistence.</td></tr>
                 <tr><td>Retention</td><td>Run cleanup in dry-run mode before deleting artifacts.</td><td>Large HAR files can consume disk quickly.</td></tr>
                 <tr><td>AI dependency</td><td>Expect OCA output when available and fallback findings when unavailable.</td><td>Automation receives usable diagnostics even during AI outages.</td></tr>
               </tbody>
