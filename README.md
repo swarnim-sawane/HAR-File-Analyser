@@ -164,6 +164,8 @@ Start local dependency containers:
 docker compose -f backend/docker-compose.yml up -d mongodb redis qdrant
 ```
 
+## Running the App
+
 Recommended one-command local startup from the repository root:
 
 ```powershell
@@ -192,9 +194,7 @@ To remove local MongoDB/Redis/Qdrant data volumes as well:
 docker compose -f backend/docker-compose.yml down -v
 ```
 
-## Running Services Individually
-
-Use individual processes when debugging startup order, worker behavior, or API failures.
+Use individual processes only when debugging startup order, worker behavior, or API failures.
 
 Frontend:
 
