@@ -1,4 +1,7 @@
 // src/utils/har_sanitize.ts
+// Sanitization logic is based on Cloudflare's HAR Sanitizer.
+// Upstream: https://github.com/cloudflare/har-sanitizer
+// License shown upstream: Apache-2.0.
 import { HarFile } from '../types/har';
 
 export type PossibleScrubItems = {

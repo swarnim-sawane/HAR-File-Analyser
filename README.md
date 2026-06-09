@@ -87,6 +87,26 @@ HAR-File-Analyser/
 - Git.
 - Access to Oracle VPN/internal network for the hosted environment and OCA-backed AI features.
 
+## Runtime Dependencies and Third-party Code
+
+The application code expects the following external services or infrastructure to be available, depending on the environment:
+
+| Dependency | Required | Purpose |
+| --- | --- | --- |
+| MongoDB or MongoDB-compatible database | Yes | Stores uploaded file metadata, parsed HAR entries, console-log entries, analysis state, and cached results |
+| Redis or Redis-compatible cache | Yes | Powers BullMQ queues, upload progress, Socket.IO pub/sub, and worker coordination |
+| Qdrant | Optional | Vector/embedding storage for optional retrieval-oriented AI paths |
+| Oracle Code Assist (OCA) | Optional | Generates AI-assisted insight summaries when `OCA_BASE_URL` and `OCA_TOKEN` are configured |
+| Oracle corporate proxy | Environment-dependent | Required in some Oracle networks for outbound backend calls to OCA |
+| Docker/Rancher Desktop container images | Local development only | Pulls local MongoDB, Redis, and Qdrant containers for development setup |
+| Internal VM/VCAP hosting | Hosted deployment only | Runs the current internal frontend, backend API, and worker processes |
+
+Third-party code attribution:
+
+| Source | Where used | Notes |
+| --- | --- | --- |
+| Cloudflare HAR Sanitizer | `src/utils/har_sanitize.ts`, `backend/src/utils/har_sanitize.ts`, and `src/components/HarSanitizer.tsx` | The HAR sanitization logic and UI are based on Cloudflare's public HAR Sanitizer project. This is source-code attribution only; the app does not call Cloudflare at runtime for sanitization. Upstream project: `https://github.com/cloudflare/har-sanitizer`. License shown upstream: Apache-2.0. Keep this item visible for Oracle OSS/security review before broad rollout. |
+
 On Windows, if `npm` fails with `node.exe is not recognized`, make sure Node is on the current shell path before running project commands:
 
 ```powershell
