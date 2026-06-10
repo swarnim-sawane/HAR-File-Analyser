@@ -49,7 +49,9 @@ interface JobDocument {
 
 type OracleConnectionLike = {
   execute: (sql: string, binds?: Record<string, unknown>, options?: Record<string, unknown>) => Promise<any>;
+  getQueue?: (name: string, options?: Record<string, unknown>) => Promise<OracleAqQueueLike>;
   commit: () => Promise<void>;
+  rollback?: () => Promise<void>;
   close: () => Promise<void>;
 };
 
@@ -61,7 +63,16 @@ type OracleRuntimeDatabase = OracleJsonDatabase & {
   outFormatObject?: unknown;
   bindTypes?: {
     clob?: unknown;
+    number?: unknown;
     string?: unknown;
+  };
+  oracleDriver?: {
+    AQ_DEQ_MODE_REMOVE?: number;
+    AQ_DEQ_NAV_FIRST_MSG?: number;
+    AQ_DEQ_NO_WAIT?: number;
+    AQ_MSG_DELIV_MODE_PERSISTENT?: number;
+    AQ_VISIBILITY_ON_COMMIT?: number;
+    DB_TYPE_JSON?: unknown;
   };
 };
 
@@ -71,6 +82,33 @@ interface AddJobOptions {
     type?: string;
     delay?: number;
   };
+}
+
+interface OracleAqQueueLike {
+  enqOptions?: Record<string, unknown>;
+  deqOptions?: Record<string, unknown>;
+  enqOne: (message: Record<string, unknown>) => Promise<any>;
+  deqOne: () => Promise<any | undefined>;
+}
+
+interface OracleAqJobQueueOptions {
+  autoCreate?: boolean;
+  queuePrefix?: string;
+}
+
+interface OracleAqJobPayload<T = any> {
+  id: string;
+  name: string;
+  data: T;
+  attemptsMade: number;
+  maxAttempts: number;
+  backoffDelayMs: number;
+  createdAt: string;
+}
+
+interface ClaimedOracleAqJob {
+  connection: OracleConnectionLike;
+  payload: OracleAqJobPayload;
 }
 
 function iso(date: Date): string {
@@ -92,8 +130,66 @@ function isExpired(doc: { expiresAt?: string }, now: Date): boolean {
 
 function parseStoredDocument<T>(value: unknown): T {
   if (typeof value === 'string') return JSON.parse(value) as T;
-  if (value && typeof value === 'object' && 'toString' in value) return JSON.parse(String(value)) as T;
+  if (Buffer.isBuffer(value)) return JSON.parse(value.toString('utf8')) as T;
   return value as T;
+}
+
+function normalizeOracleQueueIdentifier(value: string): string {
+  const normalized = value
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9_]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  const withPrefix = /^[A-Z]/.test(normalized) ? normalized : `Q_${normalized}`;
+  const compact = withPrefix.replace(/_+/g, '_').slice(0, 128);
+
+  if (!/^[A-Z][A-Z0-9_]{0,127}$/.test(compact)) {
+    throw new Error(`Invalid Oracle AQ queue identifier derived from: ${value}`);
+  }
+
+  return compact;
+}
+
+function buildPhysicalAqQueueName(logicalQueueName: string, queuePrefix?: string): string {
+  const prefix = normalizeOracleQueueIdentifier(queuePrefix || process.env.ORACLE_AQ_QUEUE_PREFIX || 'HAR_ANALYZER');
+  const logical = normalizeOracleQueueIdentifier(logicalQueueName);
+  const availableLogicalLength = Math.max(1, 127 - prefix.length);
+  return normalizeOracleQueueIdentifier(`${prefix}_${logical.slice(0, availableLogicalLength)}`);
+}
+
+function getOracleAqDriver(db: OracleRuntimeDatabase) {
+  return {
+    AQ_DEQ_MODE_REMOVE: db.oracleDriver?.AQ_DEQ_MODE_REMOVE ?? 3,
+    AQ_DEQ_NAV_FIRST_MSG: db.oracleDriver?.AQ_DEQ_NAV_FIRST_MSG ?? 1,
+    AQ_DEQ_NO_WAIT: db.oracleDriver?.AQ_DEQ_NO_WAIT ?? 0,
+    AQ_MSG_DELIV_MODE_PERSISTENT: db.oracleDriver?.AQ_MSG_DELIV_MODE_PERSISTENT ?? 1,
+    AQ_VISIBILITY_ON_COMMIT: db.oracleDriver?.AQ_VISIBILITY_ON_COMMIT ?? 2,
+    DB_TYPE_JSON: db.oracleDriver?.DB_TYPE_JSON ?? 'JSON',
+  };
+}
+
+function parseAutoCreateEnv(value: string | undefined): boolean {
+  if (value === undefined || value === '') return true;
+  return !/^(false|0|no)$/i.test(value.trim());
+}
+
+async function rollbackQuietly(connection: OracleConnectionLike): Promise<void> {
+  if (!connection.rollback) return;
+  await connection.rollback().catch(() => undefined);
+}
+
+function isOracleAqPrivilegeError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /DBMS_AQADM|DBMS_AQ|PLS-00201|ORA-01031|insufficient privileges/i.test(message);
+}
+
+function buildOracleAqSetupError(error: unknown): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  return new Error(
+    'Oracle AQ/TEQ setup failed for HAR Analyzer. Grant the application schema EXECUTE on DBMS_AQADM and DBMS_AQ plus AQ administration privileges, ' +
+      'or pre-create/start the queues and set ORACLE_AQ_AUTO_CREATE=false. Original error: ' +
+      message,
+  );
 }
 
 export class OracleCacheStore {
@@ -455,13 +551,327 @@ export class OracleJobQueue {
   }
 }
 
+export class OracleAqJobQueue {
+  public readonly physicalQueueName: string;
+  private ready = false;
+  private readonly claimedJobs = new Map<string, ClaimedOracleAqJob>();
+
+  constructor(
+    private readonly db: OracleRuntimeDatabase,
+    private readonly queueName: string,
+    private readonly options: OracleAqJobQueueOptions = {},
+    private readonly now: NowProvider = () => new Date(),
+  ) {
+    this.physicalQueueName = buildPhysicalAqQueueName(queueName, options.queuePrefix);
+  }
+
+  private collection() {
+    return this.db.collection<JobDocument>('oracle_runtime_jobs');
+  }
+
+  private autoCreateEnabled(): boolean {
+    return this.options.autoCreate ?? parseAutoCreateEnv(process.env.ORACLE_AQ_AUTO_CREATE);
+  }
+
+  private jobDocumentFor(payload: OracleAqJobPayload, status: JobStatus, extra: Partial<JobDocument> = {}): JobDocument {
+    const now = this.now();
+    return {
+      fileId: `${this.queueName}:${payload.id}`,
+      index: now.getTime(),
+      jobId: payload.id,
+      queueName: this.queueName,
+      name: payload.name,
+      data: payload.data,
+      status,
+      attemptsMade: payload.attemptsMade,
+      maxAttempts: payload.maxAttempts,
+      backoffDelayMs: payload.backoffDelayMs,
+      nextRunAt: extra.nextRunAt ?? iso(now),
+      createdAt: payload.createdAt,
+      updatedAt: iso(now),
+      ...extra,
+    };
+  }
+
+  private async ensureReady(connection: OracleConnectionLike): Promise<void> {
+    if (this.ready) return;
+
+    if (!connection.getQueue) {
+      throw new Error('Oracle AQ requires node-oracledb connection.getQueue support.');
+    }
+
+    if (this.autoCreateEnabled()) {
+      try {
+        await connection.execute(
+          `
+            BEGIN
+              DBMS_AQADM.CREATE_TRANSACTIONAL_EVENT_QUEUE(
+                queue_name => :queueName,
+                queue_payload_type => 'JSON'
+              );
+            EXCEPTION
+              WHEN OTHERS THEN
+                IF SQLCODE IN (-955, -24006, -24010) OR INSTR(LOWER(SQLERRM), 'already') > 0 THEN
+                  NULL;
+                ELSE
+                  RAISE;
+                END IF;
+            END;`,
+          { queueName: this.physicalQueueName },
+        );
+
+        await connection.execute(
+          `
+            BEGIN
+              DBMS_AQADM.START_QUEUE(queue_name => :queueName);
+            EXCEPTION
+              WHEN OTHERS THEN
+                IF SQLCODE IN (-24010) OR INSTR(LOWER(SQLERRM), 'already') > 0 THEN
+                  NULL;
+                ELSE
+                  RAISE;
+                END IF;
+            END;`,
+          { queueName: this.physicalQueueName },
+        );
+        await connection.commit();
+      } catch (error) {
+        if (isOracleAqPrivilegeError(error)) {
+          throw buildOracleAqSetupError(error);
+        }
+        throw error;
+      }
+    }
+
+    this.ready = true;
+  }
+
+  private async getAqQueue(connection: OracleConnectionLike): Promise<OracleAqQueueLike> {
+    await this.ensureReady(connection);
+    const driver = getOracleAqDriver(this.db);
+    const queue = await connection.getQueue!(this.physicalQueueName, {
+      payloadType: driver.DB_TYPE_JSON,
+    });
+
+    if (queue.enqOptions) {
+      queue.enqOptions.visibility = driver.AQ_VISIBILITY_ON_COMMIT;
+      queue.enqOptions.deliveryMode = driver.AQ_MSG_DELIV_MODE_PERSISTENT;
+    }
+
+    if (queue.deqOptions) {
+      queue.deqOptions.mode = driver.AQ_DEQ_MODE_REMOVE;
+      queue.deqOptions.navigation = driver.AQ_DEQ_NAV_FIRST_MSG;
+      queue.deqOptions.visibility = driver.AQ_VISIBILITY_ON_COMMIT;
+      queue.deqOptions.wait = driver.AQ_DEQ_NO_WAIT;
+    }
+
+    return queue;
+  }
+
+  private async withConnection<T>(fn: (connection: OracleConnectionLike) => Promise<T>): Promise<T> {
+    if (!this.db.pool) {
+      throw new Error('Oracle AQ requires an Oracle connection pool.');
+    }
+
+    const connection = await this.db.pool.getConnection();
+    try {
+      return await fn(connection);
+    } finally {
+      await connection.close();
+    }
+  }
+
+  async add(name: string, data: any, options: AddJobOptions = {}): Promise<OracleQueuedJob> {
+    const id = randomId('job');
+    const payload: OracleAqJobPayload = {
+      id,
+      name,
+      data,
+      attemptsMade: 0,
+      maxAttempts: options.attempts ?? 1,
+      backoffDelayMs: options.backoff?.delay ?? 0,
+      createdAt: iso(this.now()),
+    };
+
+    await this.withConnection(async (connection) => {
+      try {
+        const queue = await this.getAqQueue(connection);
+        await queue.enqOne({
+          payload,
+          correlation: id,
+        });
+        await connection.commit();
+      } catch (error) {
+        await rollbackQuietly(connection);
+        throw error;
+      }
+    });
+
+    await this.collection().insertOne(this.jobDocumentFor(payload, 'waiting'));
+    return { id, name, data, attemptsMade: 0 };
+  }
+
+  async claimNext(): Promise<OracleQueuedJob | null> {
+    if (!this.db.pool) {
+      throw new Error('Oracle AQ requires an Oracle connection pool.');
+    }
+
+    const connection = await this.db.pool.getConnection();
+    let claimedThisConnection = false;
+    try {
+      const queue = await this.getAqQueue(connection);
+      const message = await queue.deqOne();
+      if (!message) {
+        await rollbackQuietly(connection);
+        await connection.close();
+        return null;
+      }
+
+      const payload = parseStoredDocument<OracleAqJobPayload>(message.payload);
+      if (this.claimedJobs.has(payload.id)) {
+        await rollbackQuietly(connection);
+        await connection.close();
+        throw new Error(`Oracle AQ job ${payload.id} is already claimed by this worker.`);
+      }
+
+      await this.collection().insertOne(this.jobDocumentFor(payload, 'active'));
+      this.claimedJobs.set(payload.id, { connection, payload });
+      claimedThisConnection = true;
+
+      return {
+        id: payload.id,
+        name: payload.name,
+        data: payload.data,
+        attemptsMade: payload.attemptsMade,
+      };
+    } catch (error) {
+      if (!claimedThisConnection) {
+        await rollbackQuietly(connection);
+        await connection.close().catch(() => undefined);
+      }
+      throw error;
+    }
+  }
+
+  async complete(jobId: string, result: any): Promise<void> {
+    const claimed = this.claimedJobs.get(jobId);
+    if (!claimed) {
+      const existing = await this.collection().findOne({ queueName: this.queueName, jobId });
+      if (!existing) return;
+      await this.collection().insertOne({
+        ...existing,
+        status: 'completed',
+        result,
+        updatedAt: iso(this.now()),
+      });
+      return;
+    }
+
+    try {
+      await this.collection().insertOne(this.jobDocumentFor(claimed.payload, 'completed', { result }));
+      await claimed.connection.commit();
+    } catch (error) {
+      await rollbackQuietly(claimed.connection);
+      throw error;
+    } finally {
+      this.claimedJobs.delete(jobId);
+      await claimed.connection.close().catch(() => undefined);
+    }
+  }
+
+  async fail(jobId: string, error: unknown): Promise<JobStatus> {
+    const claimed = this.claimedJobs.get(jobId);
+    if (!claimed) {
+      const existing = await this.collection().findOne({ queueName: this.queueName, jobId });
+      if (!existing) return 'failed';
+      await this.collection().insertOne({
+        ...existing,
+        status: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+        updatedAt: iso(this.now()),
+      });
+      return 'failed';
+    }
+
+    const attemptsMade = claimed.payload.attemptsMade + 1;
+    const shouldRetry = attemptsMade < claimed.payload.maxAttempts;
+    const status: JobStatus = shouldRetry ? 'waiting' : 'failed';
+    const retryDelayMs = claimed.payload.backoffDelayMs * Math.max(1, attemptsMade);
+    const nextRunAt = new Date(this.now().getTime() + retryDelayMs);
+    const nextPayload: OracleAqJobPayload = {
+      ...claimed.payload,
+      attemptsMade,
+    };
+
+    try {
+      if (shouldRetry) {
+        const queue = await this.getAqQueue(claimed.connection);
+        await queue.enqOne({
+          payload: nextPayload,
+          correlation: jobId,
+          delay: Math.ceil(retryDelayMs / 1000),
+        });
+      }
+
+      await this.collection().insertOne(this.jobDocumentFor(nextPayload, status, {
+        nextRunAt: iso(nextRunAt),
+        error: error instanceof Error ? error.message : String(error),
+      }));
+      await claimed.connection.commit();
+      return status;
+    } catch (innerError) {
+      await rollbackQuietly(claimed.connection);
+      throw innerError;
+    } finally {
+      this.claimedJobs.delete(jobId);
+      await claimed.connection.close().catch(() => undefined);
+    }
+  }
+
+  async getJobCounts(...statuses: QueueCountStatus[]) {
+    const result: Record<string, number> = {};
+    const now = iso(this.now());
+    for (const status of statuses) {
+      if (status === 'delayed') {
+        result[status] = await this.collection().countDocuments({
+          queueName: this.queueName,
+          status: 'waiting',
+          nextRunAt: { $gt: now },
+        });
+      } else if (status === 'waiting') {
+        result[status] = await this.collection().countDocuments({
+          queueName: this.queueName,
+          status,
+          nextRunAt: { $lte: now },
+        });
+      } else {
+        result[status] = await this.collection().countDocuments({ queueName: this.queueName, status });
+      }
+    }
+    return result;
+  }
+
+  async close(): Promise<void> {
+    const claimed = Array.from(this.claimedJobs.values());
+    this.claimedJobs.clear();
+    await Promise.allSettled(
+      claimed.map(async ({ connection }) => {
+        await rollbackQuietly(connection);
+        await connection.close();
+      }),
+    );
+  }
+}
+
+export type OracleQueueAdapter = OracleJobQueue | OracleAqJobQueue;
+
 export class OracleQueueWorker extends EventEmitter {
   private timer: NodeJS.Timeout | null = null;
   private activeCount = 0;
   private closed = false;
 
   constructor(
-    private readonly queue: OracleJobQueue,
+    private readonly queue: OracleQueueAdapter,
     private readonly processor: (job: OracleQueuedJob) => Promise<any>,
     private readonly options: { concurrency?: number; pollIntervalMs?: number } = {},
   ) {

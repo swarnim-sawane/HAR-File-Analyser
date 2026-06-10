@@ -24,7 +24,8 @@ Run the application locally when developing, testing backend changes, debugging 
 
 The recommended local dependency path is:
 
-- Oracle Database with JSON support: stores HAR metadata, HAR entries, console-log files, console-log entries, runtime cache keys, queue jobs, upload progress, and Socket.IO event envelopes.
+- Oracle Database with JSON support: stores HAR metadata, HAR entries, console-log files, console-log entries, runtime cache keys, queue audit records, upload progress, and Socket.IO event envelopes.
+- Oracle AQ/TEQ: delivers HAR and console-log processing jobs to backend workers.
 - Qdrant: optional; used by embedding-related AI paths when available.
 
 ## Architecture
@@ -33,7 +34,9 @@ The recommended local dependency path is:
 flowchart LR
     Browser["React + Vite frontend\nport 3000"] --> API["Express API\nport 4000"]
     Browser <--> Socket["Socket.IO progress/events"]
-    API --> Oracle["Oracle Database JSON\nfiles, parsed entries, runtime cache, queues, events"]
+    API --> Oracle["Oracle Database JSON\nfiles, parsed entries, runtime cache, events"]
+    API --> AQ["Oracle AQ/TEQ\nHAR/log job queues"]
+    AQ --> Worker["Backend worker\nHAR/log parsing"]
     Oracle --> Worker["Backend worker\nHAR/log parsing"]
     Worker --> Oracle
     API --> OCA["Oracle Code Assist\noptional AI"]
@@ -47,7 +50,8 @@ Primary runtime components:
 | Frontend | `src/` | Analyzer UI, Request Flow, Console Log Analyzer, AI Insights, sanitization UI, comparison workflow |
 | Backend API | `backend/src/server.ts` | REST API, OpenAPI docs, upload orchestration, status, AI routes, sanitization routes |
 | Worker | `backend/src/worker.ts` | Background parsing and persistence for uploaded HAR/log files |
-| Oracle Database JSON | external or local Oracle database | Persistent analysis data plus runtime cache, queue, and event documents |
+| Oracle Database JSON | external or local Oracle database | Persistent analysis data plus runtime cache, queue audit, and event documents |
+| Oracle AQ/TEQ | same Oracle database | Durable HAR/log job delivery from API to worker |
 | Qdrant | external/container, optional | Embedding storage for optional AI retrieval paths |
 
 ## Repository Structure
@@ -90,7 +94,8 @@ The application code expects the following external services or infrastructure t
 
 | Dependency | Required | Purpose |
 | --- | --- | --- |
-| Oracle Database with JSON support | Yes | Stores uploaded file metadata, parsed HAR entries, console-log entries, analysis state, runtime cache keys, queue jobs, upload progress, and event delivery state |
+| Oracle Database with JSON support | Yes | Stores uploaded file metadata, parsed HAR entries, console-log entries, analysis state, runtime cache keys, queue audit records, upload progress, and event delivery state |
+| Oracle AQ/TEQ | Yes | Durable worker queue for HAR and console-log processing jobs |
 | Qdrant | Optional | Vector/embedding storage for optional retrieval-oriented AI paths |
 | Oracle Code Assist (OCA) | Optional | Generates AI-assisted insight summaries when `OCA_BASE_URL` and `OCA_TOKEN` are configured |
 | Oracle corporate proxy | Environment-dependent | Required in some Oracle networks for outbound backend calls to OCA |
@@ -144,6 +149,8 @@ ORACLE_DB_POOL_MIN=1
 ORACLE_DB_POOL_MAX=10
 
 QDRANT_URL=http://localhost:6333
+ORACLE_AQ_AUTO_CREATE=true
+ORACLE_AQ_QUEUE_PREFIX=HAR_ANALYZER
 ORACLE_QUEUE_POLL_INTERVAL_MS=500
 ORACLE_EVENT_POLL_INTERVAL_MS=250
 
@@ -187,7 +194,24 @@ Start optional local Qdrant container if you want to test embedding-related AI r
 docker compose -f backend/docker-compose.yml up -d qdrant
 ```
 
-Configure `backend/.env` with an Oracle Database user, password, and connect string before starting the backend. This branch is Oracle-only: queueing, transient metadata, upload progress, and Socket.IO event delivery are all backed by Oracle Database documents.
+Configure `backend/.env` with an Oracle Database user, password, and connect string before starting the backend. This branch is Oracle-only: analyzer storage, transient metadata, upload progress, worker queueing, and Socket.IO event delivery are all backed by Oracle Database capabilities.
+
+The backend uses Oracle AQ/TEQ for worker jobs. For local development, `ORACLE_AQ_AUTO_CREATE=true` lets the app create/start the queues if the database user has AQ administration privileges. In production, the database team can pre-provision the queues and set `ORACLE_AQ_AUTO_CREATE=false`.
+
+Minimum AQ setup for an application schema that auto-creates queues:
+
+```sql
+GRANT EXECUTE ON DBMS_AQADM TO <app_user>;
+GRANT EXECUTE ON DBMS_AQ TO <app_user>;
+GRANT AQ_ADMINISTRATOR_ROLE TO <app_user>;
+```
+
+With the default queue prefix, the app creates these TEQ queue names:
+
+```text
+HAR_ANALYZER_HAR_PROCESSING
+HAR_ANALYZER_LOG_PROCESSING
+```
 
 ## Running the App
 
@@ -428,6 +452,6 @@ The warning is non-blocking with current Docker Compose. The compose file still 
 
 ## Handoff Readiness
 
-The codebase is organized in a standard frontend/backend/worker structure and is suitable for handoff to a development team. This branch uses Oracle Database for persistence, runtime cache, queueing, and event delivery. For production rollout, authentication, retention, observability, backup/restore, and Oracle Database operational sizing should be treated as production-readiness workstreams.
+The codebase is organized in a standard frontend/backend/worker structure and is suitable for handoff to a development team. This branch uses Oracle Database for persistence, runtime cache, AQ/TEQ queueing, and event delivery. For production rollout, authentication, retention, observability, backup/restore, and Oracle Database operational sizing should be treated as production-readiness workstreams.
 
 Detailed review notes are captured in [docs/handoff-readiness-review.md](docs/handoff-readiness-review.md).

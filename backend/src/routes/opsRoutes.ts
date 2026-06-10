@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { getOracleQueue, getPersistenceDb, getQdrant, getRuntimeCache } from '../config/database';
-import type { OracleJobQueue } from '../runtime/oracleRuntime';
+import type { OracleQueueAdapter } from '../runtime/oracleRuntime';
 import {
   deriveOverallStatus,
   getOpsStatusColor,
@@ -39,10 +39,10 @@ interface StorageSnapshot {
   affectsOverall: boolean;
 }
 
-let harQueue: OracleJobQueue | null = null;
-let logQueue: OracleJobQueue | null = null;
+let harQueue: OracleQueueAdapter | null = null;
+let logQueue: OracleQueueAdapter | null = null;
 
-function queueFor(name: string): OracleJobQueue {
+function queueFor(name: string): OracleQueueAdapter {
   if (name === HAR_QUEUE_NAME) {
     if (!harQueue) harQueue = getOracleQueue(HAR_QUEUE_NAME);
     return harQueue;

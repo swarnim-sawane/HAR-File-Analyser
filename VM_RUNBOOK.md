@@ -7,8 +7,8 @@
 |---|---|---|---|
 | Frontend | `har-frontend` | 3000 | Static files via `python3 -m http.server` |
 | Backend API | `har-backend` | 4000 | 4x cluster, Express + TypeScript |
-| Worker | `har-worker` | N/A | 2x fork mode, Oracle-backed queue, --expose-gc --max-old-space-size=4096 |
-| Oracle Database | external/local Oracle service | configured by connect string | JSON persistence, runtime cache, queue, and event state |
+| Worker | `har-worker` | N/A | 2x fork mode, Oracle AQ/TEQ-backed queue, --expose-gc --max-old-space-size=4096 |
+| Oracle Database | external/local Oracle service | configured by connect string | JSON persistence, runtime cache, AQ/TEQ queues, and event state |
 
 **VM:** `celvpvm05798.us.oracle.com`
 **UI URL:** `http://10.65.39.163:3000`
@@ -212,9 +212,9 @@ pm2 start /tmp/worker.config.cjs
 For manual data cleanup, coordinate with the Oracle Database owner and remove only the affected `fileId` documents from the relevant logical collections in the Oracle JSON table.
 
 ### 7. Clear stale Oracle-backed jobs
-Use this only when old jobs are being replayed and you intentionally want to clear pending HAR/log processing work. `pm2 flush` only clears PM2 logs; it does not clear Oracle runtime queue documents.
+Use this only when old jobs are being replayed and you intentionally want to clear pending HAR/log processing work. `pm2 flush` only clears PM2 logs; it does not clear Oracle AQ/TEQ messages or Oracle runtime queue audit documents.
 
-Stop the worker first, coordinate with the database owner, and delete only runtime job documents for the affected queue/fileId from the `oracle_runtime_jobs` logical collection. Then recreate `/tmp/worker.config.cjs` from section 5 if missing and start the worker again:
+Stop the worker first, coordinate with the database owner, and clear only the affected AQ/TEQ messages plus related runtime job audit documents for the affected queue/fileId from the `oracle_runtime_jobs` logical collection. Then recreate `/tmp/worker.config.cjs` from section 5 if missing and start the worker again:
 
 ```bash
 pm2 delete har-worker
@@ -321,6 +321,8 @@ ORACLE_DB_CONNECT_STRING=<oracle-connect-string>
 ORACLE_JSON_TABLE=HAR_ANALYZER_DOCS
 ORACLE_DB_POOL_MIN=1
 ORACLE_DB_POOL_MAX=10
+ORACLE_AQ_AUTO_CREATE=false
+ORACLE_AQ_QUEUE_PREFIX=HAR_ANALYZER
 ORACLE_QUEUE_POLL_INTERVAL_MS=500
 ORACLE_EVENT_POLL_INTERVAL_MS=250
 UPLOAD_DIR=/tmp/har-processed

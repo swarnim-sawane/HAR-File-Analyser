@@ -41,7 +41,7 @@ if (!fsSync.existsSync(PROCESSED_DIR)) {
   console.log('✅ Created processed directory');
 }
 
-// Create Oracle-backed queues
+// Create Oracle AQ-backed queues
 const harQueue = getOracleQueue(HAR_QUEUE_NAME);
 const logQueue = getOracleQueue(LOG_QUEUE_NAME);
 

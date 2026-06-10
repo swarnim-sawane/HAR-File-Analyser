@@ -12,11 +12,17 @@ type OraclePool = {
 
 type OracleModule = {
   CLOB?: unknown;
+  DB_TYPE_JSON?: unknown;
   OBJECT?: unknown;
   STRING?: unknown;
   NUMBER?: unknown;
   DATE?: unknown;
   OUT_FORMAT_OBJECT?: unknown;
+  AQ_DEQ_MODE_REMOVE?: number;
+  AQ_DEQ_NAV_FIRST_MSG?: number;
+  AQ_DEQ_NO_WAIT?: number;
+  AQ_MSG_DELIV_MODE_PERSISTENT?: number;
+  AQ_VISIBILITY_ON_COMMIT?: number;
   fetchAsString?: unknown[];
   createPool: (config: Record<string, unknown>) => Promise<OraclePool>;
 };
@@ -776,6 +782,15 @@ export class OracleJsonDatabase {
     tableName: string,
     outFormatObject: unknown,
     public readonly bindTypes: OracleBindTypes = {},
+    public readonly oracleDriver: Pick<
+      OracleModule,
+      | 'AQ_DEQ_MODE_REMOVE'
+      | 'AQ_DEQ_NAV_FIRST_MSG'
+      | 'AQ_DEQ_NO_WAIT'
+      | 'AQ_MSG_DELIV_MODE_PERSISTENT'
+      | 'AQ_VISIBILITY_ON_COMMIT'
+      | 'DB_TYPE_JSON'
+    > = {},
   ) {
     this.tableName = normalizeOracleIdentifier(tableName);
     this.outFormatObject = outFormatObject;
@@ -862,6 +877,13 @@ export async function createOracleJsonDatabase(config: OracleJsonStoreConfig): P
     number: oracleDb.NUMBER,
     date: oracleDb.DATE,
     clob: oracleDb.CLOB,
+  }, {
+    AQ_DEQ_MODE_REMOVE: oracleDb.AQ_DEQ_MODE_REMOVE,
+    AQ_DEQ_NAV_FIRST_MSG: oracleDb.AQ_DEQ_NAV_FIRST_MSG,
+    AQ_DEQ_NO_WAIT: oracleDb.AQ_DEQ_NO_WAIT,
+    AQ_MSG_DELIV_MODE_PERSISTENT: oracleDb.AQ_MSG_DELIV_MODE_PERSISTENT,
+    AQ_VISIBILITY_ON_COMMIT: oracleDb.AQ_VISIBILITY_ON_COMMIT,
+    DB_TYPE_JSON: oracleDb.DB_TYPE_JSON,
   });
   await database.initializeSchema();
   return database;

@@ -1,11 +1,11 @@
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { createOracleJsonDatabase, type OracleJsonDatabase } from '../persistence/oracleJsonStore';
-import { OracleCacheStore, OracleEventBus, OracleJobQueue } from '../runtime/oracleRuntime';
+import { OracleAqJobQueue, OracleCacheStore, OracleEventBus, type OracleQueueAdapter } from '../runtime/oracleRuntime';
 
 let persistenceDb: OracleJsonDatabase | undefined;
 let runtimeCache: OracleCacheStore | undefined;
 let runtimeEventBus: OracleEventBus | undefined;
-const runtimeQueues = new Map<string, OracleJobQueue>();
+const runtimeQueues = new Map<string, OracleQueueAdapter>();
 let qdrantClient: QdrantClient | undefined;
 
 interface OraclePersistenceConfig {
@@ -86,7 +86,7 @@ export async function connectDatabases() {
     runtimeEventBus = new OracleEventBus(persistenceDb);
     runtimeQueues.clear();
     await runtimeCache.ping();
-    console.log('Oracle runtime cache, queue, and event bridge ready');
+    console.log('Oracle runtime cache, AQ queue, and event bridge ready');
 
     try {
       qdrantClient = new QdrantClient({
@@ -155,11 +155,16 @@ export function getEventBus(): OracleEventBus {
   return runtimeEventBus;
 }
 
-export function getOracleQueue(queueName: string): OracleJobQueue {
+export function getOracleQueue(queueName: string): OracleQueueAdapter {
   const db = getPersistenceDb();
   let queue = runtimeQueues.get(queueName);
   if (!queue) {
-    queue = new OracleJobQueue(db, queueName);
+    queue = new OracleAqJobQueue(db, queueName, {
+      autoCreate: process.env.ORACLE_AQ_AUTO_CREATE === undefined
+        ? undefined
+        : !/^(false|0|no)$/i.test(process.env.ORACLE_AQ_AUTO_CREATE),
+      queuePrefix: process.env.ORACLE_AQ_QUEUE_PREFIX,
+    });
     runtimeQueues.set(queueName, queue);
   }
   return queue;

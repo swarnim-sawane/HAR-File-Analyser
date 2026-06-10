@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  OracleAqJobQueue,
   OracleCacheStore,
   OracleEventBus,
   OracleJobQueue,
@@ -139,5 +140,202 @@ describe('OracleJobQueue', () => {
 
     await queue.complete(created.id, { success: true });
     expect(await queue.getJobCounts('waiting', 'active', 'completed')).toMatchObject({ completed: 1 });
+  });
+});
+
+class FakeAqQueue {
+  public readonly messages: any[] = [];
+  public enqOptions: Record<string, unknown> = {};
+  public deqOptions: Record<string, unknown> = {};
+
+  async enqOne(message: any) {
+    this.messages.push(JSON.parse(JSON.stringify(message)));
+    return { msgId: Buffer.from(`msg-${this.messages.length}`) };
+  }
+
+  async deqOne() {
+    const message = this.messages.shift();
+    if (!message) return undefined;
+    return {
+      ...message,
+      payload: JSON.parse(JSON.stringify(message.payload)),
+      msgId: Buffer.from(`msg-${this.messages.length + 1}`),
+    };
+  }
+}
+
+class FakeAqConnection {
+  public readonly statements: string[] = [];
+  public readonly queueRequests: Array<{ name: string; options: Record<string, unknown> }> = [];
+  public commits = 0;
+  public rollbacks = 0;
+  public closed = false;
+
+  constructor(private readonly aqQueue: FakeAqQueue) {}
+
+  async execute(sql: string) {
+    this.statements.push(sql);
+    if (/FROM USER_QUEUES/i.test(sql)) {
+      return { rows: [{ COUNT_VALUE: 0 }] };
+    }
+    return { rows: [], rowsAffected: 1 };
+  }
+
+  async getQueue(name: string, options: Record<string, unknown>) {
+    this.queueRequests.push({ name, options });
+    return this.aqQueue;
+  }
+
+  async commit() {
+    this.commits += 1;
+  }
+
+  async rollback() {
+    this.rollbacks += 1;
+  }
+
+  async close() {
+    this.closed = true;
+  }
+}
+
+class FakeAqPool {
+  public readonly aqQueue = new FakeAqQueue();
+  public readonly connections: FakeAqConnection[] = [];
+
+  async getConnection() {
+    const connection = new FakeAqConnection(this.aqQueue);
+    this.connections.push(connection);
+    return connection;
+  }
+}
+
+class FakeAqRuntimeDb extends MemoryDb {
+  public readonly pool = new FakeAqPool();
+  public readonly tableName = 'HAR_ANALYZER_DOCS';
+  public readonly outFormatObject = {};
+  public readonly bindTypes = {
+    string: 'STRING',
+    number: 'NUMBER',
+    date: 'DATE',
+    clob: 'CLOB',
+  };
+}
+
+describe('OracleAqJobQueue', () => {
+  const now = () => new Date('2026-06-10T00:00:00.000Z');
+
+  it('creates a transactional event queue and enqueues JSON jobs through Oracle AQ', async () => {
+    const db = new FakeAqRuntimeDb();
+    const queue = new OracleAqJobQueue(
+      db as any,
+      'har-processing',
+      { autoCreate: true, queuePrefix: 'HAR_ANALYZER' },
+      now,
+    );
+
+    const job = await queue.add('process_file', { fileId: 'file-1' }, {
+      attempts: 3,
+      backoff: { delay: 2000 },
+    });
+
+    expect(job.data.fileId).toBe('file-1');
+    expect(db.pool.connections[0].statements.join('\n')).toContain('CREATE_TRANSACTIONAL_EVENT_QUEUE');
+    expect(db.pool.connections[0].queueRequests[0]).toMatchObject({
+      name: 'HAR_ANALYZER_HAR_PROCESSING',
+      options: { payloadType: 'JSON' },
+    });
+    expect(db.pool.aqQueue.messages[0].payload).toMatchObject({
+      id: job.id,
+      name: 'process_file',
+      data: { fileId: 'file-1' },
+      maxAttempts: 3,
+      backoffDelayMs: 2000,
+      attemptsMade: 0,
+    });
+    expect(await queue.getJobCounts('waiting', 'active', 'completed')).toMatchObject({ waiting: 1 });
+  });
+
+  it('claims an AQ message and commits the dequeue only when the job completes', async () => {
+    const db = new FakeAqRuntimeDb();
+    const queue = new OracleAqJobQueue(
+      db as any,
+      'har-processing',
+      { autoCreate: false, queuePrefix: 'HAR_ANALYZER' },
+      now,
+    );
+
+    const created = await queue.add('process_file', { fileId: 'file-1' }, { attempts: 1 });
+    const claimed = await queue.claimNext();
+
+    expect(claimed?.id).toBe(created.id);
+    expect(claimed?.data.fileId).toBe('file-1');
+    expect(await queue.getJobCounts('waiting', 'active')).toMatchObject({ active: 1 });
+
+    const claimConnection = db.pool.connections[1];
+    expect(claimConnection.commits).toBe(0);
+    expect(claimConnection.closed).toBe(false);
+
+    await queue.complete(created.id, { success: true });
+
+    expect(claimConnection.commits).toBe(1);
+    expect(claimConnection.closed).toBe(true);
+    expect(await queue.getJobCounts('active', 'completed')).toMatchObject({ completed: 1 });
+  });
+
+  it('closes an empty dequeue connection without disturbing other in-flight AQ jobs', async () => {
+    const db = new FakeAqRuntimeDb();
+    const queue = new OracleAqJobQueue(
+      db as any,
+      'har-processing',
+      { autoCreate: false, queuePrefix: 'HAR_ANALYZER' },
+      now,
+    );
+
+    const created = await queue.add('process_file', { fileId: 'file-1' }, { attempts: 1 });
+    await queue.claimNext();
+    const activeConnection = db.pool.connections[1];
+
+    const emptyClaim = await queue.claimNext();
+    const emptyConnection = db.pool.connections[2];
+
+    expect(emptyClaim).toBeNull();
+    expect(activeConnection.closed).toBe(false);
+    expect(emptyConnection.closed).toBe(true);
+
+    await queue.complete(created.id, { success: true });
+  });
+
+  it('re-enqueues failed AQ jobs with attempts and delay before committing the failed dequeue', async () => {
+    const db = new FakeAqRuntimeDb();
+    const queue = new OracleAqJobQueue(
+      db as any,
+      'log-processing',
+      { autoCreate: false, queuePrefix: 'HAR_ANALYZER' },
+      now,
+    );
+
+    const created = await queue.add('process_file', { fileId: 'log-1' }, {
+      attempts: 3,
+      backoff: { delay: 2000 },
+    });
+    await queue.claimNext();
+    const status = await queue.fail(created.id, new Error('temporary failure'));
+
+    expect(status).toBe('waiting');
+    expect(db.pool.aqQueue.messages).toHaveLength(1);
+    expect(db.pool.aqQueue.messages[0]).toMatchObject({
+      delay: 2,
+      correlation: created.id,
+      payload: {
+        id: created.id,
+        attemptsMade: 1,
+      },
+    });
+    expect(await queue.getJobCounts('waiting', 'delayed', 'failed')).toMatchObject({
+      waiting: 0,
+      delayed: 1,
+      failed: 0,
+    });
   });
 });
