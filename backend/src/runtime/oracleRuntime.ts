@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+import { createHash } from 'crypto';
 import type { OracleJsonDatabase } from '../persistence/oracleJsonStore';
 
 type NowProvider = () => Date;
@@ -9,6 +10,7 @@ interface CacheDocument {
   fileId: string;
   key: string;
   value?: string;
+  member?: string;
   members?: string[];
   expiresAt?: string;
   updatedAt: string;
@@ -128,6 +130,24 @@ function isExpired(doc: { expiresAt?: string }, now: Date): boolean {
   return Boolean(doc.expiresAt && doc.expiresAt <= iso(now));
 }
 
+function setMemberDocumentId(key: string, member: string): string {
+  const raw = `${key}:${member}`;
+  if (Buffer.byteLength(raw, 'utf8') <= 256) return raw;
+  const hash = createHash('sha256').update(raw).digest('hex').slice(0, 32);
+  const maxPrefixLength = Math.max(1, 255 - hash.length);
+  return `${key.slice(0, maxPrefixLength)}:${hash}`;
+}
+
+function collectSetMembers(docs: CacheDocument[], now: Date): Set<string> {
+  const members = new Set<string>();
+  for (const doc of docs) {
+    if (isExpired(doc, now)) continue;
+    if (doc.member !== undefined) members.add(doc.member);
+    for (const member of doc.members ?? []) members.add(member);
+  }
+  return members;
+}
+
 function parseStoredDocument<T>(value: unknown): T {
   if (typeof value === 'string') return JSON.parse(value) as T;
   if (Buffer.isBuffer(value)) return JSON.parse(value.toString('utf8')) as T;
@@ -244,29 +264,34 @@ export class OracleCacheStore {
   }
 
   async sadd(key: string, ...members: string[]): Promise<number> {
-    const existing = await this.setCollection().findOne({ fileId: key });
-    const before = new Set(existing?.members ?? []);
-    for (const member of members) before.add(member);
+    const now = this.now();
+    const existingDocs = await this.setCollection().find({ key }).toArray();
+    const before = collectSetMembers(existingDocs, now);
+    let added = 0;
 
-    await this.setCollection().insertOne({
-      fileId: key,
-      key,
-      members: Array.from(before).sort(),
-      expiresAt: existing?.expiresAt,
-      updatedAt: iso(this.now()),
-    });
+    for (const member of members) {
+      if (!before.has(member)) added += 1;
+      await this.setCollection().insertOne({
+        fileId: setMemberDocumentId(key, member),
+        key,
+        member,
+        expiresAt: existingDocs.find((doc) => !isExpired(doc, now) && doc.expiresAt)?.expiresAt,
+        updatedAt: iso(now),
+      });
+    }
 
-    return before.size - (existing?.members?.length ?? 0);
+    return added;
   }
 
   async scard(key: string): Promise<number> {
-    const doc = await this.setCollection().findOne({ fileId: key });
-    if (!doc) return 0;
-    if (isExpired(doc, this.now())) {
-      await this.setCollection().deleteMany({ fileId: key });
-      return 0;
+    const now = this.now();
+    const docs = await this.setCollection().find({ key }).toArray();
+    const expired = docs.filter((doc) => isExpired(doc, now));
+    for (const doc of expired) {
+      await this.setCollection().deleteMany({ fileId: doc.fileId });
     }
-    return doc.members?.length ?? 0;
+
+    return collectSetMembers(docs, now).size;
   }
 
   async expire(key: string, ttlSeconds: number): Promise<number> {
@@ -277,9 +302,11 @@ export class OracleCacheStore {
       await this.cacheCollection().insertOne({ ...cacheDoc, expiresAt, updatedAt: iso(this.now()) });
       changed = 1;
     }
-    const setDoc = await this.setCollection().findOne({ fileId: key });
-    if (setDoc) {
-      await this.setCollection().insertOne({ ...setDoc, expiresAt, updatedAt: iso(this.now()) });
+    const setDocs = await this.setCollection().find({ key }).toArray();
+    if (setDocs.length > 0) {
+      for (const setDoc of setDocs) {
+        await this.setCollection().insertOne({ ...setDoc, expiresAt, updatedAt: iso(this.now()) });
+      }
       changed = 1;
     }
     return changed;
@@ -289,7 +316,7 @@ export class OracleCacheStore {
     let deleted = 0;
     for (const key of keys) {
       deleted += (await this.cacheCollection().deleteMany({ fileId: key })).deletedCount ?? 0;
-      deleted += (await this.setCollection().deleteMany({ fileId: key })).deletedCount ?? 0;
+      deleted += (await this.setCollection().deleteMany({ key })).deletedCount ?? 0;
     }
     return deleted;
   }

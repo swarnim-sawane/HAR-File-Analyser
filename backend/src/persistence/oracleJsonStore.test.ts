@@ -224,4 +224,52 @@ describe('oracleJsonStore document handling', () => {
     expect(executeManyCalls[0].options.bindDefs.doc.type).toBe('CLOB');
     expect(executeManyCalls[0].binds[0].doc.length).toBeGreaterThan(100_000);
   });
+
+  it('retries a transient Oracle MERGE primary-key race during upsert', async () => {
+    let failedOnce = false;
+    let rollbackCount = 0;
+    let commitCount = 0;
+    const executeManyCalls: Array<{ sql: string; binds: any[]; options: any }> = [];
+    const connection = {
+      executeMany: async (sql: string, binds: any[], options: any) => {
+        executeManyCalls.push({ sql, binds, options });
+        if (!failedOnce) {
+          failedOnce = true;
+          throw new Error(
+            "ORA-00001: unique constraint (HAR_APP.HAR_ANALYZER_DOCS_PK) violated\n" +
+              "ORA-03301: row with column values (COLLECTION_NAME:'oracle_runtime_sets', DOC_ID:'upload:file-1:chunks') already exists",
+          );
+        }
+        return {};
+      },
+      rollback: async () => {
+        rollbackCount += 1;
+      },
+      commit: async () => {
+        commitCount += 1;
+      },
+      close: async () => {},
+    };
+    const pool = {
+      getConnection: async () => connection,
+      close: async () => {},
+    };
+    const database = new OracleJsonDatabase(pool as any, 'HAR_DOCS', {}, {
+      string: 'STRING',
+      number: 'NUMBER',
+      date: 'DATE',
+      clob: 'CLOB',
+    });
+
+    await expect(database.collection('oracle_runtime_sets').insertOne({
+      fileId: 'upload:file-1:chunks',
+      key: 'upload:file-1:chunks',
+      members: ['0'],
+      updatedAt: '2026-06-10T00:00:00.000Z',
+    })).resolves.toEqual({ insertedId: 'upload:file-1:chunks' });
+
+    expect(executeManyCalls).toHaveLength(2);
+    expect(rollbackCount).toBe(1);
+    expect(commitCount).toBe(1);
+  });
 });

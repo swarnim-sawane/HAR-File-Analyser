@@ -110,6 +110,17 @@ describe('OracleCacheStore', () => {
       'upload:file-1:chunks',
     ]);
   });
+
+  it('keeps concurrent set member writes from overwriting each other', async () => {
+    const cache = new OracleCacheStore(new MemoryDb() as any, () => new Date('2026-06-10T00:00:00.000Z'));
+
+    await Promise.all([
+      cache.sadd('upload:file-2:chunks', '0'),
+      cache.sadd('upload:file-2:chunks', '1'),
+    ]);
+
+    expect(await cache.scard('upload:file-2:chunks')).toBe(2);
+  });
 });
 
 describe('OracleEventBus', () => {

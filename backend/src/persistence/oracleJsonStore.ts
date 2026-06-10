@@ -2,6 +2,7 @@ type OracleConnection = {
   execute: (sql: string, binds?: Record<string, unknown> | unknown[], options?: Record<string, unknown>) => Promise<any>;
   executeMany: (sql: string, binds: Record<string, unknown>[], options?: Record<string, unknown>) => Promise<any>;
   commit: () => Promise<void>;
+  rollback?: () => Promise<void>;
   close: () => Promise<void>;
 };
 
@@ -455,9 +456,21 @@ async function withConnection<T>(pool: OraclePool, fn: (connection: OracleConnec
   const connection = await pool.getConnection();
   try {
     return await fn(connection);
+  } catch (error) {
+    await connection.rollback?.().catch(() => undefined);
+    throw error;
   } finally {
     await connection.close();
   }
+}
+
+function isOracleUniqueConstraintRace(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /ORA-00001|unique constraint/i.test(message);
+}
+
+async function waitForRetry(attempt: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, attempt * 50));
 }
 
 async function ignoreAlreadyExists(connection: OracleConnection, sql: string): Promise<void> {
@@ -648,13 +661,24 @@ export class OracleJsonCollection<T extends Record<string, any> = Record<string,
         :doc
       )`;
 
-    await withConnection(this.database.pool, async (connection) => {
-      await connection.executeMany(sql, binds, {
-        autoCommit: false,
-        bindDefs: buildInsertBindDefs(this.database.bindTypes),
-      });
-      await connection.commit();
-    });
+    const maxMergeAttempts = 3;
+    for (let attempt = 1; attempt <= maxMergeAttempts; attempt += 1) {
+      try {
+        await withConnection(this.database.pool, async (connection) => {
+          await connection.executeMany(sql, binds, {
+            autoCommit: false,
+            bindDefs: buildInsertBindDefs(this.database.bindTypes),
+          });
+          await connection.commit();
+        });
+        break;
+      } catch (error) {
+        if (!isOracleUniqueConstraintRace(error) || attempt >= maxMergeAttempts) {
+          throw error;
+        }
+        await waitForRetry(attempt);
+      }
+    }
 
     return {
       insertedCount: docs.length,
