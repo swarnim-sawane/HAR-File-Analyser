@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { getPersistenceDb, getRedis } from '../config/database';
+import { getPersistenceDb, getRuntimeCache } from '../config/database';
 import type { ParsedHarEntry } from '../services/streamingParser';
 import { generateInsightsForContext } from './aiRoutes';
 import {
@@ -45,8 +45,7 @@ async function getHarFile(fileId: string): Promise<HarAutomationFileDoc | null> 
 }
 
 async function getPendingHarMetadata(fileId: string): Promise<HarAutomationPendingMetadata | null> {
-  const redis = getRedis();
-  const metadata = await redis.get(`file:${fileId}:metadata`);
+  const metadata = await getRuntimeCache().get(`file:${fileId}:metadata`);
   if (!metadata) return null;
 
   try {

@@ -2,8 +2,7 @@ import { Router, Request, Response } from 'express';
 import { promises as fs } from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { getRedis } from '../config/database';
-import { Queue } from 'bullmq';
+import { getOracleQueue, getRuntimeCache } from '../config/database';
 import { HAR_QUEUE_NAME } from '../config/queueNames';
 import { sanitize, getHarInfo, defaultScrubItems } from '../utils/har_sanitize';
 
@@ -50,7 +49,7 @@ router.post('/:fileId', async (req: Request, res: Response) => {
   const { mode, scrubWords = [], scrubMimetypes = [], scrubDomains = [] } = req.body;
 
   try {
-    const redis = getRedis();
+    const runtimeCache = getRuntimeCache();
     const found = await findFile(fileId);
     if (!found) return res.status(404).json({ error: 'File not found' });
 
@@ -73,8 +72,8 @@ router.post('/:fileId', async (req: Request, res: Response) => {
     const stats = await fs.stat(sanitizedPath);
     const hash = crypto.createHash('sha256').update(sanitized).digest('hex');
 
-    // Enqueue BullMQ job for sanitized file (same pattern as uploadRoutes)
-    const harQueue = new Queue(HAR_QUEUE_NAME, { connection: redis });
+    // Enqueue Oracle-backed job for sanitized file (same pattern as uploadRoutes)
+    const harQueue = getOracleQueue(HAR_QUEUE_NAME);
     const job = await harQueue.add('process_file', {
       fileId: sanitizedFileId,
       fileName: sanitizedFileName,
@@ -88,10 +87,10 @@ router.post('/:fileId', async (req: Request, res: Response) => {
       backoff: { type: 'exponential', delay: 2000 },
     });
 
-    // Copy Redis metadata under the sanitized fileId
-    const origMetaRaw = await redis.get(`file:${fileId}:metadata`);
+    // Copy transient metadata under the sanitized fileId
+    const origMetaRaw = await runtimeCache.get(`file:${fileId}:metadata`);
     const origMeta = origMetaRaw ? JSON.parse(origMetaRaw) : {};
-    await redis.setex(`file:${sanitizedFileId}:metadata`, 86400, JSON.stringify({
+    await runtimeCache.setex(`file:${sanitizedFileId}:metadata`, 86400, JSON.stringify({
       ...origMeta,
       fileName: sanitizedFileName,
       fileSize: stats.size,

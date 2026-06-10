@@ -7,9 +7,8 @@
 |---|---|---|---|
 | Frontend | `har-frontend` | 3000 | Static files via `python3 -m http.server` |
 | Backend API | `har-backend` | 4000 | 4x cluster, Express + TypeScript |
-| Worker | `har-worker` | N/A | 2x fork mode, BullMQ, --expose-gc --max-old-space-size=4096 |
-| MongoDB | system service | 27017 | `har-analyzer` database |
-| Redis | system service | 6379 | Job queue + pub/sub |
+| Worker | `har-worker` | N/A | 2x fork mode, Oracle-backed queue, --expose-gc --max-old-space-size=4096 |
+| Oracle Database | external/local Oracle service | configured by connect string | JSON persistence, runtime cache, queue, and event state |
 
 **VM:** `celvpvm05798.us.oracle.com`
 **UI URL:** `http://10.65.39.163:3000`
@@ -198,41 +197,27 @@ pm2 show har-worker | grep "interpreter args"
 pm2 save
 ```
 
-### 6. MongoDB duplicate key on re-upload
-If you see `E11000 duplicate key error ... fileId_1`, a stale record exists.
+### 6. Oracle runtime or duplicate document issue
+If an upload appears stuck or a duplicate document/update issue is suspected, first confirm the backend and worker are using the same Oracle Database credentials and table name.
 
-**Fix:**
+**Fix path:**
 ```bash
-mongosh
-db = db.getSiblingDB('har-analyzer')
-db.har_files.deleteMany({ fileId: "PASTE_CONFLICTING_FILEID_HERE" })
-exit
+pm2 logs har-backend --lines 100
+pm2 logs har-worker --lines 100
 pm2 restart har-backend --update-env
-# Recreate worker from the config in section 5 if processing needs a restart.
 pm2 delete har-worker
 pm2 start /tmp/worker.config.cjs
 ```
 
-### 7. Clear stale BullMQ jobs
-Use this only when old jobs are being replayed and you intentionally want to clear pending HAR/log processing work. `pm2 flush` only clears PM2 logs; it does not clear Redis queues.
+For manual data cleanup, coordinate with the Oracle Database owner and remove only the affected `fileId` documents from the relevant logical collections in the Oracle JSON table.
+
+### 7. Clear stale Oracle-backed jobs
+Use this only when old jobs are being replayed and you intentionally want to clear pending HAR/log processing work. `pm2 flush` only clears PM2 logs; it does not clear Oracle runtime queue documents.
+
+Stop the worker first, coordinate with the database owner, and delete only runtime job documents for the affected queue/fileId from the `oracle_runtime_jobs` logical collection. Then recreate `/tmp/worker.config.cjs` from section 5 if missing and start the worker again:
 
 ```bash
-# Stop workers first so they do not keep consuming stale jobs.
 pm2 delete har-worker
-
-# Inspect queue backlog.
-redis-cli LLEN bull:har-processing:wait
-redis-cli ZCARD bull:har-processing:delayed
-redis-cli ZCARD bull:har-processing:failed
-redis-cli LLEN bull:log-processing:wait
-redis-cli ZCARD bull:log-processing:delayed
-redis-cli ZCARD bull:log-processing:failed
-
-# Clear only this application's BullMQ queues.
-redis-cli --scan --pattern 'bull:har-processing:*' | xargs -r redis-cli DEL
-redis-cli --scan --pattern 'bull:log-processing:*' | xargs -r redis-cli DEL
-
-# Recreate /tmp/worker.config.cjs from section 5 if missing, then start workers.
 pm2 start /tmp/worker.config.cjs
 ```
 
@@ -259,7 +244,7 @@ RETENTION_CLEANUP_INTERVAL_MINUTES=60
 RETENTION_CLEANUP_DRY_RUN=false
 ```
 
-The cleanup removes expired `har_files`, `har_entries`, `console_log_files`, `console_logs`, Redis metadata/status keys, processed files, and stale upload chunks that are older than the configured cutoff.
+The cleanup removes expired `har_files`, `har_entries`, `console_log_files`, `console_logs`, Oracle runtime metadata/status keys, processed files, and stale upload chunks that are older than the configured cutoff.
 
 ***
 
@@ -291,10 +276,9 @@ pm2 env <har-backend-id> | grep -i proxy
 # Check what API URL is baked into frontend
 grep -o "10\.65\.39\.163:4000\|localhost:4000" /refresh/home/Downloads/har-analyzer/dist/assets/*.js | sort | uniq -c
 
-# MongoDB shell
-mongosh
-db = db.getSiblingDB('har-analyzer')
-db.har_files.find().sort({uploadedAt:-1}).limit(5)
+# Oracle Database
+# Use the approved SQL client/connection method for ORACLE_DB_CONNECT_STRING.
+# Inspect HAR_ANALYZER_DOCS rows only with the database owner's guidance.
 ```
 
 ***
@@ -304,15 +288,15 @@ db.har_files.find().sort({uploadedAt:-1}).limit(5)
 | Error | Cause | Fix |
 |---|---|---|
 | `All HAR uploads failed` | Frontend pointing to `localhost:4000` | Rebuild with correct `.env.production` |
-| `E11000 duplicate key` | Stale MongoDB record | `deleteMany({ fileId: "..." })` in mongosh |
+| Duplicate document/update issue | Stale Oracle JSON document for the same fileId | Coordinate with DB owner and remove only affected logical collection documents |
 | `ConnectTimeoutError` on OCA | Node.js fetch ignores proxy | Ensure `setGlobalDispatcher` is in `server.ts` |
 | `fetch failed` in Node test | No proxy set | Proxy vars missing from `.env` |
 | AI chat shows old UI | Wrong branch built | `git checkout main` before building |
 | `OCA proxy error: fetch failed` | Token expired | Run `refresh-token` alias |
-| Worker processes stale jobs | Old BullMQ jobs still pending in Redis | Stop `har-worker`, clear only `bull:har-processing:*` / `bull:log-processing:*`, then recreate worker from config |
+| Worker processes stale jobs | Old Oracle runtime job documents still pending | Stop `har-worker`, clear only affected runtime job documents with DB-owner approval, then recreate worker from config |
 | `bash: /tmp/serve-frontend.sh: No such file or directory` | PM2 frontend points to a deleted temp script | Recreate `har-frontend` with `python3 -m http.server` |
 | `[PM2][ERROR] File /tmp/worker.config.cjs not found` | `/tmp` worker config disappeared | Recreate `/tmp/worker.config.cjs`, then `pm2 start /tmp/worker.config.cjs` |
-| `Document is larger than the maximum size 16777216` | Old worker build stored oversized HAR body text in MongoDB | Pull latest `main`, rebuild backend, restart workers |
+| Oversized HAR body text causes storage failure | Old worker build did not truncate large response bodies before Oracle storage | Pull latest `main`, rebuild backend, restart workers |
 
 ***
 
@@ -329,10 +313,16 @@ OCA_TOKEN_SET_AT=0
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=llama3.2
 
-# Databases
-MONGODB_URL=mongodb://localhost:27017/har-analyzer
-REDIS_HOST=localhost
-REDIS_PORT=6379
+# Oracle Database
+PERSISTENCE_BACKEND=oracle-json
+ORACLE_DB_USER=<oracle-user>
+ORACLE_DB_PASSWORD=<oracle-password>
+ORACLE_DB_CONNECT_STRING=<oracle-connect-string>
+ORACLE_JSON_TABLE=HAR_ANALYZER_DOCS
+ORACLE_DB_POOL_MIN=1
+ORACLE_DB_POOL_MAX=10
+ORACLE_QUEUE_POLL_INTERVAL_MS=500
+ORACLE_EVENT_POLL_INTERVAL_MS=250
 UPLOAD_DIR=/tmp/har-processed
 PROCESSED_DIR=/tmp/har-processed
 

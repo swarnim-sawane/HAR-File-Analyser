@@ -77,6 +77,32 @@ describe('oracleJsonStore SQL translation', () => {
       new OracleJsonDatabase({} as any, 'HAR_DOCS; DROP TABLE USERS', {}),
     ).toThrow(/invalid oracle identifier/i);
   });
+
+  it('retries transient Oracle DDL locks during schema initialization', async () => {
+    let lockedOnce = false;
+    const executeCalls: string[] = [];
+    const connection = {
+      execute: async (sql: string) => {
+        executeCalls.push(sql);
+        if (!lockedOnce && /CREATE INDEX/i.test(sql)) {
+          lockedOnce = true;
+          throw new Error('ORA-00054: resource busy and acquire with NOWAIT specified or timeout expired');
+        }
+        return {};
+      },
+      commit: async () => {},
+      close: async () => {},
+    };
+    const pool = {
+      getConnection: async () => connection,
+      close: async () => {},
+    };
+    const database = new OracleJsonDatabase(pool as any, 'HAR_DOCS', {});
+
+    await expect(database.initializeSchema()).resolves.toBeUndefined();
+    expect(lockedOnce).toBe(true);
+    expect(executeCalls.filter((sql) => /CREATE INDEX/i.test(sql)).length).toBeGreaterThan(8);
+  });
 });
 
 describe('oracleJsonStore document handling', () => {

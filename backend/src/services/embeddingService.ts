@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { ollamaPool } from './ollamaPool';
-import { getQdrant, getPersistenceDb, getRedis } from '../config/database';
+import { getQdrant, getPersistenceDb, getRuntimeCache } from '../config/database';
 import { harEntryToText, logEntryToText, ParsedHarEntry, ParsedLogEntry } from './streamingParser';
 import { publishGlobal, publishToFile } from '../utils/socketHelper';
 
@@ -226,14 +226,14 @@ export async function queryWithContext(
  */
 async function buildPersistenceContext(fileId: string, type: 'har' | 'log'): Promise<string> {
   const db = getPersistenceDb();
-  const redis = getRedis();
+  const runtimeCache = getRuntimeCache();
 
   try {
     let context = '';
 
     if (type === 'har') {
       const file = await db.collection('har_files').findOne({ fileId });
-      const cachedStats = await redis.get(`stats:${fileId}`);
+      const cachedStats = await runtimeCache.get(`stats:${fileId}`);
       const stats = cachedStats ? JSON.parse(cachedStats) : null;
 
       if (file) {
@@ -324,7 +324,7 @@ async function buildPersistenceContext(fileId: string, type: 'har' | 'log'): Pro
     } else {
       // Console log context
       const file = await db.collection('console_log_files').findOne({ fileId });
-      const cachedStats = await redis.get(`stats:${fileId}`);
+      const cachedStats = await runtimeCache.get(`log_stats:${fileId}`);
       const stats = cachedStats ? JSON.parse(cachedStats) : null;
 
       if (file) context += `Log File: ${file.fileName}\n`;

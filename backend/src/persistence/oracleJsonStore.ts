@@ -455,11 +455,20 @@ async function withConnection<T>(pool: OraclePool, fn: (connection: OracleConnec
 }
 
 async function ignoreAlreadyExists(connection: OracleConnection, sql: string): Promise<void> {
-  try {
-    await connection.execute(sql);
-  } catch (error) {
-    const message = (error as Error).message;
-    if (!/ORA-00955|name is already used/i.test(message)) throw error;
+  const maxAttempts = 6;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await connection.execute(sql);
+      return;
+    } catch (error) {
+      const message = (error as Error).message;
+      if (/ORA-00955|name is already used/i.test(message)) return;
+      if (/ORA-00054|ORA-04021|resource busy|timeout/i.test(message) && attempt < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, attempt * 100));
+        continue;
+      }
+      throw error;
+    }
   }
 }
 
@@ -816,16 +825,20 @@ export class OracleJsonDatabase {
           CONSTRAINT ${this.tableName.slice(0, 24)}_PK PRIMARY KEY (collection_name, doc_id)
         )`);
 
-      await Promise.all([
-        ignoreAlreadyExists(connection, `CREATE INDEX ${this.tableName.slice(0, 21)}_FID_IDX ON ${this.tableName} (collection_name, file_id)`),
-        ignoreAlreadyExists(connection, `CREATE INDEX ${this.tableName.slice(0, 21)}_IDX_IDX ON ${this.tableName} (collection_name, file_id, entry_index)`),
-        ignoreAlreadyExists(connection, `CREATE INDEX ${this.tableName.slice(0, 21)}_STS_IDX ON ${this.tableName} (collection_name, status_value)`),
-        ignoreAlreadyExists(connection, `CREATE INDEX ${this.tableName.slice(0, 21)}_RSP_IDX ON ${this.tableName} (collection_name, file_id, response_status, entry_index)`),
-        ignoreAlreadyExists(connection, `CREATE INDEX ${this.tableName.slice(0, 21)}_LVL_IDX ON ${this.tableName} (collection_name, file_id, level_value, entry_index)`),
-        ignoreAlreadyExists(connection, `CREATE INDEX ${this.tableName.slice(0, 21)}_SRC_IDX ON ${this.tableName} (collection_name, file_id, source_value, entry_index)`),
-        ignoreAlreadyExists(connection, `CREATE INDEX ${this.tableName.slice(0, 21)}_TSP_IDX ON ${this.tableName} (collection_name, file_id, timestamp_value, entry_index)`),
-        ignoreAlreadyExists(connection, `CREATE INDEX ${this.tableName.slice(0, 21)}_PS_IDX ON ${this.tableName} (collection_name, file_id, parse_status, entry_index)`),
-      ]);
+      const indexStatements = [
+        `CREATE INDEX ${this.tableName.slice(0, 21)}_FID_IDX ON ${this.tableName} (collection_name, file_id)`,
+        `CREATE INDEX ${this.tableName.slice(0, 21)}_IDX_IDX ON ${this.tableName} (collection_name, file_id, entry_index)`,
+        `CREATE INDEX ${this.tableName.slice(0, 21)}_STS_IDX ON ${this.tableName} (collection_name, status_value)`,
+        `CREATE INDEX ${this.tableName.slice(0, 21)}_RSP_IDX ON ${this.tableName} (collection_name, file_id, response_status, entry_index)`,
+        `CREATE INDEX ${this.tableName.slice(0, 21)}_LVL_IDX ON ${this.tableName} (collection_name, file_id, level_value, entry_index)`,
+        `CREATE INDEX ${this.tableName.slice(0, 21)}_SRC_IDX ON ${this.tableName} (collection_name, file_id, source_value, entry_index)`,
+        `CREATE INDEX ${this.tableName.slice(0, 21)}_TSP_IDX ON ${this.tableName} (collection_name, file_id, timestamp_value, entry_index)`,
+        `CREATE INDEX ${this.tableName.slice(0, 21)}_PS_IDX ON ${this.tableName} (collection_name, file_id, parse_status, entry_index)`,
+      ];
+
+      for (const indexSql of indexStatements) {
+        await ignoreAlreadyExists(connection, indexSql);
+      }
     });
   }
 

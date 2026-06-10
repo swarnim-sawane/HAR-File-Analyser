@@ -1,7 +1,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
-import type Redis from 'ioredis';
 import type { OracleJsonDatabase } from '../persistence/oracleJsonStore';
+import type { OracleCacheStore } from '../runtime/oracleRuntime';
 
 export interface RetentionCleanupConfig {
   enabled: boolean;
@@ -18,7 +18,7 @@ interface RetentionFileDoc {
 
 export interface RetentionCleanupOptions {
   db: OracleJsonDatabase;
-  redis: Redis;
+  runtimeCache: OracleCacheStore;
   uploadDir: string;
   processedDir: string;
   maxAgeHours: number;
@@ -33,7 +33,7 @@ export interface RetentionCleanupResult {
   harEntries: number;
   consoleLogFiles: number;
   consoleLogEntries: number;
-  redisKeys: number;
+  runtimeKeys: number;
   filesDeleted: number;
   staleUploadChunks: number;
 }
@@ -89,7 +89,7 @@ function candidateProcessedPaths(doc: RetentionFileDoc, processedDir: string): s
   return Array.from(candidates);
 }
 
-async function deleteRedisKeys(redis: Redis, fileIds: string[], dryRun: boolean): Promise<number> {
+async function deleteRuntimeKeys(runtimeCache: OracleCacheStore, fileIds: string[], dryRun: boolean): Promise<number> {
   let count = 0;
 
   for (const fileId of fileIds) {
@@ -101,7 +101,7 @@ async function deleteRedisKeys(redis: Redis, fileIds: string[], dryRun: boolean)
       `upload:${fileId}:progress`,
     ];
     count += keys.length;
-    if (!dryRun) await redis.del(...keys);
+    if (!dryRun) await runtimeCache.del(...keys);
   }
 
   return count;
@@ -165,7 +165,7 @@ export async function cleanupExpiredAnalysisData(
   }
 
   const staleUploadChunks = await cleanupStaleUploadChunks(options.uploadDir, cutoff, dryRun);
-  const redisKeys = await deleteRedisKeys(options.redis, allFileIds, dryRun);
+  const runtimeKeys = await deleteRuntimeKeys(options.runtimeCache, allFileIds, dryRun);
 
   let harEntries = 0;
   let consoleLogEntries = 0;
@@ -205,7 +205,7 @@ export async function cleanupExpiredAnalysisData(
     harEntries,
     consoleLogFiles: consoleLogFiles.length,
     consoleLogEntries,
-    redisKeys,
+    runtimeKeys,
     filesDeleted,
     staleUploadChunks,
   };

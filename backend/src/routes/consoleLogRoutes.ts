@@ -1,5 +1,5 @@
 import express, { Request, Response } from 'express';
-import { getPersistenceDb, getRedis } from '../config/database';
+import { getPersistenceDb, getRuntimeCache } from '../config/database';
 
 const router = express.Router();
 const SORT_FIELDS = ['timestamp', 'level', 'source', 'message', 'index'] as const;
@@ -300,10 +300,9 @@ router.get('/:fileId/status', async (req: Request, res: Response) => {
       });
     }
 
-    // File not persisted yet — check Redis for in-progress status
+    // File not persisted yet — check runtime cache for in-progress status
     // (the upload pipeline writes file:{fileId}:metadata immediately with status:'processing')
-    const redis = getRedis();
-    const metadata = await redis.get(`file:${fileId}:metadata`);
+    const metadata = await getRuntimeCache().get(`file:${fileId}:metadata`);
     if (metadata) {
       const data = JSON.parse(metadata);
       return res.json({

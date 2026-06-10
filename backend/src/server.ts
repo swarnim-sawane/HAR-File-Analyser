@@ -4,7 +4,7 @@ import path from 'path';
 import cors from 'cors';
 import { Server as SocketIOServer } from 'socket.io';
 import dotenv from 'dotenv';
-import { connectDatabases, closeDatabases, getPersistenceDb, getRedis } from './config/database';
+import { connectDatabases, closeDatabases, getPersistenceDb, getRuntimeCache, getEventBus } from './config/database';
 import { configureOutboundProxy } from './config/outboundProxy';
 import { buildAllowedOrigins } from './config/corsOrigins';
 import { setSocketIOInstance } from './utils/socketHelper';
@@ -65,16 +65,15 @@ function getOpenApiServerUrl(req: express.Request): string {
   return `${proto}://${host}`;
 }
 
-// ✅ NEW: Helper to get file status from Redis
-async function getFileStatusFromRedis(fileId: string) {
+// ✅ NEW: Helper to get file status from Oracle runtime cache
+async function getFileStatusFromRuntimeCache(fileId: string) {
   try {
-    const redis = getRedis();
-    const metadata = await redis.get(`file:${fileId}:metadata`);
+    const metadata = await getRuntimeCache().get(`file:${fileId}:metadata`);
     if (metadata) {
       return JSON.parse(metadata);
     }
   } catch (err) {
-    console.error('Failed to get file status from Redis:', err);
+    console.error('Failed to get file status from Oracle runtime cache:', err);
   }
   return null;
 }
@@ -89,7 +88,7 @@ io.on('connection', (socket) => {
     console.log(`✓ Client subscribed to file: ${fileId}`);
 
     // ✅ NEW: Immediately send current status if file is already ready
-    const status = await getFileStatusFromRedis(fileId);
+    const status = await getFileStatusFromRuntimeCache(fileId);
     if (status && status.status === 'ready') {
       console.log(`📤 Sending cached status to client for ${fileId}`);
       socket.emit('file:status', {
@@ -138,56 +137,67 @@ io.on('connection', (socket) => {
   });
 });
 
-/**
- * Set up Redis subscriber using async/await
- */
-/**
- * Set up Redis subscriber using old Redis client (v3.x)
- */
-function setupRedisSubscriber(io: SocketIOServer) {
-  const redis = getRedis();
-  const subscriber = redis.duplicate();
+function dispatchSocketEnvelope(io: SocketIOServer, message: string): void {
+  try {
+    const {
+      type,
+      data,
+      scope,
+      room,
+    } = JSON.parse(message) as {
+      type: string;
+      data: any;
+      scope?: 'file' | 'global';
+      room?: string;
+    };
 
-  // ✅ OLD CLIENT: Use 'message' event listener
-  subscriber.on('message', (_channel: string, message: string) => {
-    try {
-      const {
-        type,
-        data,
-        scope,
-        room,
-      } = JSON.parse(message) as {
-        type: string;
-        data: any;
-        scope?: 'file' | 'global';
-        room?: string;
-      };
+    console.log(`Runtime event received: ${type}`, data);
 
-      console.log(`📨 Redis event received: ${type}`, data);
-
-      if (scope === 'global') {
-        io.emit(type, data);
-        console.log(`✅ Broadcasted ${type} to all clients`);
-      } else if (scope === 'file' && room) {
-        io.to(room).emit(type, data);
-        console.log(`✅ Emitted ${type} to room ${room}`);
-      } else if (data?.fileId) {
-        io.to(`file:${data.fileId}`).emit(type, data);
-        console.log(`✅ Emitted ${type} to room file:${data.fileId}`);
-      } else {
-        io.emit(type, data);
-        console.log(`✅ Broadcasted ${type} to all clients`);
-      }
-    } catch (err) {
-      console.error('❌ Failed to parse Redis message:', err);
+    if (scope === 'global') {
+      io.emit(type, data);
+      console.log(`Broadcasted ${type} to all clients`);
+    } else if (scope === 'file' && room) {
+      io.to(room).emit(type, data);
+      console.log(`Emitted ${type} to room ${room}`);
+    } else if (data?.fileId) {
+      io.to(`file:${data.fileId}`).emit(type, data);
+      console.log(`Emitted ${type} to room file:${data.fileId}`);
+    } else {
+      io.emit(type, data);
+      console.log(`Broadcasted ${type} to all clients`);
     }
-  });
+  } catch (err) {
+    console.error('Failed to parse runtime event message:', err);
+  }
+}
 
-  // ✅ OLD CLIENT: Subscribe without callback
-  subscriber.subscribe('socket:events');
-  console.log('✅ Subscribed to Redis socket:events channel');
+function setupOracleRuntimeEventBridge(io: SocketIOServer): NodeJS.Timeout {
+  const configuredInterval = Number.parseInt(process.env.ORACLE_EVENT_POLL_INTERVAL_MS || '250', 10);
+  const pollIntervalMs = Number.isFinite(configuredInterval) && configuredInterval > 0 ? configuredInterval : 250;
+  let lastIndex = 0;
+  let polling = false;
 
-  return subscriber;
+  const poll = async () => {
+    if (polling) return;
+    polling = true;
+
+    try {
+      const events = await getEventBus().poll('socket:events', lastIndex, 100);
+      for (const event of events) {
+        lastIndex = Math.max(lastIndex, event.index);
+        dispatchSocketEnvelope(io, event.message);
+      }
+    } catch (error) {
+      console.error('Failed to poll Oracle runtime events:', error);
+    } finally {
+      polling = false;
+    }
+  };
+
+  void poll();
+  const timer = setInterval(() => void poll(), pollIntervalMs);
+  console.log('Subscribed to Oracle runtime socket:events stream');
+  return timer;
 }
 
 function setupRetentionCleanup(): NodeJS.Timeout | null {
@@ -204,7 +214,7 @@ function setupRetentionCleanup(): NodeJS.Timeout | null {
     try {
       const result = await cleanupExpiredAnalysisData({
         db: getPersistenceDb(),
-        redis: getRedis(),
+        runtimeCache: getRuntimeCache(),
         uploadDir,
         processedDir,
         maxAgeHours: config.maxAgeHours,
@@ -224,7 +234,7 @@ function setupRetentionCleanup(): NodeJS.Timeout | null {
 }
 
 async function startServer() {
-  let redisSubscriber: any = null;
+  let runtimeEventBridgeTimer: NodeJS.Timeout | null = null;
   let retentionCleanupTimer: NodeJS.Timeout | null = null;
 
   try {
@@ -234,8 +244,8 @@ async function startServer() {
     await connectDatabases();
     console.log('');
 
-    // 2. Set up Redis subscriber for worker events
-    redisSubscriber = await setupRedisSubscriber(io);
+    // 2. Set up Oracle runtime event bridge for worker events
+    runtimeEventBridgeTimer = setupOracleRuntimeEventBridge(io);
     retentionCleanupTimer = setupRetentionCleanup();
 
     // 3. Import routes AFTER database connection
@@ -297,7 +307,7 @@ async function startServer() {
     server.listen(PORT, () => {
       console.log(`✅ Server running on http://localhost:${PORT}`);
       console.log(`📡 WebSocket server ready`);
-      console.log(`🔔 Redis pub/sub bridge active`);
+      console.log(`🔔 Oracle runtime event bridge active`);
       console.log(`🌐 CORS enabled for:`);
       ALLOWED_ORIGINS.forEach(origin => {
         console.log(`   - ${origin}`);
@@ -309,10 +319,9 @@ async function startServer() {
     const shutdown = async () => {
       console.log('\n⏳ Shutting down gracefully...');
 
-      if (redisSubscriber) {
-        await redisSubscriber.unsubscribe('socket:events');
-        await redisSubscriber.quit();
-        console.log('✅ Redis subscriber closed');
+      if (runtimeEventBridgeTimer) {
+        clearInterval(runtimeEventBridgeTimer);
+        console.log('Oracle runtime event bridge stopped');
       }
 
       if (retentionCleanupTimer) {

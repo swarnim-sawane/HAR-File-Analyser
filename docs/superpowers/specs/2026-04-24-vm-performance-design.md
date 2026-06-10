@@ -14,11 +14,11 @@ Upload + processing of large HAR files (45MB–100MB) takes 2–3 minutes on VM 
 | HAR fetch reads+re-serializes entire file | `harRoutes.ts:52-59`: readFile → JSON.parse → res.json | 32.5s for response |
 | No gzip on API responses | No compression middleware | Large JSON sent uncompressed |
 | 4 parallel chunks on bandwidth-constrained link | HAR shows chunk timeouts, status 0 errors | Contention + retries |
-| Root partition 95% full | `df -h`: /dev/sda3 95% | MongoDB WAL slow |
+| Root partition 95% full | `df -h`: /dev/sda3 95% | Oracle JSON storage slow |
 | Worker concurrency 8 (2×4) on disk bottleneck | ecosystem.config.cjs | Parallel writes contend on slow disk |
 
 **Already fixed (Phase 0 — done):**
-- MongoDB migrated from `/` (95% full) to `/refresh` (37GB free)
+- Database storage migrated from `/` (95% full) to `/refresh` (37GB free)
 - Worker concurrency reduced from 8 to 2
 - Root disk cleaned
 
@@ -94,9 +94,9 @@ On a bandwidth-constrained link, 4 parallel × 10MB chunks compete for the same 
 Browser → compress File (gzip) → slice 3MB chunks → 2 parallel uploads
       → /api/upload/chunk (multer, no decompression needed, assembles .gz)
       → /api/upload/complete { compressed: 'gzip' }
-      → BullMQ job { filePath, compressed: 'gzip' }
+      → Oracle-backed queue job { filePath, compressed: 'gzip' }
       → Worker: createReadStream(filePath).pipe(createGunzip()).pipe(JSONStream)
-      → MongoDB batch inserts (5000/batch, ordered:false, j:false)
+      → Oracle JSON batch inserts (5000/batch, ordered:false, j:false)
 
 Browser → GET /api/har/:fileId
       → res.sendFile (stream raw file)

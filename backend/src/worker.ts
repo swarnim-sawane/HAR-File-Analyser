@@ -1,15 +1,15 @@
 import dotenv from 'dotenv';
-import { Worker } from 'bullmq';
-import { closeDatabases, connectDatabases, getRedis } from './config/database';
+import { closeDatabases, connectDatabases, getOracleQueue } from './config/database';
 import { HAR_QUEUE_NAME, LOG_QUEUE_NAME } from './config/queueNames';
 import { processHarFile } from './workers/harProcessor';
 import { processConsoleLog } from './workers/logProcessor';
 import { logError, logInfo, measureDurationMs } from './config/observability';
+import { OracleQueueWorker } from './runtime/oracleRuntime';
 
 dotenv.config();
 
-let harWorker: Worker | null = null;
-let logWorker: Worker | null = null;
+let harWorker: OracleQueueWorker | null = null;
+let logWorker: OracleQueueWorker | null = null;
 let shuttingDown = false;
 
 async function shutdown(signal: string): Promise<void> {
@@ -35,12 +35,12 @@ async function startWorker() {
     console.log('🔧 Starting HAR Analyzer Worker...\n');
 
     await connectDatabases();
-    const connection = getRedis();
     const concurrency = parseInt(process.env.WORKER_CONCURRENCY || '2', 10);
+    const pollIntervalMs = parseInt(process.env.ORACLE_QUEUE_POLL_INTERVAL_MS || '500', 10);
     logInfo('worker.starting', { concurrency });
 
-    harWorker = new Worker(
-      HAR_QUEUE_NAME,
+    harWorker = new OracleQueueWorker(
+      getOracleQueue(HAR_QUEUE_NAME),
       async (job) => {
         const startedAt = Date.now();
         console.log(`\n[Worker] Processing HAR file job ${job.id}`);
@@ -73,18 +73,11 @@ async function startWorker() {
           throw error;
         }
       },
-      {
-        connection,
-        concurrency,
-        limiter: {
-          max: 5,
-          duration: 1000,
-        },
-      }
+      { concurrency, pollIntervalMs }
     );
 
-    logWorker = new Worker(
-      LOG_QUEUE_NAME,
+    logWorker = new OracleQueueWorker(
+      getOracleQueue(LOG_QUEUE_NAME),
       async (job) => {
         const startedAt = Date.now();
         console.log(`\n[Worker] Processing console log job ${job.id}`);
@@ -117,15 +110,11 @@ async function startWorker() {
           throw error;
         }
       },
-      {
-        connection,
-        concurrency,
-        limiter: {
-          max: 5,
-          duration: 1000,
-        },
-      }
+      { concurrency, pollIntervalMs }
     );
+
+    harWorker.start();
+    logWorker.start();
 
     harWorker.on('completed', (job) => {
       console.log(`✅ [Worker] HAR job ${job.id} completed`);
@@ -146,7 +135,7 @@ async function startWorker() {
     console.log('\n=================================');
     console.log('👷 Workers started successfully');
     console.log(`📊 Concurrency per process: ${concurrency}`);
-    console.log('📡 WebSocket delivery: Redis pub/sub via backend');
+    console.log('📡 WebSocket delivery: Oracle runtime event bridge via backend');
     console.log('=================================\n');
     logInfo('worker.started', { concurrency });
   } catch (error) {

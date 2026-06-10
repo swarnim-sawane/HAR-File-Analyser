@@ -4,8 +4,7 @@ import { promises as fs } from 'fs';
 import { createGunzip } from 'zlib';
 import path from 'path';
 import crypto from 'crypto';
-import { getRedis } from '../config/database';
-import { Queue } from 'bullmq';
+import { getOracleQueue, getRuntimeCache } from '../config/database';
 import { HAR_QUEUE_NAME, LOG_QUEUE_NAME } from '../config/queueNames';
 import { publishGlobal } from '../utils/socketHelper';
 import {
@@ -22,7 +21,7 @@ import {
 import { logError, logInfo, logWarn, measureDurationMs } from '../config/observability';
 
 const router = express.Router();
-const redis = getRedis();
+const runtimeCache = getRuntimeCache();
 
 // Use absolute paths
 const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads'));
@@ -42,9 +41,9 @@ if (!fsSync.existsSync(PROCESSED_DIR)) {
   console.log('✅ Created processed directory');
 }
 
-// Create queues
-const harQueue = new Queue(HAR_QUEUE_NAME, { connection: redis });
-const logQueue = new Queue(LOG_QUEUE_NAME, { connection: redis });
+// Create Oracle-backed queues
+const harQueue = getOracleQueue(HAR_QUEUE_NAME);
+const logQueue = getOracleQueue(LOG_QUEUE_NAME);
 
 // FIXED: Use a temporary name first, then rename
 const storage = multer.diskStorage({
@@ -124,14 +123,14 @@ const handleChunkUpload = async (req: Request, res: Response) => {
       return res.status(500).json({ error: 'Chunk upload failed - file not saved' });
     }
 
-    // Track received chunks in Redis
-    await redis.sadd(`upload:${fileId}:chunks`, parsedChunkIndex.toString());
-    const receivedChunks = await redis.scard(`upload:${fileId}:chunks`);
+    // Track received chunks in Oracle runtime cache
+    await runtimeCache.sadd(`upload:${fileId}:chunks`, parsedChunkIndex.toString());
+    const receivedChunks = await runtimeCache.scard(`upload:${fileId}:chunks`);
 
     // Update progress
     const progress = (receivedChunks / parsedTotalChunks) * 100;
-    await redis.set(`upload:${fileId}:progress`, progress.toString());
-    await redis.expire(`upload:${fileId}:progress`, 3600);
+    await runtimeCache.set(`upload:${fileId}:progress`, progress.toString());
+    await runtimeCache.expire(`upload:${fileId}:progress`, 3600);
 
     await publishGlobal('upload:progress', {
       fileId,
@@ -226,7 +225,7 @@ router.post('/complete', async (req: Request, res: Response) => {
     console.log(`📦 Assembling file: ${fileName} (${parsedTotalChunks} chunks)`);
 
     // Verify all chunks received
-    const receivedChunks = await redis.scard(`upload:${fileId}:chunks`);
+    const receivedChunks = await runtimeCache.scard(`upload:${fileId}:chunks`);
     if (receivedChunks !== parsedTotalChunks) {
       console.error(`❌ Missing chunks: received ${receivedChunks}, expected ${parsedTotalChunks}`);
       logWarn('upload.complete.missing_chunks', {
@@ -377,12 +376,12 @@ router.post('/complete', async (req: Request, res: Response) => {
       }
     });
 
-    // Clean up Redis keys
-    await redis.del(`upload:${fileId}:chunks`);
-    await redis.del(`upload:${fileId}:progress`);
+    // Clean up Oracle runtime keys
+    await runtimeCache.del(`upload:${fileId}:chunks`);
+    await runtimeCache.del(`upload:${fileId}:progress`);
 
     // Store file metadata
-    await redis.setex(
+    await runtimeCache.setex(
       `file:${fileId}:metadata`,
       86400,
       JSON.stringify({
@@ -435,7 +434,7 @@ router.post('/complete', async (req: Request, res: Response) => {
 router.get('/progress/:fileId', async (req: Request, res: Response) => {
   try {
     const { fileId } = req.params;
-    const progress = await redis.get(`upload:${fileId}:progress`);
+    const progress = await runtimeCache.get(`upload:${fileId}:progress`);
 
     res.json({
       fileId,

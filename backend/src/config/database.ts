@@ -1,16 +1,12 @@
-import Redis, { type RedisOptions } from 'ioredis';
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { createOracleJsonDatabase, type OracleJsonDatabase } from '../persistence/oracleJsonStore';
+import { OracleCacheStore, OracleEventBus, OracleJobQueue } from '../runtime/oracleRuntime';
 
 let persistenceDb: OracleJsonDatabase | undefined;
-let redisClient: Redis | undefined;
+let runtimeCache: OracleCacheStore | undefined;
+let runtimeEventBus: OracleEventBus | undefined;
+const runtimeQueues = new Map<string, OracleJobQueue>();
 let qdrantClient: QdrantClient | undefined;
-
-interface CacheConnectionConfig {
-  url?: string;
-  options: RedisOptions;
-  description: string;
-}
 
 interface OraclePersistenceConfig {
   user: string;
@@ -24,15 +20,6 @@ interface OraclePersistenceConfig {
 export interface PersistenceConfig {
   backend: 'oracle-json';
   oracle: OraclePersistenceConfig;
-}
-
-function parseBoolean(value: string | undefined): boolean {
-  return ['1', 'true', 'yes', 'on'].includes(String(value ?? '').trim().toLowerCase());
-}
-
-function parsePort(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(String(value ?? ''), 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function parseOptionalPositiveInt(value: string | undefined): number | undefined {
@@ -88,45 +75,6 @@ export function getPersistenceLabel(): string {
   return 'Oracle JSON Database';
 }
 
-export function buildCacheConnectionConfig(env: NodeJS.ProcessEnv = process.env): CacheConnectionConfig {
-  const url = firstEnv(env, ['OCI_CACHE_URL', 'CACHE_URL', 'REDIS_URL']);
-  const username = firstEnv(env, ['OCI_CACHE_USERNAME', 'CACHE_USERNAME', 'REDIS_USERNAME']);
-  const password = firstEnv(env, ['OCI_CACHE_PASSWORD', 'CACHE_PASSWORD', 'REDIS_PASSWORD']);
-  const tlsEnabled = parseBoolean(firstEnv(env, ['OCI_CACHE_TLS', 'CACHE_TLS', 'REDIS_TLS']));
-
-  const options: RedisOptions = {
-    retryStrategy: (times) => Math.min(times * 50, 2000),
-    maxRetriesPerRequest: null,
-    enableReadyCheck: false,
-    enableOfflineQueue: true,
-    ...(username ? { username } : {}),
-    ...(password ? { password } : {}),
-    ...(tlsEnabled ? { tls: {} } : {}),
-  };
-
-  if (url) {
-    return {
-      url,
-      options,
-      description: new URL(url).host,
-    };
-  }
-
-  const host = firstEnv(env, ['OCI_CACHE_HOST', 'CACHE_HOST', 'REDIS_HOST']) || 'localhost';
-  const port = parsePort(firstEnv(env, ['OCI_CACHE_PORT', 'CACHE_PORT', 'REDIS_PORT']), 6379);
-  const db = firstEnv(env, ['OCI_CACHE_DB', 'CACHE_DB', 'REDIS_DB']);
-
-  return {
-    options: {
-      ...options,
-      host,
-      port,
-      ...(db ? { db: Number.parseInt(db, 10) || 0 } : {}),
-    },
-    description: `${host}:${port}`,
-  };
-}
-
 export async function connectDatabases() {
   try {
     const persistenceConfig = buildPersistenceConfig();
@@ -134,22 +82,11 @@ export async function connectDatabases() {
     console.log('Oracle JSON Database connected');
     console.log('Oracle JSON document table and indexes ready');
 
-    const cacheConfig = buildCacheConnectionConfig();
-    redisClient = cacheConfig.url
-      ? new Redis(cacheConfig.url, cacheConfig.options)
-      : new Redis(cacheConfig.options);
-
-    redisClient.on('error', (err) => {
-      console.error('Cache error:', err);
-    });
-
-    redisClient.on('connect', () => {
-      console.log(`Cache connected: ${cacheConfig.description}`);
-    });
-
-    redisClient.on('ready', () => {
-      console.log('Cache ready');
-    });
+    runtimeCache = new OracleCacheStore(persistenceDb);
+    runtimeEventBus = new OracleEventBus(persistenceDb);
+    runtimeQueues.clear();
+    await runtimeCache.ping();
+    console.log('Oracle runtime cache, queue, and event bridge ready');
 
     try {
       qdrantClient = new QdrantClient({
@@ -204,11 +141,28 @@ export function getPersistenceDb(): OracleJsonDatabase {
   return persistenceDb;
 }
 
-export function getRedis(): Redis {
-  if (!redisClient) {
-    throw new Error('Cache not connected');
+export function getRuntimeCache(): OracleCacheStore {
+  if (!runtimeCache) {
+    throw new Error('Oracle runtime cache not connected');
   }
-  return redisClient;
+  return runtimeCache;
+}
+
+export function getEventBus(): OracleEventBus {
+  if (!runtimeEventBus) {
+    throw new Error('Oracle runtime event bridge not connected');
+  }
+  return runtimeEventBus;
+}
+
+export function getOracleQueue(queueName: string): OracleJobQueue {
+  const db = getPersistenceDb();
+  let queue = runtimeQueues.get(queueName);
+  if (!queue) {
+    queue = new OracleJobQueue(db, queueName);
+    runtimeQueues.set(queueName, queue);
+  }
+  return queue;
 }
 
 export function getQdrant(): QdrantClient {
@@ -227,11 +181,11 @@ export async function closeDatabases() {
     console.log('Oracle JSON Database closed');
   }
 
-  if (redisClient) {
-    await redisClient.quit();
-    redisClient = undefined;
-    console.log('Cache closed');
-  }
+  await runtimeCache?.quit();
+  runtimeCache = undefined;
+  runtimeEventBus = undefined;
+  runtimeQueues.clear();
+  console.log('Oracle runtime services closed');
 
   console.log('All backend dependency connections closed');
 }

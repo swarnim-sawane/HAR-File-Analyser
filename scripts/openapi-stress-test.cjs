@@ -4,16 +4,7 @@ const fsp = require('fs/promises');
 const path = require('path');
 const { performance } = require('perf_hooks');
 
-const ROOT = path.resolve(__dirname, '..');
-const { MongoClient } = require(path.join(ROOT, 'backend', 'node_modules', 'mongodb'));
-const Redis = require(path.join(ROOT, 'backend', 'node_modules', 'ioredis'));
-
 const BASE_URL = process.env.STRESS_BASE_URL || process.env.OPENAPI_TEST_BASE_URL || 'http://localhost:4200';
-const MONGODB_URL = process.env.STRESS_MONGODB_URL || 'mongodb://localhost:27017/har-analyzer-stress-test';
-const REDIS_HOST = process.env.REDIS_HOST || 'localhost';
-const REDIS_PORT = Number.parseInt(process.env.REDIS_PORT || '6379', 10);
-const HAR_QUEUE_NAME = process.env.HAR_QUEUE_NAME || 'har-openapi-stress';
-const LOG_QUEUE_NAME = process.env.LOG_QUEUE_NAME || 'log-openapi-stress';
 const WORK_DIR = process.env.STRESS_WORK_DIR || 'C:\\tmp\\har-openapi-stress';
 const UPLOAD_DIR = process.env.STRESS_UPLOAD_DIR || process.env.UPLOAD_DIR || path.join(WORK_DIR, 'uploads');
 const PROCESSED_DIR = process.env.STRESS_PROCESSED_DIR || process.env.PROCESSED_DIR || path.join(WORK_DIR, 'processed');
@@ -377,7 +368,7 @@ async function exerciseEndpoints(fileId, expectedEntries) {
   const detail = await request('GET', `/api/har/${fileId}/entries/0`);
   assert(detail.json.index === 0, 'entry detail index mismatch');
   if (getBodyBytesPerEntry() > HAR_STORAGE_TEXT_LIMIT_BYTES) {
-    assert(detail.json.storage?.truncatedFields?.includes('response.content.text'), 'large response body was not truncated in MongoDB');
+    assert(detail.json.storage?.truncatedFields?.includes('response.content.text'), 'large response body was not truncated before Oracle storage');
     recordMs('HAR entry detail truncation', detail.ms);
   } else {
     assert(!detail.json.storage?.truncatedFields?.includes('response.content.text'), 'small response body was unexpectedly truncated');
@@ -386,44 +377,17 @@ async function exerciseEndpoints(fileId, expectedEntries) {
 }
 
 async function cleanup(fileId) {
-  const mongo = new MongoClient(MONGODB_URL);
-  const redis = new Redis({ host: REDIS_HOST, port: REDIS_PORT, maxRetriesPerRequest: null, enableReadyCheck: false });
-  try {
-    await mongo.connect();
-    const db = mongo.db();
-    await Promise.all([
-      db.collection('har_files').deleteMany({ fileId }),
-      db.collection('har_entries').deleteMany({ fileId }),
-    ]);
-
-    const patterns = [
-      `file:${fileId}:metadata`,
-      `upload:${fileId}:*`,
-      `bull:${HAR_QUEUE_NAME}:*`,
-      `bull:${LOG_QUEUE_NAME}:*`,
-    ];
-    for (const pattern of patterns) {
-      const stream = redis.scanStream({ match: pattern, count: 250 });
-      const keys = [];
-      for await (const batch of stream) keys.push(...batch);
-      if (keys.length) await redis.del(...keys);
-    }
-
-    if (!KEEP_FILES) {
-      for (const dir of [UPLOAD_DIR, PROCESSED_DIR, GENERATED_DIR]) {
-        try {
-          const files = await fsp.readdir(dir);
-          await Promise.all(files
-            .filter((file) => file.includes(fileId) || file.startsWith(TEST_PREFIX))
-            .map((file) => fsp.rm(path.join(dir, file), { force: true })));
-        } catch {
-          // Directory may not exist on failed early runs.
-        }
+  if (!KEEP_FILES) {
+    for (const dir of [UPLOAD_DIR, PROCESSED_DIR, GENERATED_DIR]) {
+      try {
+        const files = await fsp.readdir(dir);
+        await Promise.all(files
+          .filter((file) => file.includes(fileId) || file.startsWith(TEST_PREFIX))
+          .map((file) => fsp.rm(path.join(dir, file), { force: true })));
+      } catch {
+        // Directory may not exist on failed early runs.
       }
     }
-  } finally {
-    await mongo.close().catch(() => {});
-    await redis.quit().catch(() => {});
   }
 }
 

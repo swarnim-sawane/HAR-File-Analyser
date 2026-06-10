@@ -1,6 +1,5 @@
-import { Queue } from 'bullmq';
-import { getRedis, getPersistenceDb } from '../config/database';
-import { HAR_QUEUE_NAME } from '../config/queueNames';
+import { getRuntimeCache, getPersistenceDb } from '../config/database';
+import type { OracleCacheStore } from '../runtime/oracleRuntime';
 import { streamParseHar, ParsedHarEntry } from '../services/streamingParser';
 import { promises as fs } from 'fs';
 import { publishToFile } from '../utils/socketHelper';
@@ -8,20 +7,10 @@ import { prepareHarEntryForStorage } from './harEntryStorage';
 import { logError, logInfo, measureDurationMs } from '../config/observability';
 
 // ✅ REMOVED: import { emitToFile } from '../utils/socketHelper';
-// Now using Redis pub/sub instead
+// Now using Oracle runtime event bridge instead
 
-// FIXED: Don't call getRedis() at module load time
-let redis: any = null;
-let harQueue: Queue | null = null;
-
-// Initialize queue after database connection
-export function initHarQueue(): Queue {
-  if (!harQueue) {
-    redis = getRedis();
-    harQueue = new Queue(HAR_QUEUE_NAME, { connection: redis });
-  }
-  return harQueue;
-}
+// FIXED: Don't call getRuntimeCache() at module load time
+let runtimeCache: OracleCacheStore | null = null;
 
 interface HarJobData {
   fileId: string;
@@ -39,19 +28,18 @@ interface HarJobData {
  * ✅ FIXED: No more memory accumulation
  * ✅ FIXED: Stats calculated on-the-fly
  * ✅ FIXED: Embeddings skipped (optional for future)
- * ✅ FIXED: Events emitted via Redis pub/sub for cross-process communication
+ * ✅ FIXED: Events emitted via Oracle runtime event bridge for cross-process communication
  */
 export async function processHarFile(data: HarJobData): Promise<void> {
   const startedAt = Date.now();
   const { fileId, fileName, filePath, fileSize } = data;
-  
-  // Initialize redis if not already done
-  if (!redis) {
-    redis = getRedis();
+
+  if (!runtimeCache) {
+    runtimeCache = getRuntimeCache();
   }
 
   console.log(`📂 Processing HAR file: ${fileName} (${fileSize} bytes)`);
-  
+
   try {
     // Update status
     await updateFileStatus(fileId, 'parsing');
@@ -77,8 +65,8 @@ export async function processHarFile(data: HarJobData): Promise<void> {
     // Larger batches = fewer database round-trips per file.
     // 2000 entries * ~2 KB avg = ~4 MB per insert, well within driver limits.
     const BATCH_SIZE = 2000;
-    // Only push a progress event to Redis every N batches (= every 10 000 entries)
-    // to avoid hammering Redis with a pub/sub round-trip on every batch.
+    // Only push a progress event to runtime bridge every N batches (= every 10 000 entries)
+    // to avoid hammering runtime bridge with a pub/sub round-trip on every batch.
     const PROGRESS_EMIT_EVERY = 5;
     let batchCount = 0;
     let totalEntries = 0; // ✅ FIXED: Just track count, not store entries
@@ -101,7 +89,7 @@ export async function processHarFile(data: HarJobData): Promise<void> {
         await entriesCollection.insertMany(toInsert, { ordered: false });
         batchCount++;
 
-        // Only emit to Redis every PROGRESS_EMIT_EVERY batches to reduce round-trips
+        // Only emit to runtime bridge every PROGRESS_EMIT_EVERY batches to reduce round-trips
         if (batchCount % PROGRESS_EMIT_EVERY === 0) {
           const progress = Math.min((totalEntries / 15000) * 80, 80);
           await emitProgress(fileId, 'parsing', progress);
@@ -129,11 +117,11 @@ export async function processHarFile(data: HarJobData): Promise<void> {
 
     // ✅ FIXED: Embeddings are SKIPPED for now (add back later as optional background job)
     console.log(`⚡ Skipping embeddings for faster processing (can be added later)`);
-    
+
     // Step 2: Finalize statistics
     await updateFileStatus(fileId, 'analyzing');
     const stats = finalizeStats(statsAccumulator, totalEntries);
-    await redis.setex(`stats:${fileId}`, 86400, JSON.stringify(stats));
+    await runtimeCache.setex(`stats:${fileId}`, 86400, JSON.stringify(stats));
     await emitProgress(fileId, 'analyzing', 90);
 
     // Step 3: Store file metadata in Oracle JSON persistence
@@ -158,7 +146,7 @@ export async function processHarFile(data: HarJobData): Promise<void> {
       totalEntries,
       stats
     });
-    
+
     await emitProgress(fileId, 'complete', 100);
     logInfo('har.processing.completed', {
       fileId,
@@ -168,7 +156,7 @@ export async function processHarFile(data: HarJobData): Promise<void> {
       durationMs: measureDurationMs(startedAt),
     });
     console.log(`✅ HAR file processing complete: ${fileId} (${totalEntries} entries)`);
-    
+
   } catch (error) {
     console.error(`❌ HAR processing failed for ${fileId}:`, error);
     logError('har.processing.failed', {
@@ -246,20 +234,23 @@ function finalizeStats(stats: any, totalEntries: number) {
 }
 
 /**
- * Update file status in Redis + emit via Redis pub/sub
- * ✅ FIXED: Now uses Redis pub/sub instead of direct Socket.IO
+ * Update file status in Oracle runtime cache + emit via Oracle runtime event bridge
+ * ✅ FIXED: Now uses Oracle runtime event bridge instead of direct Socket.IO
  */
 async function updateFileStatus(fileId: string, status: string, extra?: any): Promise<void> {
-  const metadata = await redis.get(`file:${fileId}:metadata`);
+  if (!runtimeCache) {
+    runtimeCache = getRuntimeCache();
+  }
+  const metadata = await runtimeCache.get(`file:${fileId}:metadata`);
   if (metadata) {
     const data = JSON.parse(metadata);
     data.status = status;
     if (extra) {
       Object.assign(data, extra);
     }
-    await redis.setex(`file:${fileId}:metadata`, 86400, JSON.stringify(data));
+    await runtimeCache.setex(`file:${fileId}:metadata`, 86400, JSON.stringify(data));
   }
-  
+
   await publishToFile(fileId, 'file:status', {
     status,
     ...extra
@@ -269,8 +260,8 @@ async function updateFileStatus(fileId: string, status: string, extra?: any): Pr
 }
 
 /**
- * Emit progress via Redis pub/sub
- * ✅ FIXED: Now uses Redis pub/sub instead of direct Socket.IO
+ * Emit progress via Oracle runtime event bridge
+ * ✅ FIXED: Now uses Oracle runtime event bridge instead of direct Socket.IO
  */
 async function emitProgress(fileId: string, stage: string, progress: number): Promise<void> {
   await publishToFile(fileId, 'processing:progress', {

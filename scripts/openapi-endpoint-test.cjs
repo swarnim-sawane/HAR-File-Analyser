@@ -7,16 +7,7 @@ const { performance } = require('perf_hooks');
 
 const gzip = promisify(zlib.gzip);
 
-const ROOT = path.resolve(__dirname, '..');
-const { MongoClient } = require(path.join(ROOT, 'backend', 'node_modules', 'mongodb'));
-const Redis = require(path.join(ROOT, 'backend', 'node_modules', 'ioredis'));
-
 const BASE_URL = process.env.OPENAPI_TEST_BASE_URL || 'http://localhost:4100';
-const MONGODB_URL = process.env.OPENAPI_TEST_MONGODB_URL || 'mongodb://localhost:27017/har-analyzer-openapi-test';
-const REDIS_HOST = process.env.REDIS_HOST || 'localhost';
-const REDIS_PORT = Number.parseInt(process.env.REDIS_PORT || '6379', 10);
-const HAR_QUEUE_NAME = process.env.HAR_QUEUE_NAME || 'har-openapi-test';
-const LOG_QUEUE_NAME = process.env.LOG_QUEUE_NAME || 'log-openapi-test';
 const TEST_UPLOAD_DIR = process.env.OPENAPI_TEST_UPLOAD_DIR || process.env.UPLOAD_DIR || 'C:\\tmp\\har-openapi-test\\uploads';
 const TEST_PROCESSED_DIR = process.env.OPENAPI_TEST_PROCESSED_DIR || process.env.PROCESSED_DIR || 'C:\\tmp\\har-openapi-test\\processed';
 const TEST_PREFIX = `openapi_test_${Date.now()}`;
@@ -195,54 +186,15 @@ async function pollReady(fileId, statusRoute) {
 }
 
 async function cleanup() {
-  const mongo = new MongoClient(MONGODB_URL);
-  const redis = new Redis({ host: REDIS_HOST, port: REDIS_PORT, maxRetriesPerRequest: null, enableReadyCheck: false });
-  try {
-    await mongo.connect();
-    const db = mongo.db();
-    await Promise.all([
-      db.collection('har_files').deleteMany({ fileId: { $regex: `^${TEST_PREFIX}` } }),
-      db.collection('har_files').deleteMany({ fileId: { $regex: `^sanitized_${TEST_PREFIX}` } }),
-      db.collection('har_entries').deleteMany({ fileId: { $regex: `^${TEST_PREFIX}` } }),
-      db.collection('har_entries').deleteMany({ fileId: { $regex: `^sanitized_${TEST_PREFIX}` } }),
-      db.collection('console_log_files').deleteMany({ fileId: { $regex: `^${TEST_PREFIX}` } }),
-      db.collection('console_logs').deleteMany({ fileId: { $regex: `^${TEST_PREFIX}` } }),
-    ]);
-
-    const patterns = [
-      `file:${TEST_PREFIX}*:metadata`,
-      `file:sanitized_${TEST_PREFIX}*:metadata`,
-      `upload:${TEST_PREFIX}*:*`,
-      `bull:${HAR_QUEUE_NAME}:*`,
-      `bull:${LOG_QUEUE_NAME}:*`,
-    ];
-    for (const pattern of patterns) {
-      const stream = redis.scanStream({ match: pattern, count: 250 });
-      const keys = [];
-      for await (const batch of stream) {
-        keys.push(...batch);
-        if (keys.length >= 500) {
-          await redis.del(...keys.splice(0));
-        }
-      }
-      if (keys.length) {
-        await redis.del(...keys);
-      }
+  for (const dir of [TEST_UPLOAD_DIR, TEST_PROCESSED_DIR]) {
+    try {
+      const files = await fs.readdir(dir);
+      await Promise.all(files
+        .filter((file) => file.startsWith(TEST_PREFIX) || file.startsWith(`sanitized_${TEST_PREFIX}`))
+        .map((file) => fs.rm(path.join(dir, file), { force: true })));
+    } catch {
+      // Test directories are optional when this script is used only for contract checks.
     }
-
-    for (const dir of [TEST_UPLOAD_DIR, TEST_PROCESSED_DIR]) {
-      try {
-        const files = await fs.readdir(dir);
-        await Promise.all(files
-          .filter((file) => file.startsWith(TEST_PREFIX) || file.startsWith(`sanitized_${TEST_PREFIX}`))
-          .map((file) => fs.rm(path.join(dir, file), { force: true })));
-      } catch {
-        // Test directories are optional when this script is used only for contract checks.
-      }
-    }
-  } finally {
-    await mongo.close().catch(() => {});
-    await redis.quit().catch(() => {});
   }
 }
 
@@ -309,19 +261,6 @@ async function testNegativeCases() {
   const notFound = await request('GET', `/api/v1/har/${TEST_PREFIX}_missing/summary`, { expectedStatus: 404 });
   assert(notFound.json.error === 'File not found', 'unknown fileId did not return 404 File not found');
   record('v1 unknown fileId', notFound.ms);
-
-  const redis = new Redis({ host: REDIS_HOST, port: REDIS_PORT, maxRetriesPerRequest: null, enableReadyCheck: false });
-  const pendingId = `${TEST_PREFIX}_pending`;
-  await redis.setex(`file:${pendingId}:metadata`, 120, JSON.stringify({
-    fileName: 'pending.har',
-    status: 'processing',
-    uploadedAt: new Date().toISOString(),
-  }));
-  await redis.quit();
-
-  const pending = await request('GET', `/api/v1/har/${pendingId}/summary`, { expectedStatus: 202 });
-  assert(pending.json.status === 'processing', 'pending response status mismatch');
-  record('v1 pending file', pending.ms);
 
   const noFile = new FormData();
   noFile.append('fileId', `${TEST_PREFIX}_nofile`);

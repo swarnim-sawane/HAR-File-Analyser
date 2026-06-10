@@ -1,6 +1,6 @@
 import path from 'path';
 import dotenv from 'dotenv';
-import { closeDatabases, connectDatabases, getPersistenceDb, getRedis } from '../config/database';
+import { closeDatabases, connectDatabases, getPersistenceDb, getRuntimeCache } from '../config/database';
 import {
   cleanupExpiredAnalysisData,
   parseRetentionCleanupConfig,
@@ -20,7 +20,7 @@ async function main() {
   try {
     const result = await cleanupExpiredAnalysisData({
       db: getPersistenceDb(),
-      redis: getRedis(),
+      runtimeCache: getRuntimeCache(),
       uploadDir,
       processedDir,
       maxAgeHours: config.maxAgeHours,

@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { getRedis } from '../config/database';
+import { getRuntimeCache } from '../config/database';
 
 declare global {
   namespace Express {
@@ -26,9 +26,8 @@ export async function sessionManager(
     
     req.sessionId = sessionId;
     
-    // Track active session in Redis
-    const redis = getRedis();
-    await redis.setex(`session:${sessionId}:active`, 3600, Date.now().toString());
+    // Track active session in Oracle runtime cache
+    await getRuntimeCache().setex(`session:${sessionId}:active`, 3600, Date.now().toString());
     
     next();
   } catch (error) {

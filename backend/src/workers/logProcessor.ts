@@ -1,22 +1,10 @@
-import { Queue } from 'bullmq';
-import { getRedis, getPersistenceDb } from '../config/database';
-import { LOG_QUEUE_NAME } from '../config/queueNames';
+import { getRuntimeCache, getPersistenceDb } from '../config/database';
+import type { OracleCacheStore } from '../runtime/oracleRuntime';
 import { streamParseConsoleLog, ParsedLogEntry } from '../services/streamingParser';
 import { publishToFile } from '../utils/socketHelper';
 import { logError, logInfo, measureDurationMs } from '../config/observability';
 
-// FIXED: Don't call getRedis() at module load time
-let redis: any = null;
-let logQueue: Queue | null = null;
-
-// Initialize queue after database connection
-export function initLogQueue(): Queue {
-  if (!logQueue) {
-    redis = getRedis();
-    logQueue = new Queue(LOG_QUEUE_NAME, { connection: redis });
-  }
-  return logQueue;
-}
+let runtimeCache: OracleCacheStore | null = null;
 
 interface LogJobData {
   fileId: string;
@@ -38,9 +26,8 @@ export async function processConsoleLog(data: LogJobData): Promise<void> {
   const startedAt = Date.now();
   const { fileId, fileName, filePath, fileSize } = data;
 
-  // Initialize redis if not already done
-  if (!redis) {
-    redis = getRedis();
+  if (!runtimeCache) {
+    runtimeCache = getRuntimeCache();
   }
 
   console.log(`📋 Processing console log: ${fileName} (${(fileSize / 1024 / 1024).toFixed(1)} MB)`);
@@ -127,7 +114,7 @@ export async function processConsoleLog(data: LogJobData): Promise<void> {
     // Step 2: Finalize statistics
     await updateFileStatus(fileId, 'analyzing');
     const stats = finalizeStats(statsAccumulator, totalEntries);
-    await redis.setex(`log_stats:${fileId}`, 86400, JSON.stringify(stats));
+    await runtimeCache.setex(`log_stats:${fileId}`, 86400, JSON.stringify(stats));
     await emitProgress(fileId, 'analyzing', 90);
 
     // Step 3: Store file metadata in Oracle JSON persistence
@@ -219,17 +206,20 @@ function finalizeStats(stats: any, totalEntries: number) {
 }
 
 /**
- * Update file status in Redis
+ * Update file status in Oracle runtime cache
  */
 async function updateFileStatus(fileId: string, status: string, extra?: any): Promise<void> {
-  const metadata = await redis.get(`file:${fileId}:metadata`);
+  if (!runtimeCache) {
+    runtimeCache = getRuntimeCache();
+  }
+  const metadata = await runtimeCache.get(`file:${fileId}:metadata`);
   if (metadata) {
     const data = JSON.parse(metadata);
     data.status = status;
     if (extra) {
       Object.assign(data, extra);
     }
-    await redis.setex(`file:${fileId}:metadata`, 86400, JSON.stringify(data));
+    await runtimeCache.setex(`file:${fileId}:metadata`, 86400, JSON.stringify(data));
   }
 
   await publishToFile(fileId, 'file:status', { status, ...extra });

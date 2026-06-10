@@ -1749,7 +1749,7 @@ These tests exercise the private stat accumulation logic in `harProcessor.ts`. S
 
 - [ ] **Step 1: Read harProcessor.ts to confirm function signatures**
 
-The functions `updateStatsWithEntry` and `finalizeStats` are defined at module level (not exported) in `backend/src/workers/harProcessor.ts`. To make them testable without modifying source, create a separate pure helper file that these can be moved to in the future. For now, re-implement them inline in the test file as reference implementations and verify they produce the same output structure as what the backend stores in Redis.
+The functions `updateStatsWithEntry` and `finalizeStats` are defined at module level (not exported) in `backend/src/workers/harProcessor.ts`. To make them testable without modifying source, create a separate pure helper file that these can be moved to in the future. For now, re-implement them inline in the test file as reference implementations and verify they produce the same output structure as what the backend stores in Oracle runtime cache.
 
 Create `backend/src/workers/__tests__/harProcessor.stats.test.ts`:
 ```typescript

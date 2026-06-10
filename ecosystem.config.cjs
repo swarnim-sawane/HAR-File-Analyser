@@ -22,8 +22,7 @@ module.exports = {
     },
     // ─── Worker (fork mode — 2 processes, each with concurrency 4) ───────────
     // Run 2 separate worker processes to utilise more cores.
-    // Do NOT use cluster mode for workers — BullMQ workers must not share the
-    // Redis connection across forked processes.
+    // Do NOT use cluster mode for workers; keep queue polling isolated per process.
     {
       name: 'har-worker',
       script: 'dist/worker.js',

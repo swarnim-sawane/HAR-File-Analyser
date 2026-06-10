@@ -65,8 +65,8 @@ export interface HealthCheckResponse {
   status: 'ok' | 'error';
   timestamp: string;
   services?: {
-    mongodb?: string;
-    redis?: string;
+    oracleJson?: string;
+    oracleRuntime?: string;
     qdrant?: string;
   };
 }

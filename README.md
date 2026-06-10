@@ -24,8 +24,7 @@ Run the application locally when developing, testing backend changes, debugging 
 
 The recommended local dependency path is:
 
-- Oracle Database with JSON support: stores HAR metadata, HAR entries, console-log files, and console-log entries.
-- Redis-compatible cache: powers BullMQ queues, upload progress, and Socket.IO pub/sub events.
+- Oracle Database with JSON support: stores HAR metadata, HAR entries, console-log files, console-log entries, runtime cache keys, queue jobs, upload progress, and Socket.IO event envelopes.
 - Qdrant: optional; used by embedding-related AI paths when available.
 
 ## Architecture
@@ -34,11 +33,9 @@ The recommended local dependency path is:
 flowchart LR
     Browser["React + Vite frontend\nport 3000"] --> API["Express API\nport 4000"]
     Browser <--> Socket["Socket.IO progress/events"]
-    API --> Redis["Redis\nqueues, progress, pub/sub"]
-    API --> Oracle["Oracle Database JSON\nfiles and parsed entries"]
-    Redis --> Worker["Backend worker\nHAR/log parsing"]
+    API --> Oracle["Oracle Database JSON\nfiles, parsed entries, runtime cache, queues, events"]
+    Oracle --> Worker["Backend worker\nHAR/log parsing"]
     Worker --> Oracle
-    Worker --> Redis
     API --> OCA["Oracle Code Assist\noptional AI"]
     API --> Qdrant["Qdrant\noptional embeddings"]
 ```
@@ -50,8 +47,7 @@ Primary runtime components:
 | Frontend | `src/` | Analyzer UI, Request Flow, Console Log Analyzer, AI Insights, sanitization UI, comparison workflow |
 | Backend API | `backend/src/server.ts` | REST API, OpenAPI docs, upload orchestration, status, AI routes, sanitization routes |
 | Worker | `backend/src/worker.ts` | Background parsing and persistence for uploaded HAR/log files |
-| Oracle Database JSON | external Oracle database | Persistent analysis data |
-| Redis-compatible cache | external/container | Queueing, upload progress, pub/sub event delivery |
+| Oracle Database JSON | external or local Oracle database | Persistent analysis data plus runtime cache, queue, and event documents |
 | Qdrant | external/container, optional | Embedding storage for optional AI retrieval paths |
 
 ## Repository Structure
@@ -70,7 +66,7 @@ HAR-File-Analyser/
 |   |   |-- config/              # Database, CORS, proxy, queue, and upload configuration
 |   |   |-- workers/             # Storage and worker helpers
 |   |   `-- utils/               # Backend utilities
-|   |-- docker-compose.yml       # Local Redis and Qdrant dependencies
+|   |-- docker-compose.yml       # Optional local Qdrant dependency
 |   `-- package.json             # Backend scripts
 |-- docs/                        # Integration, Confluence, and planning docs
 |-- scripts/                     # Local developer utilities
@@ -83,8 +79,8 @@ HAR-File-Analyser/
 
 - Node.js 22.x recommended.
 - npm 11.x recommended.
-- Docker Desktop or Rancher Desktop for local Redis/Qdrant containers.
-- Oracle Database access with JSON support for backend persistence.
+- Docker Desktop or Rancher Desktop for optional local Qdrant container.
+- Oracle Database access with JSON support for backend persistence and runtime coordination.
 - Git.
 - Access to Oracle VPN/internal network for the hosted environment and OCA-backed AI features.
 
@@ -94,12 +90,11 @@ The application code expects the following external services or infrastructure t
 
 | Dependency | Required | Purpose |
 | --- | --- | --- |
-| Oracle Database with JSON support | Yes | Stores uploaded file metadata, parsed HAR entries, console-log entries, analysis state, and cached results |
-| Redis-compatible cache | Yes | Powers BullMQ queues, upload progress, Socket.IO pub/sub, and worker coordination |
+| Oracle Database with JSON support | Yes | Stores uploaded file metadata, parsed HAR entries, console-log entries, analysis state, runtime cache keys, queue jobs, upload progress, and event delivery state |
 | Qdrant | Optional | Vector/embedding storage for optional retrieval-oriented AI paths |
 | Oracle Code Assist (OCA) | Optional | Generates AI-assisted insight summaries when `OCA_BASE_URL` and `OCA_TOKEN` are configured |
 | Oracle corporate proxy | Environment-dependent | Required in some Oracle networks for outbound backend calls to OCA |
-| Docker/Rancher Desktop container images | Local development only | Pulls local Redis and Qdrant containers for development setup |
+| Docker/Rancher Desktop container images | Local development only | Pulls optional local Qdrant container for embedding experiments |
 | Internal VM/VCAP hosting | Hosted deployment only | Runs the current internal frontend, backend API, and worker processes |
 
 Third-party code attribution:
@@ -148,9 +143,9 @@ ORACLE_JSON_TABLE=HAR_ANALYZER_DOCS
 ORACLE_DB_POOL_MIN=1
 ORACLE_DB_POOL_MAX=10
 
-CACHE_HOST=localhost
-CACHE_PORT=6379
 QDRANT_URL=http://localhost:6333
+ORACLE_QUEUE_POLL_INTERVAL_MS=500
+ORACLE_EVENT_POLL_INTERVAL_MS=250
 
 UPLOAD_DIR=./uploads
 PROCESSED_DIR=./processed
@@ -186,13 +181,13 @@ npm install
 cd ..
 ```
 
-Start local dependency containers:
+Start optional local Qdrant container if you want to test embedding-related AI retrieval paths:
 
 ```powershell
-docker compose -f backend/docker-compose.yml up -d redis qdrant
+docker compose -f backend/docker-compose.yml up -d qdrant
 ```
 
-Configure `backend/.env` with an Oracle Database user, password, and connect string before starting the backend. This branch is Oracle-only and does not support an alternate document-store runtime fallback.
+Configure `backend/.env` with an Oracle Database user, password, and connect string before starting the backend. This branch is Oracle-only: queueing, transient metadata, upload progress, and Socket.IO event delivery are all backed by Oracle Database documents.
 
 ## Running the App
 
@@ -202,7 +197,7 @@ Recommended one-command local startup from the repository root:
 npm run dev:all
 ```
 
-This starts the Vite frontend, Express backend API, and backend worker in one terminal. Use this for normal local development after Oracle Database credentials are configured and Redis/Qdrant are running.
+This starts the Vite frontend, Express backend API, and backend worker in one terminal. Use this for normal local development after Oracle Database credentials are configured. Qdrant is optional.
 
 Expected local URLs:
 
@@ -218,7 +213,7 @@ Stop the development processes with `Ctrl+C`. Stop local containers when no long
 docker compose -f backend/docker-compose.yml down
 ```
 
-To remove local Redis/Qdrant data volumes as well:
+To remove local Qdrant data volumes as well:
 
 ```powershell
 docker compose -f backend/docker-compose.yml down -v
@@ -246,7 +241,7 @@ cd backend
 npm run dev:worker
 ```
 
-The worker is required for uploaded files to finish processing. If the frontend upload succeeds but the file stays in processing, confirm the worker is running and Redis is reachable.
+The worker is required for uploaded files to finish processing. If the frontend upload succeeds but the file stays in processing, confirm the worker is running and the backend and worker can both reach the same Oracle Database.
 
 ## Build and Test
 
@@ -322,10 +317,10 @@ See [docs/openapi-automation.md](docs/openapi-automation.md) and [docs/oci-opena
 
 ## Docker and Container Notes
 
-`backend/docker-compose.yml` is the recommended local dependency compose file. It starts Redis and Qdrant only. Oracle Database is expected to be provided by an approved Oracle environment or local Oracle Database setup.
+`backend/docker-compose.yml` is the recommended optional local dependency compose file. It starts Qdrant only. Oracle Database is expected to be provided by an approved Oracle environment or local Oracle Database setup.
 
 ```powershell
-docker compose -f backend/docker-compose.yml up -d redis qdrant
+docker compose -f backend/docker-compose.yml up -d qdrant
 ```
 
 The root `docker-compose.yml` and `Dockerfile` are not the current full-stack production deployment path. Treat them as legacy/experimental frontend-plus-Ollama assets unless the development team decides to build a full application container strategy.
@@ -336,7 +331,6 @@ For a production container deployment, create separate runtime definitions for:
 - Backend API process.
 - Backend worker process.
 - Oracle Database with JSON support.
-- Redis-compatible cache/queue service.
 - Optional Qdrant or replacement retrieval service.
 
 ## Current VM/VCAP Deployment
@@ -395,10 +389,9 @@ Operational expectations:
 
 Check:
 
-- Redis is running.
 - The backend worker is running.
 - The file status events are reaching the frontend.
-- Backend and worker both use the same Oracle JSON persistence and cache configuration.
+- Backend and worker both use the same Oracle Database connection configuration.
 
 ### Frontend loads but backend calls fail
 
@@ -435,6 +428,6 @@ The warning is non-blocking with current Docker Compose. The compose file still 
 
 ## Handoff Readiness
 
-The codebase is organized in a standard frontend/backend/worker structure and is suitable for handoff to a development team. The current architecture is acceptable for an internal diagnostic tool and staged rollout, provided the team treats Oracle JSON persistence, Redis-compatible cache, authentication, retention, and observability as production-readiness workstreams.
+The codebase is organized in a standard frontend/backend/worker structure and is suitable for handoff to a development team. This branch uses Oracle Database for persistence, runtime cache, queueing, and event delivery. For production rollout, authentication, retention, observability, backup/restore, and Oracle Database operational sizing should be treated as production-readiness workstreams.
 
 Detailed review notes are captured in [docs/handoff-readiness-review.md](docs/handoff-readiness-review.md).

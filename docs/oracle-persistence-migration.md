@@ -1,15 +1,16 @@
-# Oracle JSON Persistence Migration
+# Oracle JSON Persistence And Runtime Migration
 
 ## Goal
 
-Run HAR File Analyzer with Oracle-managed persistence. This branch stores analyzer documents in Oracle Database JSON storage and has no non-Oracle document-store runtime fallback.
+Run HAR File Analyzer with Oracle Database as the only required backend state service. This branch stores analyzer documents, transient upload metadata, queue jobs, and Socket.IO event envelopes in Oracle Database JSON storage.
 
 ## Current Branch Position
 
 - **Document persistence:** Oracle Database with JSON support.
-- **Node driver:** `oracledb`.
+- **Runtime cache:** Oracle-backed document keys via `OracleCacheStore`.
+- **Queueing:** Oracle-backed job documents via `OracleJobQueue`.
+- **Cross-process events:** Oracle-backed event stream via `OracleEventBus`.
 - **Runtime fallback:** none. The backend requires Oracle Database credentials at startup.
-- **Cache / queue / pub-sub:** Redis-compatible cache remains required for BullMQ, upload progress, and Socket.IO event bridging. In OCI this should map to an approved Redis-compatible cache service.
 - **Vector store:** Qdrant remains optional for embedding retrieval paths.
 
 ## Required Backend Environment
@@ -23,12 +24,10 @@ ORACLE_JSON_TABLE=HAR_ANALYZER_DOCS
 ORACLE_DB_POOL_MIN=1
 ORACLE_DB_POOL_MAX=10
 
-CACHE_HOST=<cache-host>
-CACHE_PORT=6379
-# or CACHE_URL=rediss://<cache-endpoint>:6379
-# CACHE_TLS=true
-# CACHE_USERNAME=<optional-user>
-# CACHE_PASSWORD=<optional-password>
+ORACLE_QUEUE_POLL_INTERVAL_MS=500
+ORACLE_EVENT_POLL_INTERVAL_MS=250
+
+QDRANT_URL=http://localhost:6333
 ```
 
 ## Storage Model
@@ -39,22 +38,16 @@ The adapter stores documents in one Oracle table by logical collection:
 - `har_entries`
 - `console_log_files`
 - `console_logs`
+- `oracle_runtime_cache`
+- `oracle_runtime_sets`
+- `oracle_runtime_jobs`
+- `oracle_runtime_events`
 
 The table keeps hot query fields as indexed columns and stores the full analyzer payload in a JSON-checked CLOB column.
 
-Hot indexed fields include:
-
-- `collection_name`
-- `file_id`
-- `entry_index`
-- `uploaded_at`
-- HAR status/method/url/timing fields
-- console level/source/timestamp/severity fields
-- parser status and parser format
-
 ## Compatibility Approach
 
-Most routes and workers currently use a document-collection style API. The Oracle adapter intentionally exposes a small compatible API:
+Most routes and workers use a document-collection style API. The Oracle adapter intentionally exposes a small compatible API:
 
 - `collection(name)`
 - `find`, `findOne`, `sort`, `skip`, `limit`, `project`, `toArray`
@@ -62,14 +55,14 @@ Most routes and workers currently use a document-collection style API. The Oracl
 - `countDocuments`, `deleteMany`
 - selected aggregation stages used by console-log facets
 
-This keeps the migration scoped while avoiding a risky application-wide rewrite. The adapter remains an internal compatibility layer; Oracle JSON is the only configured document persistence backend on this branch.
+Runtime services are implemented above the same Oracle JSON adapter so the application does not require a separate cache or queue product for local development and experimentation.
 
 ## Local Development
 
-Local compose starts only Redis and Qdrant:
+Optional Qdrant container:
 
 ```powershell
-docker compose -f backend/docker-compose.yml up -d redis qdrant
+docker compose -f backend/docker-compose.yml up -d qdrant
 ```
 
 An Oracle Database connect string must be supplied in `backend/.env` before starting the backend.
@@ -80,8 +73,10 @@ An Oracle Database connect string must be supplied in `backend/.env` before star
 - Non-Oracle document-store backend settings are rejected.
 - HAR upload parses and stores file metadata and entries in Oracle JSON persistence.
 - Console-log upload parses and stores metadata and paged entries in Oracle JSON persistence.
+- Queue jobs are enqueued, claimed, completed, and counted through Oracle documents.
+- Upload progress and file status metadata are read from Oracle runtime cache documents.
+- Socket.IO status/progress events are delivered through Oracle runtime event documents.
 - Search, filters, sorting, pagination, details, retention cleanup, and automation endpoints continue to work.
-- Redis-compatible cache still delivers queue jobs, upload progress, and socket events.
 
 ## Remaining Hardening
 

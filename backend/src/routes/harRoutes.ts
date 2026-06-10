@@ -3,7 +3,7 @@ import { createReadStream } from 'fs';
 import { createGzip } from 'zlib';
 import path from 'path';
 import { getPersistenceDb } from '../config/database';
-import { getRedis } from '../config/database';
+import { getRuntimeCache } from '../config/database';
 
 const router = express.Router();
 
@@ -39,7 +39,7 @@ router.get('/:fileId', async (req: Request, res: Response) => {
   try {
     const { fileId } = req.params;
     const db = getPersistenceDb();
-    const redis = getRedis();
+    const runtimeCache = getRuntimeCache();
 
     const fileDoc = await db.collection('har_files').findOne({ fileId });
 
@@ -52,7 +52,7 @@ router.get('/:fileId', async (req: Request, res: Response) => {
     if (fileDoc?.filePath) {
       filePath = fileDoc.filePath as string;
     } else {
-      const metadataRaw = await redis.get(`file:${fileId}:metadata`);
+      const metadataRaw = await runtimeCache.get(`file:${fileId}:metadata`);
       if (!metadataRaw) {
         return res.status(404).json({ error: 'File not found' });
       }
@@ -204,7 +204,7 @@ router.get('/:fileId/status', async (req: Request, res: Response) => {
   try {
     const { fileId } = req.params;
     const db = getPersistenceDb();
-    const redis = getRedis();
+    const runtimeCache = getRuntimeCache();
 
     const file = await db.collection('har_files').findOne({ fileId });
 
@@ -219,7 +219,7 @@ router.get('/:fileId/status', async (req: Request, res: Response) => {
       });
     }
 
-    const metadata = await redis.get(`file:${fileId}:metadata`);
+    const metadata = await runtimeCache.get(`file:${fileId}:metadata`);
     if (metadata) {
       const data = JSON.parse(metadata);
       return res.json({

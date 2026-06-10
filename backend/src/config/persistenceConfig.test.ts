@@ -31,7 +31,7 @@ describe('buildPersistenceConfig', () => {
   it('rejects non-Oracle persistence backends on this branch', () => {
     expect(() =>
       buildPersistenceConfig({
-        PERSISTENCE_BACKEND: 'mongodb',
+        PERSISTENCE_BACKEND: 'non-oracle',
       }),
     ).toThrow(/oracle-only/i);
   });

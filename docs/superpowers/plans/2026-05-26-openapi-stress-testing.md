@@ -4,9 +4,9 @@
 
 **Goal:** Add and run an opt-in stress harness for GB-scale HAR uploads and high-entry-count diagnostic API checks.
 
-**Architecture:** Keep the existing fast `test:openapi:endpoints` suite as the regular regression gate, and add a separate Node-based stress script that streams generated HAR fixtures to disk, uploads them chunk-by-chunk, polls worker completion, exercises v1 automation endpoints, and cleans test data. The harness uses isolated MongoDB database names, Redis queue names, upload directories, and backend ports supplied through environment variables.
+**Architecture:** Keep the existing fast `test:openapi:endpoints` suite as the regular regression gate, and add a separate Node-based stress script that streams generated HAR fixtures to disk, uploads them chunk-by-chunk, polls worker completion, exercises v1 automation endpoints, and cleans test data. The harness uses isolated Oracle table names, queue names, upload directories, and backend ports supplied through environment variables.
 
-**Tech Stack:** Node.js CommonJS script, native `fetch`/`FormData`, MongoDB driver, ioredis, Express backend, BullMQ worker.
+**Tech Stack:** Node.js CommonJS script, native `fetch`/`FormData`, Oracle Database driver, Express backend, Oracle-backed worker.
 
 ---
 
@@ -43,7 +43,7 @@ Run `npm run build` in `backend` so the stress test uses compiled JavaScript ins
 
 - [ ] **Step 2: Start isolated backend**
 
-Start `node dist/server.js` with `PORT=4200`, `MONGODB_URL=mongodb://localhost:27017/har-analyzer-stress-test`, `HAR_QUEUE_NAME=har-openapi-stress`, `LOG_QUEUE_NAME=log-openapi-stress`, `UPLOAD_DIR=C:\tmp\har-openapi-stress\uploads`, and `PROCESSED_DIR=C:\tmp\har-openapi-stress\processed`.
+Start `node dist/server.js` with `PORT=4200`, Oracle Database environment variables, `HAR_QUEUE_NAME=har-openapi-stress`, `LOG_QUEUE_NAME=log-openapi-stress`, `UPLOAD_DIR=C:\tmp\har-openapi-stress\uploads`, and `PROCESSED_DIR=C:\tmp\har-openapi-stress\processed`.
 
 - [ ] **Step 3: Start isolated worker**
 
@@ -60,7 +60,7 @@ Run `npm run test:openapi:stress` with `STRESS_SIZE_MB=1024`, `STRESS_ENTRIES=64
 
 - [ ] **Step 2: Run high-entry profile**
 
-Run `npm run test:openapi:stress` with `STRESS_SIZE_MB=128`, `STRESS_ENTRIES=25000`, and `STRESS_CHUNK_MB=8`. Expected result: MongoDB insertion succeeds, summary/error pagination remain responsive, and context generation stays bounded.
+Run `npm run test:openapi:stress` with `STRESS_SIZE_MB=128`, `STRESS_ENTRIES=25000`, and `STRESS_CHUNK_MB=8`. Expected result: Oracle JSON insertion succeeds, summary/error pagination remain responsive, and context generation stays bounded.
 
 - [ ] **Step 3: Record timings**
 

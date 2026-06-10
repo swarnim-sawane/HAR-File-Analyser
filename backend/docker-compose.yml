@@ -1,13 +1,4 @@
 services:
-  redis:
-    image: redis:7-alpine
-    container_name: har-redis
-    ports:
-      - "6379:6379"
-    command: redis-server --appendonly yes
-    volumes:
-      - redis_data:/data
-
   qdrant:
     image: qdrant/qdrant:latest
     container_name: har-qdrant
@@ -18,5 +9,4 @@ services:
       - qdrant_data:/qdrant/storage
 
 volumes:
-  redis_data:
   qdrant_data:

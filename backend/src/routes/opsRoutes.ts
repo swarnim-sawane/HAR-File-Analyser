@@ -1,8 +1,8 @@
 import express, { Request, Response } from 'express';
 import { promises as fs } from 'fs';
 import path from 'path';
-import { Queue } from 'bullmq';
-import { getPersistenceDb, getQdrant, getRedis } from '../config/database';
+import { getOracleQueue, getPersistenceDb, getQdrant, getRuntimeCache } from '../config/database';
+import type { OracleJobQueue } from '../runtime/oracleRuntime';
 import {
   deriveOverallStatus,
   getOpsStatusColor,
@@ -39,16 +39,16 @@ interface StorageSnapshot {
   affectsOverall: boolean;
 }
 
-let harQueue: Queue | null = null;
-let logQueue: Queue | null = null;
+let harQueue: OracleJobQueue | null = null;
+let logQueue: OracleJobQueue | null = null;
 
-function queueFor(name: string): Queue {
+function queueFor(name: string): OracleJobQueue {
   if (name === HAR_QUEUE_NAME) {
-    if (!harQueue) harQueue = new Queue(HAR_QUEUE_NAME, { connection: getRedis() });
+    if (!harQueue) harQueue = getOracleQueue(HAR_QUEUE_NAME);
     return harQueue;
   }
 
-  if (!logQueue) logQueue = new Queue(LOG_QUEUE_NAME, { connection: getRedis() });
+  if (!logQueue) logQueue = getOracleQueue(LOG_QUEUE_NAME);
   return logQueue;
 }
 
@@ -84,25 +84,25 @@ async function checkOracleJson(): Promise<OpsCheck> {
   }
 }
 
-async function checkRedis(): Promise<OpsCheck> {
+async function checkOracleRuntime(): Promise<OpsCheck> {
   const startedAt = Date.now();
   try {
-    const response = await getRedis().ping();
+    const response = await getRuntimeCache().ping();
     return buildCheck({
-      id: 'redis',
-      label: 'Redis',
+      id: 'oracleRuntime',
+      label: 'Oracle Runtime',
       status: response === 'PONG' ? 'ok' : 'warning',
       detail: response === 'PONG' ? 'Connected and responding to ping.' : `Unexpected ping response: ${response}`,
       latencyMs: measureDurationMs(startedAt),
       affectsOverall: true,
     });
   } catch (error) {
-    logError('ops.redis.error', { error });
+    logError('ops.oracle_runtime.error', { error });
     return buildCheck({
-      id: 'redis',
-      label: 'Redis',
+      id: 'oracleRuntime',
+      label: 'Oracle Runtime',
       status: 'error',
-      detail: error instanceof Error ? error.message : 'Redis ping failed.',
+      detail: error instanceof Error ? error.message : 'Oracle runtime ping failed.',
       latencyMs: measureDurationMs(startedAt),
       affectsOverall: true,
     });
@@ -273,9 +273,9 @@ export async function buildOpsStatus() {
   const uploadDir = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads');
   const processedDir = process.env.PROCESSED_DIR || path.join(process.cwd(), 'processed');
 
-  const [oracleJson, redis, harQueueStatus, logQueueStatus, qdrant, uploadsStorage, processedStorage] = await Promise.all([
+  const [oracleJson, oracleRuntime, harQueueStatus, logQueueStatus, qdrant, uploadsStorage, processedStorage] = await Promise.all([
     checkOracleJson(),
-    checkRedis(),
+    checkOracleRuntime(),
     checkQueue('harQueue', 'HAR queue', HAR_QUEUE_NAME),
     checkQueue('logQueue', 'Console log queue', LOG_QUEUE_NAME),
     checkQdrant(),
@@ -285,7 +285,7 @@ export async function buildOpsStatus() {
 
   const checks = [
     oracleJson,
-    redis,
+    oracleRuntime,
     harQueueStatus,
     logQueueStatus,
     qdrant,

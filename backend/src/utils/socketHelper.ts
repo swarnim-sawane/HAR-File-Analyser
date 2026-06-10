@@ -1,5 +1,5 @@
 import { Server as SocketIOServer } from 'socket.io';
-import { getRedis } from '../config/database';
+import { getEventBus } from '../config/database';
 
 type SocketEventEnvelope = {
   type: string;
@@ -32,12 +32,11 @@ export function emitGlobal(event: string, data: any): void {
 
 async function publishSocketEnvelope(envelope: SocketEventEnvelope): Promise<void> {
   try {
-    const redis = getRedis();
-    await redis.publish('socket:events', JSON.stringify(envelope));
+    await getEventBus().publish('socket:events', JSON.stringify(envelope));
   } catch (error) {
     console.error(`Failed to publish socket event "${envelope.type}":`, error);
 
-    // Fall back to local delivery if Redis is unavailable in-process.
+    // Fall back to local delivery if the runtime bridge is unavailable in-process.
     if (envelope.scope === 'file' && envelope.room) {
       const fileId = envelope.data?.fileId;
       if (fileId) emitToFile(fileId, envelope.type, envelope.data);
