@@ -13,6 +13,9 @@ type OraclePool = {
 type OracleModule = {
   CLOB?: unknown;
   OBJECT?: unknown;
+  STRING?: unknown;
+  NUMBER?: unknown;
+  DATE?: unknown;
   OUT_FORMAT_OBJECT?: unknown;
   fetchAsString?: unknown[];
   createPool: (config: Record<string, unknown>) => Promise<OraclePool>;
@@ -23,6 +26,17 @@ type OracleSort = Record<string, 1 | -1 | 'asc' | 'desc'>;
 type OracleProjection = Record<string, 0 | 1>;
 type OracleInsertManyOptions = {
   ordered?: boolean;
+};
+type OracleBindDefinition = {
+  type?: unknown;
+  maxSize?: number;
+};
+type OracleBindDefinitions = Record<string, OracleBindDefinition>;
+type OracleBindTypes = {
+  string?: unknown;
+  number?: unknown;
+  date?: unknown;
+  clob?: unknown;
 };
 
 interface WhereState {
@@ -294,6 +308,18 @@ function normalizeTagText(value: unknown): string | undefined {
   return `|${value.map((item) => String(item)).join('|')}|`;
 }
 
+function truncateUtf8String(value: string | undefined, maxBytes: number): string | undefined {
+  if (value === undefined || Buffer.byteLength(value, 'utf8') <= maxBytes) return value;
+
+  let end = value.length;
+  let candidate = value;
+  while (Buffer.byteLength(candidate, 'utf8') > maxBytes && end > 0) {
+    end = Math.max(0, end - Math.ceil((end || 1) * 0.1));
+    candidate = value.slice(0, end);
+  }
+  return candidate;
+}
+
 function parseDateLike(value: unknown): Date | string | undefined {
   if (value instanceof Date) return value;
   if (typeof value === 'string' && value.trim()) return value;
@@ -369,6 +395,31 @@ function structuredCloneFallback<T>(value: T): T {
 
 function serializeDocument(doc: Record<string, any>): string {
   return JSON.stringify(doc);
+}
+
+function buildInsertBindDefs(bindTypes: OracleBindTypes): OracleBindDefinitions {
+  return {
+    collectionName: { type: bindTypes.string, maxSize: 64 },
+    docId: { type: bindTypes.string, maxSize: 256 },
+    fileId: { type: bindTypes.string, maxSize: 256 },
+    entryIndex: { type: bindTypes.number },
+    uploadedAt: { type: bindTypes.date },
+    statusValue: { type: bindTypes.string, maxSize: 64 },
+    levelValue: { type: bindTypes.string, maxSize: 32 },
+    sourceValue: { type: bindTypes.string, maxSize: 512 },
+    timestampValue: { type: bindTypes.string, maxSize: 128 },
+    requestMethod: { type: bindTypes.string, maxSize: 32 },
+    requestUrl: { type: bindTypes.string, maxSize: 2048 },
+    responseStatus: { type: bindTypes.number },
+    contentType: { type: bindTypes.string, maxSize: 512 },
+    inferredSeverity: { type: bindTypes.string, maxSize: 32 },
+    parseStatus: { type: bindTypes.string, maxSize: 32 },
+    parseFormat: { type: bindTypes.string, maxSize: 64 },
+    issueTagsText: { type: bindTypes.string, maxSize: 2048 },
+    parseWarningsText: { type: bindTypes.string, maxSize: 4000 },
+    timeMs: { type: bindTypes.number },
+    doc: { type: bindTypes.clob },
+  };
 }
 
 function parseDocument(value: unknown): Record<string, any> {
@@ -490,23 +541,23 @@ export class OracleJsonCollection<T extends Record<string, any> = Record<string,
       const indexed = extractOracleIndexedColumns(this.collectionName, doc);
       return {
         collectionName: this.collectionName,
-        docId: indexed.docId,
-        fileId: indexed.fileId,
+        docId: truncateUtf8String(indexed.docId, 256) ?? indexed.docId,
+        fileId: truncateUtf8String(indexed.fileId, 256),
         entryIndex: indexed.entryIndex,
         uploadedAt: indexed.uploadedAt,
-        statusValue: indexed.statusValue,
-        levelValue: indexed.levelValue,
-        sourceValue: indexed.sourceValue,
-        timestampValue: indexed.timestampValue,
-        requestMethod: indexed.requestMethod,
-        requestUrl: indexed.requestUrl,
+        statusValue: truncateUtf8String(indexed.statusValue, 64),
+        levelValue: truncateUtf8String(indexed.levelValue, 32),
+        sourceValue: truncateUtf8String(indexed.sourceValue, 512),
+        timestampValue: truncateUtf8String(indexed.timestampValue, 128),
+        requestMethod: truncateUtf8String(indexed.requestMethod, 32),
+        requestUrl: truncateUtf8String(indexed.requestUrl, 2048),
         responseStatus: indexed.responseStatus,
-        contentType: indexed.contentType,
-        inferredSeverity: indexed.inferredSeverity,
-        parseStatus: indexed.parseStatus,
-        parseFormat: indexed.parseFormat,
-        issueTagsText: indexed.issueTagsText,
-        parseWarningsText: indexed.parseWarningsText,
+        contentType: truncateUtf8String(indexed.contentType, 512),
+        inferredSeverity: truncateUtf8String(indexed.inferredSeverity, 32),
+        parseStatus: truncateUtf8String(indexed.parseStatus, 32),
+        parseFormat: truncateUtf8String(indexed.parseFormat, 64),
+        issueTagsText: truncateUtf8String(indexed.issueTagsText, 2048),
+        parseWarningsText: truncateUtf8String(indexed.parseWarningsText, 4000),
         timeMs: indexed.timeMs,
         doc: serializeDocument(doc),
       };
@@ -583,7 +634,10 @@ export class OracleJsonCollection<T extends Record<string, any> = Record<string,
       )`;
 
     await withConnection(this.database.pool, async (connection) => {
-      await connection.executeMany(sql, binds, { autoCommit: false });
+      await connection.executeMany(sql, binds, {
+        autoCommit: false,
+        bindDefs: buildInsertBindDefs(this.database.bindTypes),
+      });
       await connection.commit();
     });
 
@@ -712,6 +766,7 @@ export class OracleJsonDatabase {
     public readonly pool: OraclePool,
     tableName: string,
     outFormatObject: unknown,
+    public readonly bindTypes: OracleBindTypes = {},
   ) {
     this.tableName = normalizeOracleIdentifier(tableName);
     this.outFormatObject = outFormatObject;
@@ -789,7 +844,12 @@ export async function createOracleJsonDatabase(config: OracleJsonStoreConfig): P
     poolMax: config.poolMax ?? 10,
     poolIncrement: config.poolIncrement ?? 1,
   });
-  const database = new OracleJsonDatabase(pool, config.tableName ?? DEFAULT_TABLE_NAME, oracleDb.OUT_FORMAT_OBJECT);
+  const database = new OracleJsonDatabase(pool, config.tableName ?? DEFAULT_TABLE_NAME, oracleDb.OUT_FORMAT_OBJECT, {
+    string: oracleDb.STRING,
+    number: oracleDb.NUMBER,
+    date: oracleDb.DATE,
+    clob: oracleDb.CLOB,
+  });
   await database.initializeSchema();
   return database;
 }

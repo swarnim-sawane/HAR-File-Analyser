@@ -153,4 +153,49 @@ describe('oracleJsonStore document handling', () => {
       },
     });
   });
+
+  it('binds full JSON documents as CLOBs during bulk insert', async () => {
+    const executeManyCalls: Array<{ sql: string; binds: any[]; options: any }> = [];
+    const connection = {
+      executeMany: async (sql: string, binds: any[], options: any) => {
+        executeManyCalls.push({ sql, binds, options });
+        return {};
+      },
+      commit: async () => {},
+      close: async () => {},
+    };
+    const pool = {
+      getConnection: async () => connection,
+      close: async () => {},
+    };
+    const database = new OracleJsonDatabase(pool as any, 'HAR_DOCS', {}, {
+      string: 'STRING',
+      number: 'NUMBER',
+      date: 'DATE',
+      clob: 'CLOB',
+    });
+
+    await database.collection('har_entries').insertMany([{
+      fileId: 'file-1',
+      index: 1,
+      request: {
+        method: 'POST',
+        url: 'https://example.com/upload',
+        postData: {
+          text: 'x'.repeat(70_000),
+        },
+      },
+      response: {
+        status: 200,
+        content: {
+          mimeType: 'application/json',
+          text: 'y'.repeat(70_000),
+        },
+      },
+    }]);
+
+    expect(executeManyCalls).toHaveLength(1);
+    expect(executeManyCalls[0].options.bindDefs.doc.type).toBe('CLOB');
+    expect(executeManyCalls[0].binds[0].doc.length).toBeGreaterThan(100_000);
+  });
 });
