@@ -1,0 +1,15 @@
+{
+  "watch": ["src", ".env", "package.json"],
+  "ext": "ts,json,env",
+  "ignore": [
+    "dist/**",
+    "node_modules/**",
+    "processed/**",
+    "uploads/**",
+    "runtime/**",
+    "*.err",
+    "*.log",
+    "*.out",
+    "*.pid"
+  ]
+}

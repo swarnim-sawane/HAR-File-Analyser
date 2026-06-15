@@ -1,7 +1,8 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import UnifiedUploader from '../UnifiedUploader';
+import { chunkedUploader } from '../../services/chunkedUploader';
 
 const makeRecentFile = (name: string, timestamp: number) => ({
   name,
@@ -25,11 +26,60 @@ const renderUploader = (recentPreviewLimit?: number) => render(
 );
 
 describe('UnifiedUploader recent files preview', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('advertises Word document uploads in the unified uploader', () => {
     renderUploader(3);
 
     expect(screen.getByText(/documents/i)).toBeInTheDocument();
     expect(screen.getByText(/\.pdf \/ \.docx/i)).toBeInTheDocument();
+  });
+
+  it('uploads video files through the video evidence route', async () => {
+    const onVideoFileUpload = vi.fn();
+    vi.spyOn(chunkedUploader, 'uploadFile').mockResolvedValue({
+      success: true,
+      fileId: 'video-file-id',
+      jobId: 'video-job-id',
+      fileName: 'customer-session.mp4',
+      fileSize: 4096,
+      hash: 'video-hash',
+      message: 'ok',
+    });
+
+    const { container } = render(
+      <UnifiedUploader
+        onHarFileUpload={vi.fn()}
+        onLogFileUpload={vi.fn()}
+        onVideoFileUpload={onVideoFileUpload}
+      />
+    );
+
+    const input = container.querySelector<HTMLInputElement>('#unified-file-input');
+    expect(input).not.toBeNull();
+
+    const videoFile = new File(['video-bytes'], 'customer-session.mp4', { type: 'video/mp4' });
+    fireEvent.change(input!, { target: { files: [videoFile] } });
+
+    await waitFor(() => {
+      expect(chunkedUploader.uploadFile).toHaveBeenCalledWith(
+        videoFile,
+        'video',
+        expect.any(Function)
+      );
+    });
+    await waitFor(() => {
+      expect(onVideoFileUpload).toHaveBeenCalledWith(
+        expect.objectContaining({ fileId: 'video-file-id' }),
+        videoFile,
+        expect.objectContaining({
+          analyzerKind: 'video',
+          visualStatus: 'Ready for evidence analysis',
+        })
+      );
+    });
   });
 
   it('shows a compact recent-file preview and expands on demand', async () => {

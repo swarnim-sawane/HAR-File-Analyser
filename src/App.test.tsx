@@ -23,6 +23,24 @@ type UnifiedUploaderMockProps = {
     hash: string;
     message: string;
   }, sourceFile: File) => void | Promise<void>;
+  onVideoFileUpload?: (result: {
+    success: boolean;
+    fileId: string;
+    jobId: string;
+    fileName: string;
+    fileSize: number;
+    hash: string;
+    message: string;
+  }, sourceFile: File, classification: {
+    analyzerKind: 'video';
+    displayKind: string;
+    extension: string;
+    mediaType: string;
+    classificationConfidence: 'high' | 'medium' | 'low';
+    classificationReasons: string[];
+    visualStatus: string;
+    suggestedToolName: string;
+  }) => void | Promise<void>;
   onBasicFileUpload?: (sourceFile: File, classification: {
     analyzerKind: 'text' | 'structured' | 'table' | 'image' | 'archive' | 'document' | 'binary';
     displayKind: string;
@@ -33,7 +51,7 @@ type UnifiedUploaderMockProps = {
     visualStatus: string;
     suggestedToolName: string;
   }) => void | Promise<void>;
-  onOpenExistingRecentFile?: (file: { name: string; fileType: 'har' | 'log' }) => boolean | Promise<boolean>;
+  onOpenExistingRecentFile?: (file: { name: string; fileType: 'har' | 'log' | 'video' }) => boolean | Promise<boolean>;
 };
 
 function createSizedFile(parts: BlobPart[], fileName: string, size: number, options?: FilePropertyBag): File {
@@ -46,7 +64,7 @@ function createSizedFile(parts: BlobPart[], fileName: string, size: number, opti
 }
 
 vi.mock('./components/UnifiedUploader', () => ({
-  default: ({ onHarFileUpload, onLogFileUpload, onBasicFileUpload, onOpenExistingRecentFile }: UnifiedUploaderMockProps) => (
+  default: ({ onHarFileUpload, onLogFileUpload, onVideoFileUpload, onBasicFileUpload, onOpenExistingRecentFile }: UnifiedUploaderMockProps) => (
     <div>
       <div>Drop any file to get started</div>
       <button
@@ -157,6 +175,34 @@ vi.mock('./components/UnifiedUploader', () => ({
         }}
       >
         Load HAR and log files
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          const sourceFile = createSizedFile(['video-bytes'], 'customer-session.mp4', 7_340_032, {
+            type: 'video/mp4',
+          });
+          void onVideoFileUpload?.({
+            success: true,
+            fileId: 'customer-video-id',
+            jobId: 'customer-video-job-id',
+            fileName: 'customer-session.mp4',
+            fileSize: sourceFile.size,
+            hash: 'customer-video-hash',
+            message: 'ok',
+          }, sourceFile, {
+            analyzerKind: 'video',
+            displayKind: 'Video recording',
+            extension: '.mp4',
+            mediaType: 'video/mp4',
+            classificationConfidence: 'high',
+            classificationReasons: ['Video media type or extension detected'],
+            visualStatus: 'Ready for evidence analysis',
+            suggestedToolName: 'analyze_video_evidence',
+          });
+        }}
+      >
+        Load customer video
       </button>
       <button
         type="button"
@@ -531,6 +577,16 @@ vi.mock('./components/HarTabContent', () => ({
 
 vi.mock('./components/ConsoleLogTabContent', () => ({
   default: () => <div>Console tab content mock</div>,
+}));
+
+vi.mock('./components/VideoEvidenceAnalyzer', () => ({
+  default: ({ fileName, isActive }: { fileName: string; isActive: boolean }) => (
+    <section aria-label="Video Evidence" hidden={!isActive}>
+      <h2>Video Evidence</h2>
+      <span>{fileName}</span>
+      <button type="button">Analyze Video Evidence</button>
+    </section>
+  ),
 }));
 
 vi.mock('./utils/consoleLogParser', () => ({
@@ -991,6 +1047,21 @@ describe('App documentation navigation', () => {
 
     expect(getHarTab('network.har')).toHaveClass('active');
     expect(getHarTab('server.log')).not.toHaveClass('active');
+  });
+
+  it('routes uploaded videos into a dedicated Video Evidence analyzer tab', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: /load customer video/i }));
+
+    const tabRow = await screen.findByLabelText(/analyzer files/i);
+    expect(within(tabRow).getByTitle('customer-session.mp4')).toBeInTheDocument();
+    expect(within(tabRow).getByText('VID')).toHaveClass('analyzer-file-type-video');
+    const videoRegion = screen.getByRole('region', { name: /video evidence/i });
+    expect(within(videoRegion).getByRole('heading', { name: /video evidence/i })).toBeInTheDocument();
+    expect(within(videoRegion).getByText('customer-session.mp4')).toBeInTheDocument();
+    expect(within(videoRegion).getByRole('button', { name: /analyze video evidence/i })).toBeInTheDocument();
   });
 
   it('shows a useful visual empty state when every analyzer tab is closed', async () => {

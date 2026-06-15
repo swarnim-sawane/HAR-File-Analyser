@@ -59,6 +59,16 @@ export async function connectDatabases() {
     await db.collection('console_logs').createIndex({ fileId: 1, parseStatus: 1, index: 1 });
     await db.collection('console_logs').createIndex({ fileId: 1, parseFormat: 1, index: 1 });
     await db.collection('console_logs').createIndex({ fileId: 1, parseWarnings: 1, index: 1 });
+
+    // Video Evidence metadata and timeline indexes
+    await db.collection('video_files').createIndex({ fileId: 1 }, { unique: true });
+    await db.collection('video_files').createIndex({ uploadedAt: -1 });
+    await db.collection('video_files').createIndex({ status: 1 });
+    await db.collection('video_timeline').createIndex({ fileId: 1, createdAt: 1 });
+    await db.collection('video_transcripts').createIndex(
+      { sourceHash: 1, audioFormat: 1, model: 1, schemaVersion: 1 },
+      { unique: true }
+    );
     
     console.log('✅ MongoDB indexes created');
     

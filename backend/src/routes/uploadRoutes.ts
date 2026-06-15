@@ -6,7 +6,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { getRedis } from '../config/database';
 import { Queue } from 'bullmq';
-import { HAR_QUEUE_NAME, LOG_QUEUE_NAME } from '../config/queueNames';
+import { HAR_QUEUE_NAME, LOG_QUEUE_NAME, VIDEO_QUEUE_NAME } from '../config/queueNames';
 import { publishGlobal } from '../utils/socketHelper';
 import {
   MAX_UPLOAD_CHUNK_SIZE_BYTES,
@@ -38,6 +38,7 @@ if (!fsSync.existsSync(PROCESSED_DIR)) {
 // Create queues
 const harQueue = new Queue(HAR_QUEUE_NAME, { connection: redis });
 const logQueue = new Queue(LOG_QUEUE_NAME, { connection: redis });
+const videoQueue = new Queue(VIDEO_QUEUE_NAME, { connection: redis });
 
 // FIXED: Use a temporary name first, then rename
 const storage = multer.diskStorage({
@@ -300,7 +301,12 @@ router.post('/complete', async (req: Request, res: Response) => {
     const stats = await fs.stat(outputPath);
 
     // Create processing job
-    const queue = fileType === 'har' ? harQueue : logQueue;
+    const queue =
+      fileType === 'har'
+        ? harQueue
+        : fileType === 'video'
+        ? videoQueue
+        : logQueue;
     const job = await queue.add('process_file', {
       fileId,
       fileName,

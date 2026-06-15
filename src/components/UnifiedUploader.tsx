@@ -46,6 +46,13 @@ interface UnifiedUploaderProps {
   logRecentFiles?: RecentFile[];
   onClearLogRecent?: () => void;
 
+  /** Called after a video recording is uploaded and prepared for the video evidence analyzer. */
+  onVideoFileUpload?: (
+    result: UploadResult,
+    sourceFile: File,
+    classification: UploadFileClassification
+  ) => void | Promise<void>;
+
   /** Called for accepted files that use the universal basic analyzer surface. */
   onBasicFileUpload?: (sourceFile: File, classification: UploadFileClassification) => void | Promise<void>;
 
@@ -73,6 +80,7 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
   onLogFileUpload,
   logRecentFiles = [],
   onClearLogRecent,
+  onVideoFileUpload,
   onBasicFileUpload,
   recentPreviewLimit,
   onOpenExistingRecentFile,
@@ -233,6 +241,32 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
     }
   };
 
+  const processVideoFile = async (file: File, classification: UploadFileClassification) => {
+    if (!onVideoFileUpload) {
+      setError(`${file.name}: This video was accepted, but the video evidence analyzer route is not available.`);
+      return;
+    }
+
+    if (file.size <= 0) {
+      setError(`${file.name}: File is empty`);
+      return;
+    }
+
+    setIsUploading(true);
+    setStatusMessage(`Preparing video ${file.name}...`);
+
+    try {
+      const result = await chunkedUploader.uploadFile(file, 'video', (p) => setUploadProgress(p));
+      await onVideoFileUpload(result, file, classification);
+    } catch (err) {
+      setError((err as Error)?.message ?? `Failed to upload ${file.name}.`);
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(null);
+      setStatusMessage('');
+    }
+  };
+
   // ── Main entry: detect → group → process ─────────────────────────────────
 
   const processBasicFile = async (file: File, classification: UploadFileClassification) => {
@@ -269,9 +303,11 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
 
     const harFiles = typed.filter((t) => t.classification.analyzerKind === 'har').map((t) => t.file);
     const logFiles = typed.filter((t) => t.classification.analyzerKind === 'log').map((t) => t.file);
+    const videoFiles = typed.filter((t) => t.classification.analyzerKind === 'video');
     const basicFiles = typed.filter((t) =>
       t.classification.analyzerKind !== 'har' &&
-      t.classification.analyzerKind !== 'log'
+      t.classification.analyzerKind !== 'log' &&
+      t.classification.analyzerKind !== 'video'
     );
 
     // 2. Process console log first (no blocking modal)
@@ -281,19 +317,26 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
       }
     }
 
-    // 3. Register basic analyzer files.
+    // 3. Upload video evidence files.
+    if (videoFiles.length > 0) {
+      for (const item of videoFiles) {
+        await processVideoFile(item.file, item.classification);
+      }
+    }
+
+    // 4. Register basic analyzer files.
     if (basicFiles.length > 0) {
       for (const item of basicFiles) {
         await processBasicFile(item.file, item.classification);
       }
     }
 
-    // 4. Process HAR files (may show sanitize modal)
+    // 5. Process HAR files (may show sanitize modal)
     if (harFiles.length > 0) {
       await processHarFiles(harFiles);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onHarFileUpload, onLogFileUpload, onBasicFileUpload]);
+  }, [onHarFileUpload, onLogFileUpload, onVideoFileUpload, onBasicFileUpload]);
 
   // ── Sanitize modal handlers ───────────────────────────────────────────────
 
@@ -507,6 +550,7 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
               <span className="unified-type-badge unified-badge-log">.trc / .dmp</span>
               <span className="unified-type-badge unified-badge-json">.csv / .xml</span>
               <span className="unified-type-badge unified-badge-doc">.pdf / .docx</span>
+              <span className="unified-type-badge unified-badge-doc">.mp4 / .mov</span>
               <span className="unified-type-badge unified-badge-har">images / .zip</span>
             </div>
 

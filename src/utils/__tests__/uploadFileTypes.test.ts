@@ -103,6 +103,7 @@ describe('uploadFileTypes', () => {
     ['config.xml', '<server><name>AdminServer</name></server>', 'structured', 'XML'],
     ['rows.csv', 'name,status\nalpha,failed', 'table', 'CSV table'],
     ['screenshot.png', 'not-used', 'image', 'Image'],
+    ['customer-zoom-recording.mp4', 'not-used', 'video', 'Video recording'],
     ['customer-evidence.pdf', '%PDF-1.7', 'document', 'PDF document'],
     ['customer-notes.docx', 'not-used', 'document', 'Word document'],
     ['legacy-notes.doc', 'not-used', 'document', 'Word document'],
@@ -117,6 +118,11 @@ describe('uploadFileTypes', () => {
     expect(classification.analyzerKind).toBe(analyzerKind);
     expect(classification.displayKind).toBe(displayKind);
     expect(classification.classificationReasons.length).toBeGreaterThan(0);
-    expect(classification.visualStatus).toMatch(/ready|preview|metadata/i);
+    if (analyzerKind === 'video') {
+      expect(classification.visualStatus).toBe('Ready for evidence analysis');
+      expect(classification.suggestedToolName).toBe('analyze_video_evidence');
+    } else {
+      expect(classification.visualStatus).toMatch(/ready|preview|metadata/i);
+    }
   });
 });

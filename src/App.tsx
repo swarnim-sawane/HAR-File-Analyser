@@ -5,6 +5,7 @@ import UnifiedUploader from './components/UnifiedUploader';
 import HarTabContent from './components/HarTabContent';
 import ConsoleLogTabContent from './components/ConsoleLogTabContent';
 import BasicFileAnalyzer from './components/BasicFileAnalyzer';
+import VideoEvidenceAnalyzer from './components/VideoEvidenceAnalyzer';
 import { ConsoleLogFile } from './types/consolelog';
 import { ConsoleLogParser } from './utils/consoleLogParser';
 import './styles/globals.css';
@@ -56,6 +57,16 @@ interface LogFileTab {
   fileName: string;
   fileSize: number;
   localData: ConsoleLogFile | null; // pre-parsed data for small files
+  createdAt: number;
+}
+
+interface VideoFileTab {
+  id: string;
+  fileId: string;
+  fileName: string;
+  fileSize: number;
+  mediaType: string;
+  extension: string;
   createdAt: number;
 }
 
@@ -229,6 +240,7 @@ const classifyCaseFileKind = (fileName: string, mediaType?: string): string => {
   if (normalizedName.endsWith('.json') || normalizedType.includes('json')) return 'JSON';
   if (normalizedName.endsWith('.zip') || normalizedType.includes('zip')) return 'ZIP';
   if (normalizedType.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp)$/i.test(fileName)) return 'Image';
+  if (normalizedType.startsWith('video/') || /\.(mp4|mov|webm|mkv|m4v)$/i.test(fileName)) return 'Video';
   if (normalizedName.endsWith('.pdf') || normalizedType === 'application/pdf') return 'PDF';
   if (/\.(doc|docx)$/i.test(fileName) || normalizedType.includes('wordprocessingml') || normalizedType === 'application/msword') return 'Word';
   if (/\.(ppt|pptx)$/i.test(fileName) || normalizedType.includes('presentationml') || normalizedType === 'application/vnd.ms-powerpoint') return 'PowerPoint';
@@ -244,7 +256,7 @@ const getCaseFileExtension = (fileName: string): string => {
 };
 
 const isBasicAnalyzerKind = (kind: CaseFileAnalyzerKind): kind is BasicAnalyzerFileKind =>
-  kind !== 'har' && kind !== 'log';
+  kind !== 'har' && kind !== 'log' && kind !== 'video';
 
 const getAnalyzerFileTypeLabel = (
   analyzerKind: CaseFileAnalyzerKind,
@@ -253,6 +265,7 @@ const getAnalyzerFileTypeLabel = (
 ): string => {
   if (analyzerKind === 'har') return 'HAR';
   if (analyzerKind === 'log') return 'LOG';
+  if (analyzerKind === 'video') return 'VID';
   if (analyzerKind === 'table') return extension === '.tsv' ? 'TSV' : 'CSV';
   if (analyzerKind === 'image') return 'IMG';
   if (analyzerKind === 'document') {
@@ -319,6 +332,7 @@ const caseFileMatchesAnalyzerTarget = (
 const buildAnalyzerFileTabs = (
   harTabs: HarFileTab[],
   logTabs: LogFileTab[],
+  videoTabs: VideoFileTab[],
   basicTabs: BasicFileTab[]
 ): AnalyzerFileTab[] => [
   ...harTabs.map(tab => ({
@@ -337,6 +351,15 @@ const buildAnalyzerFileTabs = (
     fileName: tab.fileName,
     displayKind: 'Log',
     extension: getCaseFileExtension(tab.fileName),
+    createdAt: tab.createdAt,
+  })),
+  ...videoTabs.map(tab => ({
+    id: tab.id,
+    kind: 'video' as const,
+    fileId: tab.fileId,
+    fileName: tab.fileName,
+    displayKind: 'Video recording',
+    extension: tab.extension,
     createdAt: tab.createdAt,
   })),
   ...basicTabs.map(tab => ({
@@ -374,14 +397,17 @@ const App: React.FC = () => {
   const [showLogLocalFallback, setShowLogLocalFallback] = useState(false);
   const [basicTabs, setBasicTabs] = useState<BasicFileTab[]>([]);
   const [activeBasicTabId, setActiveBasicTabId] = useState<string | null>(null);
+  const [videoTabs, setVideoTabs] = useState<VideoFileTab[]>([]);
+  const [activeVideoTabId, setActiveVideoTabId] = useState<string | null>(null);
   const logCancelRef = React.useRef<(() => void) | null>(null);
   const compareWrapperRef = useRef<HTMLDivElement | null>(null);
 
   const MAX_LOG_TABS = 8;
   const MAX_BASIC_TABS = 12;
+  const MAX_VIDEO_TABS = 6;
 
   // ── Main navigation ──────────────────────────────────────────────────────────
-  const [activeTool, setActiveTool] = useState<'har' | 'sanitizer' | 'console' | 'basic' | 'compare'>('har');
+  const [activeTool, setActiveTool] = useState<'har' | 'sanitizer' | 'console' | 'basic' | 'video' | 'compare'>('har');
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceMode>('analyzer');
   const [supportSessionId, setSupportSessionId] = useState<string | null>(null);
   const [supportUploadStatus, setSupportUploadStatus] = useState<SupportUploadStatus>('idle');
@@ -509,7 +535,7 @@ const App: React.FC = () => {
     return () => clearTimeout(timer);
   }, [isLogProcessing]);
 
-  const handleToolChange = (nextTool: 'har' | 'sanitizer' | 'console' | 'basic' | 'compare') => {
+  const handleToolChange = (nextTool: 'har' | 'sanitizer' | 'console' | 'basic' | 'video' | 'compare') => {
     if (nextTool === activeTool) return;
     setActiveTool(nextTool);
   };
@@ -578,6 +604,9 @@ const App: React.FC = () => {
     } else if (tab.kind === 'log') {
       setActiveTool('console');
       setActiveLogTabId(tab.id);
+    } else if (tab.kind === 'video') {
+      setActiveTool('video');
+      setActiveVideoTabId(tab.id);
     } else {
       setActiveTool('basic');
       setActiveBasicTabId(tab.id);
@@ -741,6 +770,73 @@ const App: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncFilesToSupportWorkbench]);
 
+  const openVideoTab = useCallback((
+    result: UploadResult,
+    sourceFile: File,
+    classification: UploadFileClassification,
+    caseFileId: string
+  ) => {
+    const existingTab = videoTabs.find(tab =>
+      tab.fileId === result.fileId ||
+      (
+        tab.fileName.trim().toLowerCase() === sourceFile.name.trim().toLowerCase() &&
+        tab.fileSize === sourceFile.size
+      )
+    );
+
+    if (existingTab) {
+      setActiveTool('video');
+      setActiveVideoTabId(existingTab.id);
+      setActiveCaseFileId(caseFileId);
+      return;
+    }
+
+    if (videoTabs.length >= MAX_VIDEO_TABS) {
+      console.warn(`Max ${MAX_VIDEO_TABS} video analyzer tabs open - close one first`);
+      return;
+    }
+
+    const newTab: VideoFileTab = {
+      id: `videotab_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      fileId: result.fileId,
+      fileName: result.fileName || sourceFile.name,
+      fileSize: sourceFile.size || result.fileSize || 0,
+      mediaType: classification.mediaType || sourceFile.type || 'video/*',
+      extension: classification.extension,
+      createdAt: Date.now(),
+    };
+
+    setVideoTabs(prev => [...prev, newTab]);
+    setActiveVideoTabId(newTab.id);
+    setActiveTool('video');
+  }, [videoTabs]);
+
+  const handleUnifiedVideoUpload = useCallback(async (
+    result: UploadResult,
+    sourceFile: File,
+    classification: UploadFileClassification,
+    options: AnalyzerIngestOptions = {}
+  ) => {
+    if (classification.analyzerKind !== 'video') return;
+
+    if (options.activateAnalyzerWorkspace !== false) {
+      setActiveWorkspace('analyzer');
+    }
+    if (options.syncToSupportWorkbench !== false && shouldDirectSyncToSupportWorkbench(sourceFile, classification)) {
+      void syncFilesToSupportWorkbench([sourceFile]);
+    }
+
+    const caseFileId = registerCaseFile(
+      result,
+      sourceFile,
+      'video',
+      classification.visualStatus,
+      null,
+      classification,
+    );
+    openVideoTab(result, sourceFile, classification, caseFileId);
+  }, [openVideoTab, registerCaseFile, syncFilesToSupportWorkbench]);
+
   const openBasicTab = useCallback((
     sourceFile: File,
     classification: UploadFileClassification,
@@ -843,10 +939,16 @@ const App: React.FC = () => {
       return;
     }
 
+    if (classification.analyzerKind === 'video') {
+      const result = await chunkedUploader.uploadFile(sourceFile, 'video');
+      await handleUnifiedVideoUpload(result, sourceFile, classification);
+      return;
+    }
+
     if (isBasicAnalyzerKind(classification.analyzerKind)) {
       await handleUnifiedBasicUpload(sourceFile, classification);
     }
-  }, [handleUnifiedBasicUpload, handleUnifiedHarUpload, handleUnifiedLogUpload]);
+  }, [handleUnifiedBasicUpload, handleUnifiedHarUpload, handleUnifiedLogUpload, handleUnifiedVideoUpload]);
 
   const handleArchiveEntriesUploadToAi = useCallback(async (files: File[]) => {
     await syncFilesToSupportWorkbench(files);
@@ -879,6 +981,12 @@ const App: React.FC = () => {
           continue;
         }
 
+        if (classification.analyzerKind === 'video') {
+          const result = await chunkedUploader.uploadFile(file, 'video');
+          await handleUnifiedVideoUpload(result, file, classification, importOptions);
+          continue;
+        }
+
         if (isBasicAnalyzerKind(classification.analyzerKind)) {
           await handleUnifiedBasicUpload(file, classification, importOptions);
         }
@@ -888,7 +996,7 @@ const App: React.FC = () => {
         setSupportUploadError(`Visual Analysis sync failed for ${file.name}: ${message}`);
       }
     }
-  }, [handleUnifiedBasicUpload, handleUnifiedHarUpload, handleUnifiedLogUpload]);
+  }, [handleUnifiedBasicUpload, handleUnifiedHarUpload, handleUnifiedLogUpload, handleUnifiedVideoUpload]);
 
   useEffect(() => {
     function onSupportWorkbenchMessage(event: MessageEvent) {
@@ -919,7 +1027,7 @@ const App: React.FC = () => {
   /** Close a HAR file tab; activate the nearest remaining tab */
   const closeHarTab = (tabId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    const mixedTabs = buildAnalyzerFileTabs(harTabs, logTabs, basicTabs);
+    const mixedTabs = buildAnalyzerFileTabs(harTabs, logTabs, videoTabs, basicTabs);
     const closingIndex = mixedTabs.findIndex(tab => tab.kind === 'har' && tab.id === tabId);
     const nextMixedTab =
       mixedTabs.filter(tab => !(tab.kind === 'har' && tab.id === tabId))[Math.max(0, closingIndex)] ??
@@ -966,7 +1074,7 @@ const App: React.FC = () => {
 
   const closeLogTab = (tabId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    const mixedTabs = buildAnalyzerFileTabs(harTabs, logTabs, basicTabs);
+    const mixedTabs = buildAnalyzerFileTabs(harTabs, logTabs, videoTabs, basicTabs);
     const closingIndex = mixedTabs.findIndex(tab => tab.kind === 'log' && tab.id === tabId);
     const remainingTabs = mixedTabs.filter(tab => !(tab.kind === 'log' && tab.id === tabId));
     const nextMixedTab =
@@ -985,7 +1093,7 @@ const App: React.FC = () => {
 
   const closeBasicTab = (tabId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    const mixedTabs = buildAnalyzerFileTabs(harTabs, logTabs, basicTabs);
+    const mixedTabs = buildAnalyzerFileTabs(harTabs, logTabs, videoTabs, basicTabs);
     const closingIndex = mixedTabs.findIndex(tab => isBasicAnalyzerKind(tab.kind) && tab.id === tabId);
     const remainingTabs = mixedTabs.filter(tab => !(isBasicAnalyzerKind(tab.kind) && tab.id === tabId));
     const nextMixedTab =
@@ -998,6 +1106,25 @@ const App: React.FC = () => {
 
     if (wasActive) {
       setActiveBasicTabId(null);
+      activateAnalyzerFileTab(nextMixedTab);
+    }
+  };
+
+  const closeVideoTab = (tabId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const mixedTabs = buildAnalyzerFileTabs(harTabs, logTabs, videoTabs, basicTabs);
+    const closingIndex = mixedTabs.findIndex(tab => tab.kind === 'video' && tab.id === tabId);
+    const remainingTabs = mixedTabs.filter(tab => !(tab.kind === 'video' && tab.id === tabId));
+    const nextMixedTab =
+      remainingTabs[Math.max(0, closingIndex)] ??
+      remainingTabs[Math.max(0, closingIndex - 1)] ??
+      null;
+    const wasActive = activeTool === 'video' && activeVideoTabId === tabId;
+
+    setVideoTabs(prev => prev.filter(t => t.id !== tabId));
+
+    if (wasActive) {
+      setActiveVideoTabId(null);
       activateAnalyzerFileTab(nextMixedTab);
     }
   };
@@ -1016,6 +1143,14 @@ const App: React.FC = () => {
     const tab = basicTabs.find(item => item.id === tabId);
     if (!tab) return;
     setActiveCaseFileId(tab.caseFileId);
+  };
+
+  const handleVideoTabSwitch = (tabId: string) => {
+    setActiveTool('video');
+    if (tabId !== activeVideoTabId) setActiveVideoTabId(tabId);
+    const tab = videoTabs.find(item => item.id === tabId);
+    if (!tab) return;
+    setActiveCaseFileId(getCaseFileIdForAnalyzerTab('video', tab));
   };
 
   const handleOpenExistingRecentFile = useCallback((file: { name: string; fileType: CaseFileAnalyzerKind }): boolean => {
@@ -1201,6 +1336,7 @@ const App: React.FC = () => {
   const showUnifiedUploader =
     harTabs.length === 0 &&
     logTabs.length === 0 &&
+    videoTabs.length === 0 &&
     caseFiles.length === 0 &&
     !isLogProcessing;
 
@@ -1239,9 +1375,9 @@ const App: React.FC = () => {
     (activeCaseFileId ? caseFiles.find(file => file.id === activeCaseFileId) : null) ??
     caseFiles[caseFiles.length - 1] ??
     null;
-  const analyzerFileTabs = buildAnalyzerFileTabs(harTabs, logTabs, basicTabs);
+  const analyzerFileTabs = buildAnalyzerFileTabs(harTabs, logTabs, videoTabs, basicTabs);
   const openAnalyzerFilesLabel = `${analyzerFileTabs.length} file${analyzerFileTabs.length === 1 ? '' : 's'}`;
-  const isAnalyzerToolActive = activeTool === 'har' || activeTool === 'console' || activeTool === 'basic';
+  const isAnalyzerToolActive = activeTool === 'har' || activeTool === 'console' || activeTool === 'basic' || activeTool === 'video';
   const headerTitle = isMcpDocsRoute
     ? 'MCP Services'
     : isDocsRoute
@@ -1259,6 +1395,8 @@ const App: React.FC = () => {
     ? 'Visual Analysis: HAR Compare'
     : activeTool === 'sanitizer'
     ? 'Visual Analysis: HAR Sanitizer'
+    : activeTool === 'video'
+    ? 'Visual Analysis: Video Evidence'
     : activeTool === 'basic'
     ? 'Visual Analysis: file preview'
     : 'Visual Analysis: analyzer';
@@ -1310,6 +1448,11 @@ const App: React.FC = () => {
       return;
     }
 
+    if (activeCaseFile?.analyzerKind === 'video' && videoTabs.length > 0) {
+      setActiveTool('video');
+      return;
+    }
+
     if (activeCaseFile && isBasicAnalyzerKind(activeCaseFile.analyzerKind) && basicTabs.length > 0) {
       setActiveTool('basic');
       return;
@@ -1322,6 +1465,11 @@ const App: React.FC = () => {
 
     if (logTabs.length > 0) {
       setActiveTool('console');
+      return;
+    }
+
+    if (videoTabs.length > 0) {
+      setActiveTool('video');
       return;
     }
 
@@ -1393,6 +1541,29 @@ const App: React.FC = () => {
       return;
     }
 
+    if (file.analyzerKind === 'video') {
+      const existingTab = videoTabs.find(tab => caseFileMatchesAnalyzerTarget(file, 'video', tab));
+      if (existingTab) {
+        handleVideoTabSwitch(existingTab.id);
+        return;
+      }
+      if (!file.fileId || videoTabs.length >= MAX_VIDEO_TABS) return;
+
+      const newTab: VideoFileTab = {
+        id: `videotab_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        fileId: file.fileId,
+        fileName: file.name,
+        fileSize: file.size,
+        mediaType: file.mediaType,
+        extension: file.extension,
+        createdAt: Date.now(),
+      };
+      setVideoTabs(prev => [...prev, newTab]);
+      setActiveVideoTabId(newTab.id);
+      setActiveTool('video');
+      return;
+    }
+
     const existingTab = logTabs.find(tab => caseFileMatchesAnalyzerTarget(file, 'log', tab));
     if (existingTab) {
       handleLogTabSwitch(existingTab.id);
@@ -1446,6 +1617,10 @@ const App: React.FC = () => {
                 }}
                 onLogFileUpload={async (result, sourceFile) => {
                   await handleUnifiedLogUpload(result, sourceFile);
+                  setIsUploadModalOpen(false);
+                }}
+                onVideoFileUpload={async (result, sourceFile, classification) => {
+                  await handleUnifiedVideoUpload(result, sourceFile, classification);
                   setIsUploadModalOpen(false);
                 }}
                 onBasicFileUpload={async (sourceFile, classification) => {
@@ -1631,6 +1806,7 @@ const App: React.FC = () => {
                 localStorage.removeItem(HAR_RECENT_FILES_KEY);
               }}
               onLogFileUpload={handleUnifiedLogUpload}
+              onVideoFileUpload={handleUnifiedVideoUpload}
               onBasicFileUpload={handleUnifiedBasicUpload}
               logRecentFiles={logRecentFiles}
               onClearLogRecent={() => {
@@ -1650,6 +1826,7 @@ const App: React.FC = () => {
               const isActive =
                 (tab.kind === 'har' && activeTool === 'har' && tab.id === activeHarTabId) ||
                 (tab.kind === 'log' && activeTool === 'console' && tab.id === activeLogTabId) ||
+                (tab.kind === 'video' && activeTool === 'video' && tab.id === activeVideoTabId) ||
                 (isBasicAnalyzerKind(tab.kind) && activeTool === 'basic' && tab.id === activeBasicTabId);
               const typeLabel = getAnalyzerFileTypeLabel(tab.kind, tab.displayKind, tab.extension);
               const handleTabClick = () => {
@@ -1663,6 +1840,11 @@ const App: React.FC = () => {
                   return;
                 }
 
+                if (tab.kind === 'video') {
+                  handleVideoTabSwitch(tab.id);
+                  return;
+                }
+
                 handleBasicTabSwitch(tab.id);
               };
               const handleCloseTab = (event: React.MouseEvent) => {
@@ -1673,6 +1855,11 @@ const App: React.FC = () => {
 
                 if (tab.kind === 'log') {
                   closeLogTab(tab.id, event);
+                  return;
+                }
+
+                if (tab.kind === 'video') {
+                  closeVideoTab(tab.id, event);
                   return;
                 }
 
@@ -1696,6 +1883,12 @@ const App: React.FC = () => {
                       <>
                         <polyline points="4 11 7 8 4 5" />
                         <line x1="9" y1="12" x2="13" y2="12" />
+                      </>
+                    ) : tab.kind === 'video' ? (
+                      <>
+                        <rect x="2.5" y="4" width="11" height="8" rx="1" />
+                        <path d="M6.5 6.5l3 1.5-3 1.5z" />
+                        <path d="M4 13h8" strokeLinecap="round" />
                       </>
                     ) : tab.kind === 'table' ? (
                       <>
@@ -1739,7 +1932,7 @@ const App: React.FC = () => {
               );
             })}
 
-            {analyzerFileTabs.length < MAX_HAR_TABS + MAX_LOG_TABS + MAX_BASIC_TABS && (
+            {analyzerFileTabs.length < MAX_HAR_TABS + MAX_LOG_TABS + MAX_VIDEO_TABS + MAX_BASIC_TABS && (
               <button
                 className="har-file-tab-add"
                 onClick={handleAddTabClick}
@@ -1847,6 +2040,23 @@ const App: React.FC = () => {
                 fileSize={tab.fileSize}
                 initialData={tab.localData}
                 isActive={tab.id === activeLogTabId}
+                backendUrl={BACKEND_URL}
+              />
+            ))}
+          </>
+        )}
+
+        {/* Video Evidence Analyzer */}
+        {activeTool === 'video' && analyzerFileTabs.length > 0 && (
+          <>
+            {videoTabs.map(tab => (
+              <VideoEvidenceAnalyzer
+                key={tab.id}
+                fileId={tab.fileId}
+                fileName={tab.fileName}
+                fileSize={tab.fileSize}
+                mediaType={tab.mediaType}
+                isActive={tab.id === activeVideoTabId}
                 backendUrl={BACKEND_URL}
               />
             ))}

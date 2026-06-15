@@ -5,12 +5,13 @@ export type AnalyzerFileKind =
   | 'structured'
   | 'table'
   | 'image'
+  | 'video'
   | 'document'
   | 'archive'
   | 'binary';
 
 export type UploadFileType = AnalyzerFileKind;
-export type BasicAnalyzerFileKind = Exclude<AnalyzerFileKind, 'har' | 'log'>;
+export type BasicAnalyzerFileKind = Exclude<AnalyzerFileKind, 'har' | 'log' | 'video'>;
 export type ClassificationConfidence = 'high' | 'medium' | 'low';
 
 export interface UploadFileClassification {
@@ -57,6 +58,7 @@ const TEXT_FILE_EXTENSIONS = [
 const STRUCTURED_FILE_EXTENSIONS = ['.json', '.xml', '.yaml', '.yml', '.toml', '.jws', '.jpr'] as const;
 const TABLE_FILE_EXTENSIONS = ['.csv', '.tsv'] as const;
 const IMAGE_FILE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tif', '.tiff'] as const;
+const VIDEO_FILE_EXTENSIONS = ['.mp4', '.mov', '.webm', '.mkv', '.m4v'] as const;
 const DOCUMENT_FILE_EXTENSIONS = ['.pdf', '.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsx'] as const;
 const ARCHIVE_FILE_EXTENSIONS = ['.zip'] as const;
 
@@ -278,6 +280,16 @@ export async function classifyUploadFile(file: File): Promise<UploadFileClassifi
       confidence: 'high',
       reasons: ['Image media type or extension detected'],
       suggestedToolName: 'triage_text_diagnostics',
+    });
+  }
+
+  if (normalizedType.startsWith('video/') || hasKnownExtension(file.name, VIDEO_FILE_EXTENSIONS)) {
+    return createClassification('video', 'Video recording', file, {
+      extension,
+      confidence: 'high',
+      reasons: ['Video media type or extension detected'],
+      visualStatus: 'Ready for evidence analysis',
+      suggestedToolName: 'analyze_video_evidence',
     });
   }
 

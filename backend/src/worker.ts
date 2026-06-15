@@ -1,14 +1,16 @@
 import dotenv from 'dotenv';
 import { Worker } from 'bullmq';
 import { closeDatabases, connectDatabases, getRedis } from './config/database';
-import { HAR_QUEUE_NAME, LOG_QUEUE_NAME } from './config/queueNames';
+import { HAR_QUEUE_NAME, LOG_QUEUE_NAME, VIDEO_QUEUE_NAME } from './config/queueNames';
 import { processHarFile } from './workers/harProcessor';
 import { processConsoleLog } from './workers/logProcessor';
+import { analyzeVideoEvidence, markVideoEvidenceJobFailed, processVideoFile } from './workers/videoProcessor';
 
 dotenv.config();
 
 let harWorker: Worker | null = null;
 let logWorker: Worker | null = null;
+let videoWorker: Worker | null = null;
 let shuttingDown = false;
 
 async function shutdown(signal: string): Promise<void> {
@@ -20,6 +22,7 @@ async function shutdown(signal: string): Promise<void> {
   await Promise.allSettled([
     harWorker?.close(),
     logWorker?.close(),
+    videoWorker?.close(),
   ]);
 
   await closeDatabases().catch((error) => {
@@ -83,6 +86,35 @@ async function startWorker() {
       }
     );
 
+    videoWorker = new Worker(
+      VIDEO_QUEUE_NAME,
+      async (job) => {
+        console.log(`\n[Worker] Processing video evidence job ${job.id}`);
+
+        try {
+          if (job.name === 'analyze_video_evidence') {
+            await analyzeVideoEvidence(job.data);
+          } else {
+            await processVideoFile(job.data);
+          }
+          return { success: true, fileId: job.data.fileId };
+        } catch (error) {
+          console.error('[Worker] Failed to process video evidence:', error);
+          throw error;
+        }
+      },
+      {
+        connection,
+        concurrency: Math.max(1, Math.min(concurrency, 2)),
+        lockDuration: parseInt(process.env.VIDEO_WORKER_LOCK_DURATION_MS || '900000', 10),
+        stalledInterval: parseInt(process.env.VIDEO_WORKER_STALLED_INTERVAL_MS || '60000', 10),
+        limiter: {
+          max: 2,
+          duration: 1000,
+        },
+      }
+    );
+
     harWorker.on('completed', (job) => {
       console.log(`✅ [Worker] HAR job ${job.id} completed`);
     });
@@ -97,6 +129,20 @@ async function startWorker() {
 
     logWorker.on('failed', (job, err) => {
       console.error(`❌ [Worker] Log job ${job?.id} failed:`, err.message);
+    });
+
+    videoWorker.on('completed', (job) => {
+      console.log(`[Worker] Video evidence job ${job.id} completed`);
+    });
+
+    videoWorker.on('failed', (job, err) => {
+      console.error(`[Worker] Video evidence job ${job?.id} failed:`, err.message);
+      if (!job?.data?.fileId) return;
+
+      void markVideoEvidenceJobFailed(job.data, err.message, job.name)
+        .catch((updateError) => {
+          console.error(`[Worker] Failed to mark video job ${job.id} as failed:`, updateError);
+        });
     });
 
     console.log('\n=================================');

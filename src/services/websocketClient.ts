@@ -74,6 +74,10 @@ class WebSocketClient {
       this.emit('file:status', data);
     });
 
+    this.socket.on('video:timeline', (data) => {
+      this.emit('video:timeline', data);
+    });
+
     // Embedding progress
     this.socket.on('embedding:progress', (data) => {
       this.emit('embedding:progress', data);

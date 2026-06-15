@@ -32,8 +32,18 @@ export interface UploadResult {
   message: string;
 }
 
+export type ChunkedUploadFileType = 'har' | 'log' | 'video';
+
 class ChunkedUploader {
-  private async compressFile(file: File): Promise<{ blob: Blob; compressed: boolean }> {
+  private shouldCompress(fileType: ChunkedUploadFileType): boolean {
+    return fileType === 'har' || fileType === 'log';
+  }
+
+  private async compressFile(file: File, fileType: ChunkedUploadFileType): Promise<{ blob: Blob; compressed: boolean }> {
+    if (!this.shouldCompress(fileType)) {
+      return { blob: file, compressed: false };
+    }
+
     if (typeof CompressionStream === 'undefined') {
       return { blob: file, compressed: false };
     }
@@ -50,16 +60,19 @@ class ChunkedUploader {
 
   async uploadFile(
     file: File,
-    fileType: 'har' | 'log',
+    fileType: ChunkedUploadFileType,
     onProgress?: (progress: UploadProgress) => void
   ): Promise<UploadResult> {
     const fileId = this.generateFileId();
 
-    const { blob: uploadBlob, compressed } = await this.compressFile(file);
+    const { blob: uploadBlob, compressed } = await this.compressFile(file, fileType);
     const totalChunks = Math.ceil(uploadBlob.size / CHUNK_SIZE);
 
     console.log(`Starting chunked upload: ${file.name}`);
-    console.log(`File size: ${(file.size / 1024 / 1024).toFixed(1)} MB → ${(uploadBlob.size / 1024 / 1024).toFixed(1)} MB compressed, Chunks: ${totalChunks} × ${CHUNK_SIZE / 1024 / 1024}MB, Parallel: ${PARALLEL_UPLOADS}`);
+    const sizeSummary = compressed
+      ? `${(file.size / 1024 / 1024).toFixed(1)} MB → ${(uploadBlob.size / 1024 / 1024).toFixed(1)} MB compressed`
+      : `${(file.size / 1024 / 1024).toFixed(1)} MB uncompressed`;
+    console.log(`File size: ${sizeSummary}, Chunks: ${totalChunks} × ${CHUNK_SIZE / 1024 / 1024}MB, Parallel: ${PARALLEL_UPLOADS}`);
 
     let uploadedChunks = 0;
 
@@ -133,7 +146,7 @@ class ChunkedUploader {
     fileId: string,
     totalChunks: number,
     fileName: string,
-    fileType: 'har' | 'log',
+    fileType: ChunkedUploadFileType,
     fileSizeBytes: number,
     compressed: boolean
   ): Promise<UploadResult> {
