@@ -1,6 +1,11 @@
 
 # HAR Analyzer — Ops & Debug Runbook
 
+> [!IMPORTANT]
+> This runbook describes the legacy VM/VCAP deployment. Its OCA token-refresh
+> instructions are obsolete because OCA has been decommissioned. Use
+> `OPENAI_API_KEY`, `OPENAI_MODEL`, and the approved secret process instead.
+
 ## Stack Overview
 
 | Service | Process | Port | Notes |
@@ -18,15 +23,11 @@
 
 ***
 
-## Daily Token Refresh (OCA expires ~1hr)
+## AI Credential Update
+
+OpenAI credentials are GCGA-managed secrets and do not use the former hourly OCA refresh flow. Rotate the key through the approved secret-management process, update the backend environment, and restart the backend.
 
 ```bash
-refresh-token   # alias in ~/.bashrc — prompts for token, updates .env, restarts backend
-```
-
-Manual alternative:
-```bash
-sed -i 's/^OCA_TOKEN=.*/OCA_TOKEN=YOUR_NEW_TOKEN/' /refresh/home/Downloads/har-analyzer/backend/.env
 pm2 restart har-backend --update-env
 ```
 
@@ -57,7 +58,6 @@ cd /refresh/home/Downloads/har-analyzer
 git -c http.proxy=http://www-proxy-phx.oraclecorp.com:80 \
     -c https.proxy=http://www-proxy-phx.oraclecorp.com:80 \
     pull origin main
-
 git log -1 --oneline
 
 # Rebuild backend (TypeScript only — tsc works without native binaries)
@@ -279,11 +279,9 @@ pm2 flush
 # Check all process status
 pm2 list
 
-# Verify OCA is reachable from shell
-curl -s -o /dev/null -w "%{http_code}" \
-  https://code-internal.aiservice.us-chicago-1.oci.oraclecloud.com/20250206/app/litellm/v1/models \
-  -H "Authorization: Bearer $(grep OCA_TOKEN /refresh/home/Downloads/har-analyzer/backend/.env | cut -d= -f2)"
-# Expected: 200
+# Verify the backend can reach its configured OpenAI endpoint without printing the key
+curl -s http://127.0.0.1:4000/api/ai/status
+# Expected: HTTP 200; inspect the JSON connected flag
 
 # Verify proxy is in PM2 env; use any current har-backend id from pm2 list.
 pm2 env <har-backend-id> | grep -i proxy
@@ -305,10 +303,10 @@ db.har_files.find().sort({uploadedAt:-1}).limit(5)
 |---|---|---|
 | `All HAR uploads failed` | Frontend pointing to `localhost:4000` | Rebuild with correct `.env.production` |
 | `E11000 duplicate key` | Stale MongoDB record | `deleteMany({ fileId: "..." })` in mongosh |
-| `ConnectTimeoutError` on OCA | Node.js fetch ignores proxy | Ensure `setGlobalDispatcher` is in `server.ts` |
+| `ConnectTimeoutError` on OpenAI | Runtime cannot reach the approved endpoint | Verify approved egress and proxy environment, then restart the backend |
 | `fetch failed` in Node test | No proxy set | Proxy vars missing from `.env` |
 | AI chat shows old UI | Wrong branch built | `git checkout main` before building |
-| `OCA proxy error: fetch failed` | Token expired | Run `refresh-token` alias |
+| OpenAI returns `401` or `403` | Key is invalid, revoked, or not authorized for the configured model | Rotate the GCGA secret or correct `OPENAI_MODEL`, then restart the backend |
 | Worker processes stale jobs | Old BullMQ jobs still pending in Redis | Stop `har-worker`, clear only `bull:har-processing:*` / `bull:log-processing:*`, then recreate worker from config |
 | `bash: /tmp/serve-frontend.sh: No such file or directory` | PM2 frontend points to a deleted temp script | Recreate `har-frontend` with `python3 -m http.server` |
 | `[PM2][ERROR] File /tmp/worker.config.cjs not found` | `/tmp` worker config disappeared | Recreate `/tmp/worker.config.cjs`, then `pm2 start /tmp/worker.config.cjs` |
@@ -319,15 +317,10 @@ db.har_files.find().sort({uploadedAt:-1}).limit(5)
 ## Backend .env Template
 
 ```bash
-# Oracle Cloud AI
-OCA_BASE_URL=https://code-internal.aiservice.us-chicago-1.oci.oraclecloud.com/20250206/app/litellm/v1
-OCA_MODEL=oca/gpt-5.4
-OCA_TOKEN=<refresh every ~1hr via refresh-token alias>
-OCA_TOKEN_SET_AT=0
-
-# Ollama fallback
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=llama3.2
+# Approved OpenAI API (backend only)
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=<model approved for the GCGA key>
+OPENAI_API_KEY=<inject through the approved secret mechanism>
 
 # Databases
 MONGODB_URL=mongodb://localhost:27017/har-analyzer
@@ -342,7 +335,7 @@ RETENTION_MAX_AGE_HOURS=168
 RETENTION_CLEANUP_INTERVAL_MINUTES=60
 RETENTION_CLEANUP_DRY_RUN=false
 
-# Corporate proxy (required for Node.js fetch to reach OCA)
+# Corporate proxy (only when required for approved outbound HTTPS)
 HTTPS_PROXY=http://www-proxy-phx.oraclecorp.com:80
 HTTP_PROXY=http://www-proxy-phx.oraclecorp.com:80
 https_proxy=http://www-proxy-phx.oraclecorp.com:80

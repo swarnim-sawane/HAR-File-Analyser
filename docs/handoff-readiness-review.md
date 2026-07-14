@@ -8,7 +8,7 @@ This review covers the repository structure, local development path, backend API
 
 ## Summary Verdict
 
-The project is suitable for handoff as an internal diagnostic application. The main architecture is understandable and maintainable: React frontend, Express backend API, BullMQ worker, MongoDB persistence, Redis queue/pub-sub, optional Qdrant, and optional OCA-backed AI.
+The project is suitable for handoff as an internal diagnostic application. The main architecture is understandable and maintainable: React frontend, Express backend API, BullMQ worker, MongoDB persistence, Redis queue/pub-sub, OCI Object Storage for hosted artifacts, and optional OpenAI-backed AI.
 
 It should not be treated as internet-ready production software until authentication, TLS, retention policy, observability, dependency/security review, and OCI-managed persistence decisions are completed.
 
@@ -26,7 +26,7 @@ It should not be treated as internet-ready production software until authenticat
 
 ## Fixes Applied During This Handoff Pass
 
-- Added developer-focused README coverage for hosted usage, local setup, MongoDB/Redis/Qdrant dependencies, environment variables, build/test commands, OpenAPI integration, deployment notes, and security expectations.
+- Added developer-focused README coverage for hosted usage, local setup, MongoDB/Redis dependencies, environment variables, build/test commands, OpenAPI integration, deployment notes, and security expectations.
 - Added `.env.example` and `backend/.env.example` templates.
 - Changed HAR entry detail lookup to query by `{ fileId, index }` instead of relying on skip-based natural order.
 - Added a `{ fileId, index }` HAR entry index at startup.
@@ -46,7 +46,6 @@ The current architecture is appropriate for the product stage:
 - Worker: appropriate for file parsing and avoids tying large-file processing to request lifetimes.
 - MongoDB: technically aligned with the current data model because HAR/log entries are document-shaped and query patterns are entry-oriented.
 - Redis: appropriate for BullMQ queues, upload progress, and pub/sub.
-- Qdrant: optional and should remain optional unless embedding retrieval becomes a required feature.
 
 ## Production-Readiness Gaps
 

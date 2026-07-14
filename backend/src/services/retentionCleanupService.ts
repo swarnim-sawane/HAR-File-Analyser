@@ -2,6 +2,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import type { Db } from 'mongodb';
 import type Redis from 'ioredis';
+import type { ArtifactStore } from './artifactStore';
 
 export interface RetentionCleanupConfig {
   enabled: boolean;
@@ -14,11 +15,13 @@ interface RetentionFileDoc {
   fileId: string;
   fileName?: string;
   filePath?: string;
+  artifactKey?: string;
 }
 
 export interface RetentionCleanupOptions {
   db: Db;
   redis: Redis;
+  artifactStore?: ArtifactStore;
   uploadDir: string;
   processedDir: string;
   maxAgeHours: number;
@@ -132,6 +135,23 @@ async function cleanupStaleUploadChunks(uploadDir: string, cutoff: Date, dryRun:
   return deleted;
 }
 
+async function cleanupStaleArtifactChunks(
+  artifactStore: ArtifactStore | undefined,
+  cutoff: Date,
+  dryRun: boolean,
+): Promise<number> {
+  if (!artifactStore) return 0;
+  let deleted = 0;
+
+  for await (const artifact of artifactStore.list('tmp')) {
+    if (!artifact.lastModified || artifact.lastModified >= cutoff) continue;
+    if (!dryRun) await artifactStore.delete(artifact.key);
+    deleted += 1;
+  }
+
+  return deleted;
+}
+
 export async function cleanupExpiredAnalysisData(
   options: RetentionCleanupOptions,
 ): Promise<RetentionCleanupResult> {
@@ -143,12 +163,12 @@ export async function cleanupExpiredAnalysisData(
   const harFiles = await options.db
     .collection<RetentionFileDoc>('har_files')
     .find({ uploadedAt: { $lt: cutoff } })
-    .project({ fileId: 1, fileName: 1, filePath: 1 })
+    .project({ fileId: 1, fileName: 1, filePath: 1, artifactKey: 1 })
     .toArray() as RetentionFileDoc[];
   const consoleLogFiles = await options.db
     .collection<RetentionFileDoc>('console_log_files')
     .find({ uploadedAt: { $lt: cutoff } })
-    .project({ fileId: 1, fileName: 1, filePath: 1 })
+    .project({ fileId: 1, fileName: 1, filePath: 1, artifactKey: 1 })
     .toArray() as RetentionFileDoc[];
 
   const harFileIds = harFiles.map((file) => file.fileId);
@@ -157,6 +177,9 @@ export async function cleanupExpiredAnalysisData(
 
   let filesDeleted = 0;
   for (const doc of [...harFiles, ...consoleLogFiles]) {
+    if (doc.artifactKey && options.artifactStore) {
+      if (dryRun || await options.artifactStore.delete(doc.artifactKey)) filesDeleted += 1;
+    }
     for (const candidate of candidateProcessedPaths(doc, options.processedDir)) {
       if (await deleteFileIfSafe(candidate, allowedFileDirs, dryRun)) {
         filesDeleted += 1;
@@ -164,7 +187,11 @@ export async function cleanupExpiredAnalysisData(
     }
   }
 
-  const staleUploadChunks = await cleanupStaleUploadChunks(options.uploadDir, cutoff, dryRun);
+  const staleUploadChunks = (
+    await cleanupStaleUploadChunks(options.uploadDir, cutoff, dryRun)
+  ) + (
+    await cleanupStaleArtifactChunks(options.artifactStore, cutoff, dryRun)
+  );
   const redisKeys = await deleteRedisKeys(options.redis, allFileIds, dryRun);
 
   let harEntries = 0;

@@ -715,7 +715,7 @@ export function buildOpenApiDocument(serverUrl: string): OpenApiDocument {
         AiExecutionMetadata: {
           type: 'object',
           properties: {
-            source: { type: 'string', enum: ['oca', 'deterministic_fallback'] },
+            source: { type: 'string', enum: ['openai', 'deterministic_fallback'] },
             fallbackReason: { type: 'string' },
           },
         },
@@ -1290,7 +1290,7 @@ export function renderOpenApiDocsHtml(specUrl = '/openapi.json'): string {
             <div class="metric"><span>Contract</span><strong>OpenAPI 3.0.3</strong></div>
             <div class="metric"><span>Automation</span><strong>Stable /api/v1 HAR endpoints</strong></div>
             <div class="metric"><span>Upload</span><strong>Chunked, large-file capable</strong></div>
-            <div class="metric"><span>AI Resilience</span><strong>OCA with deterministic fallback</strong></div>
+            <div class="metric"><span>AI Resilience</span><strong>OpenAI with deterministic fallback</strong></div>
           </div>
         </div>
       </header>
@@ -1359,7 +1359,7 @@ export function renderOpenApiDocsHtml(specUrl = '/openapi.json'): string {
             </div>
             <div class="panel capability">
               <h2>Fallback Behavior</h2>
-              <strong>Useful output when OCA is unavailable</strong>
+              <strong>Useful output when OpenAI is unavailable</strong>
               <p>If AI fails or returns unusable output, the API returns conservative deterministic findings instead of failing the whole workflow.</p>
             </div>
           </section>
@@ -1432,7 +1432,7 @@ export function renderOpenApiDocsHtml(specUrl = '/openapi.json'): string {
               <span class="method">POST</span>
               <div>
                 <code>/api/v1/har/{fileId}/insights</code>
-                <div class="note">One-call insight generation for a processed HAR. Returns OCA output when available, otherwise deterministic fallback findings.</div>
+                <div class="note">One-call insight generation for a processed HAR. Returns OpenAI output when available, otherwise deterministic fallback findings.</div>
               </div>
             </div>
           </section>
@@ -1462,13 +1462,13 @@ export function renderOpenApiDocsHtml(specUrl = '/openapi.json'): string {
     "sections": []
   },
   "ai": {
-    "source": "oca"
+    "source": "openai"
   }
 }</code></pre>
               </div>
             </div>
             <p class="note">
-              If OCA is unavailable, <code>ai.source</code> can be <code>deterministic_fallback</code>.
+              If OpenAI is unavailable, <code>ai.source</code> can be <code>deterministic_fallback</code>.
               That means the API returned rule-based diagnostic findings instead of failing the request.
             </p>
           </section>
@@ -1514,7 +1514,7 @@ Invoke-RestMethod "$baseUrl/api/v1/har/$fileId/insights" -Method Post</code></pr
                 <tr><td>Chunk size</td><td>Use 8 MB client-side chunks.</td><td>Keeps uploads below the server multipart limit.</td></tr>
                 <tr><td>Worker</td><td>Keep the worker running with memory flags in deployed environments.</td><td>Uploads complete only after the worker parses files into MongoDB.</td></tr>
                 <tr><td>Retention</td><td>Run cleanup in dry-run mode before deleting artifacts.</td><td>Large HAR files can consume disk quickly.</td></tr>
-                <tr><td>AI dependency</td><td>Expect OCA output when available and fallback findings when unavailable.</td><td>Automation receives usable diagnostics even during AI outages.</td></tr>
+                <tr><td>AI dependency</td><td>Expect OpenAI output when available and fallback findings when unavailable.</td><td>Automation receives usable diagnostics even during AI outages.</td></tr>
               </tbody>
             </table>
           </section>

@@ -2,10 +2,12 @@ import { Queue } from 'bullmq';
 import { getRedis, getMongoDb } from '../config/database';
 import { HAR_QUEUE_NAME } from '../config/queueNames';
 import { streamParseHar, ParsedHarEntry } from '../services/streamingParser';
-import { promises as fs } from 'fs';
+import os from 'os';
+import path from 'path';
 import { publishToFile } from '../utils/socketHelper';
 import { prepareHarEntryForStorage } from './harEntryStorage';
 import { logError, logInfo, measureDurationMs } from '../config/observability';
+import { getArtifactStore, materializeArtifact } from '../services/artifactStore';
 
 // ✅ REMOVED: import { emitToFile } from '../utils/socketHelper';
 // Now using Redis pub/sub instead
@@ -26,7 +28,8 @@ export function initHarQueue(): Queue {
 interface HarJobData {
   fileId: string;
   fileName: string;
-  filePath: string;
+  artifactKey?: string;
+  filePath?: string;
   fileSize: number;
   fileType: string;
   hash: string;
@@ -43,7 +46,8 @@ interface HarJobData {
  */
 export async function processHarFile(data: HarJobData): Promise<void> {
   const startedAt = Date.now();
-  const { fileId, fileName, filePath, fileSize } = data;
+  const { fileId, fileName, fileSize } = data;
+  let materializedCleanup: (() => Promise<void>) | undefined;
   
   // Initialize redis if not already done
   if (!redis) {
@@ -55,6 +59,23 @@ export async function processHarFile(data: HarJobData): Promise<void> {
   try {
     // Update status
     await updateFileStatus(fileId, 'parsing');
+
+    let processingPath = data.filePath;
+    if (data.artifactKey) {
+      const destination = path.join(
+        process.env.WORKER_SCRATCH_DIR || path.join(os.tmpdir(), 'har-analyzer-worker'),
+        fileId,
+        path.basename(fileName),
+      );
+      const materialized = await materializeArtifact(
+        getArtifactStore(),
+        data.artifactKey,
+        destination,
+      );
+      processingPath = materialized.filePath;
+      materializedCleanup = materialized.cleanup;
+    }
+    if (!processingPath) throw new Error('Processing job is missing artifactKey and filePath.');
 
     // ✅ FIXED: Calculate stats on-the-fly instead of storing all entries
     const statsAccumulator = {
@@ -73,6 +94,7 @@ export async function processHarFile(data: HarJobData): Promise<void> {
     // Step 1: Parse HAR file and store entries in MongoDB
     const db = getMongoDb();
     const entriesCollection = db.collection('har_entries');
+    await entriesCollection.deleteMany({ fileId });
     let batchBuffer: ParsedHarEntry[] = [];
     // Larger batches = fewer MongoDB round-trips per file.
     // 2000 entries * ~2 KB avg = ~4 MB per insert, well within driver limits.
@@ -86,7 +108,7 @@ export async function processHarFile(data: HarJobData): Promise<void> {
     // domain string over and over (common in large HAR files).
     const domainCache = new Map<string, string>();
 
-    await streamParseHar(filePath, async (entry, index) => {
+    await streamParseHar(processingPath, async (entry, index) => {
       batchBuffer.push(entry);
 
       // ✅ FIXED: Update stats on-the-fly (pass domain cache to avoid re-parsing URLs)
@@ -137,10 +159,10 @@ export async function processHarFile(data: HarJobData): Promise<void> {
     await emitProgress(fileId, 'analyzing', 90);
 
     // Step 3: Store file metadata in MongoDB
-    await db.collection('har_files').insertOne({
+    await db.collection('har_files').replaceOne({ fileId }, {
       fileId,
       fileName,
-      filePath,
+      ...(data.artifactKey ? { artifactKey: data.artifactKey } : { filePath: data.filePath }),
       fileSize,
       hash: data.hash,
       totalEntries,
@@ -148,7 +170,7 @@ export async function processHarFile(data: HarJobData): Promise<void> {
       uploadedAt: new Date(data.uploadedAt),
       processedAt: new Date(),
       status: 'ready'
-    });
+    }, { upsert: true });
 
     // ✅ CRITICAL FIX: Wait for MongoDB write to be fully committed
     await new Promise(resolve => setTimeout(resolve, 200));
@@ -179,6 +201,10 @@ export async function processHarFile(data: HarJobData): Promise<void> {
     });
     await updateFileStatus(fileId, 'error', { error: (error as Error).message });
     throw error;
+  } finally {
+    await materializedCleanup?.().catch((error) => {
+      console.warn(`Failed to remove worker scratch artifact for ${fileId}:`, error);
+    });
   }
 }
 

@@ -16,7 +16,7 @@ import PerformanceScorecard from './PerformanceScorecard';
 import AiInsights from './AiInsights';
 import { apiClient } from '../services/apiClient';
 import { analyzeRequestFlowFocus } from '../utils/requestFlowFocus';
-import { ChevronDownIcon, ClockIcon, FileIcon, NetworkIcon, RouteIcon, ServerIcon, TrashIcon, UploadIcon } from './Icons';
+import { AlertIcon, ChevronDownIcon, ClockIcon, CloseIcon, FileIcon, NetworkIcon, RouteIcon, ServerIcon, TrashIcon, UploadIcon } from './Icons';
 import type { Entry, FilterOptions } from '../types/har';
 import type { RequestFlowFocusMode } from '../types/requestFlow';
 
@@ -74,7 +74,10 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
   const flowViewRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const autoSelectedFocusKeyRef = useRef<string | null>(null);
   const manualSelectionSuppressedRef = useRef(false);
-  const flowSessionEntries = harState.harData?.log.entries ?? [];
+  const flowSessionEntries = useMemo(
+    () => harState.harData?.log.entries ?? [],
+    [harState.harData],
+  );
   const requestFlowIssueFocus = useMemo(
     () => analyzeRequestFlowFocus(flowSessionEntries),
     [flowSessionEntries]
@@ -166,6 +169,9 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
     setSelectedEntryScrollSignal((signal) => signal + 1);
   };
 
+  const selectedEntry = harState.selectedEntry;
+  const setSelectedEntry = harState.setSelectedEntry;
+
   const revealEntryInAnalyzerFilters = (entry: Entry) => {
     const statusBucket = getStatusBucket(entry.response.status);
     const nextStatusCodes = harState.filters.statusCodes[statusBucket]
@@ -186,19 +192,19 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
 
   useEffect(() => {
     if (!issueFocusEnabled || !requestFlowIssueFocus || !focusEntry) return;
-    if (harState.selectedEntry || manualSelectionSuppressedRef.current) return;
+    if (selectedEntry || manualSelectionSuppressedRef.current) return;
 
     const focusKey = `${fileId}:${requestFlowIssueFocus.anchorIndex}:${Math.round(requestFlowIssueFocus.score)}`;
     if (autoSelectedFocusKeyRef.current === focusKey) return;
 
     autoSelectedFocusKeyRef.current = focusKey;
-    harState.setSelectedEntry(focusEntry);
+    setSelectedEntry(focusEntry);
     requestSelectedEntryScroll();
   }, [
     fileId,
     focusEntry,
-    harState.selectedEntry,
-    harState.setSelectedEntry,
+    selectedEntry,
+    setSelectedEntry,
     issueFocusEnabled,
     requestFlowIssueFocus,
   ]);
@@ -340,9 +346,9 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
 
       {harState.error && (
         <div className="error-banner">
-          <span className="error-icon">âš ï¸</span>
+          <span className="error-icon" aria-hidden="true"><AlertIcon /></span>
           <span>{harState.error}</span>
-          <button onClick={harState.clearData} className="btn-dismiss">âœ•</button>
+          <button onClick={harState.clearData} className="btn-dismiss" aria-label="Dismiss error"><CloseIcon /></button>
         </div>
       )}
 

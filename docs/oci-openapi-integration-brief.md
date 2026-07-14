@@ -42,7 +42,7 @@ The current REST API supports:
 
 ## Important Integration Note
 
-`POST /api/v1/har/{fileId}/insights` is now the preferred HAR automation endpoint after processing is complete. It builds the diagnostic context server-side, calls OCA when available, and returns deterministic fallback findings when OCA is unavailable or returns unusable output.
+`POST /api/v1/har/{fileId}/insights` is the preferred HAR automation endpoint after processing is complete. It builds diagnostic context server-side, calls the configured OpenAI Responses API when available, and returns deterministic fallback findings when AI is unavailable or returns unusable output.
 
 `POST /api/ai/insights` remains available for advanced callers that already have their own prepared diagnostic `context` string. OCI does not need to reproduce frontend-specific context-building logic for HAR files.
 

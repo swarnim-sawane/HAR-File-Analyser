@@ -26,7 +26,6 @@ The recommended local dependency path is:
 
 - MongoDB: stores HAR metadata, HAR entries, console-log files, and console-log entries.
 - Redis: powers BullMQ queues, upload progress, and Socket.IO pub/sub events.
-- Qdrant: optional; used by embedding-related AI paths when available.
 
 ## Architecture
 
@@ -39,8 +38,8 @@ flowchart LR
     Redis --> Worker["Backend worker\nHAR/log parsing"]
     Worker --> Mongo
     Worker --> Redis
-    API --> OCA["Oracle Code Assist\noptional AI"]
-    API --> Qdrant["Qdrant\noptional embeddings"]
+    API --> OpenAI["Approved OpenAI endpoint\noptional AI"]
+    API --> Artifacts["Local storage or OCI Object Storage\nuploaded artifacts"]
 ```
 
 Primary runtime components:
@@ -52,7 +51,7 @@ Primary runtime components:
 | Worker | `backend/src/worker.ts` | Background parsing and persistence for uploaded HAR/log files |
 | MongoDB | external/container | Persistent analysis data |
 | Redis | external/container | Queueing, upload progress, pub/sub event delivery |
-| Qdrant | external/container, optional | Embedding storage for optional AI retrieval paths |
+| Artifact store | local or OCI Object Storage | Uploaded chunks and durable source HAR/log artifacts |
 
 ## Repository Structure
 
@@ -70,7 +69,7 @@ HAR-File-Analyser/
 |   |   |-- config/              # Database, CORS, proxy, queue, and upload configuration
 |   |   |-- workers/             # Storage and worker helpers
 |   |   `-- utils/               # Backend utilities
-|   |-- docker-compose.yml       # Local MongoDB, Redis, Qdrant dependencies
+|   |-- docker-compose.yml       # Local MongoDB and Redis dependencies
 |   `-- package.json             # Backend scripts
 |-- docs/                        # Integration, Confluence, and planning docs
 |-- scripts/                     # Local developer utilities
@@ -81,11 +80,11 @@ HAR-File-Analyser/
 
 ## Prerequisites
 
-- Node.js 22.x recommended.
+- Node.js 22.13 or newer in the Node.js 22 LTS line is recommended.
 - npm 11.x recommended.
-- Docker Desktop or Rancher Desktop for local MongoDB/Redis/Qdrant containers.
+- Docker Desktop or Rancher Desktop for local MongoDB/Redis containers.
 - Git.
-- Access to Oracle VPN/internal network for the hosted environment and OCA-backed AI features.
+- Access to Oracle VPN/internal network for hosted environments and approved OpenAI egress.
 
 ## Runtime Dependencies and Third-party Code
 
@@ -95,10 +94,10 @@ The application code expects the following external services or infrastructure t
 | --- | --- | --- |
 | MongoDB or MongoDB-compatible database | Yes | Stores uploaded file metadata, parsed HAR entries, console-log entries, analysis state, and cached results |
 | Redis or Redis-compatible cache | Yes | Powers BullMQ queues, upload progress, Socket.IO pub/sub, and worker coordination |
-| Qdrant | Optional | Vector/embedding storage for optional retrieval-oriented AI paths |
-| Oracle Code Assist (OCA) | Optional | Generates AI-assisted insight summaries when `OCA_BASE_URL` and `OCA_TOKEN` are configured |
-| Oracle corporate proxy | Environment-dependent | Required in some Oracle networks for outbound backend calls to OCA |
-| Docker/Rancher Desktop container images | Local development only | Pulls local MongoDB, Redis, and Qdrant containers for development setup |
+| OCI Object Storage | Hosted Deployment only | Replaces shared upload/processed directories with durable cross-container artifact storage |
+| OpenAI API or approved OpenAI-compatible gateway | Optional | Generates AI-assisted summaries when `OPENAI_API_KEY` and `OPENAI_MODEL` are configured |
+| Oracle corporate proxy | Environment-dependent | Required only when the runtime network requires a proxy for approved outbound HTTPS calls |
+| Docker/Rancher Desktop container images | Local development only | Pulls local MongoDB and Redis containers for development setup |
 | Internal VM/VCAP hosting | Hosted deployment only | Runs the current internal frontend, backend API, and worker processes |
 
 Third-party code attribution:
@@ -142,15 +141,15 @@ OPENAPI_SERVER_URL=http://localhost:4000
 MONGODB_URL=mongodb://localhost:27017/har-analyzer
 REDIS_HOST=localhost
 REDIS_PORT=6379
-QDRANT_URL=http://localhost:6333
 
 UPLOAD_DIR=./uploads
 PROCESSED_DIR=./processed
 CORS_ORIGIN=http://localhost:3000,http://localhost:5173
+JSON_BODY_LIMIT=10mb
 
-OCA_BASE_URL=
-OCA_TOKEN=
-OCA_MODEL=oca/gpt-5.4
+OPENAI_BASE_URL=
+OPENAI_API_KEY=
+OPENAI_MODEL=
 HTTPS_PROXY=
 HTTP_PROXY=
 
@@ -160,7 +159,7 @@ RETENTION_CLEANUP_INTERVAL_MINUTES=60
 RETENTION_CLEANUP_DRY_RUN=true
 ```
 
-Do not commit real `.env` files, OCA tokens, proxy credentials, customer HAR files, console logs, generated uploads, or processed artifacts.
+Do not commit real `.env` files, OpenAI keys, proxy credentials, customer HAR files, console logs, generated uploads, or processed artifacts.
 
 ## Local Setup
 
@@ -181,7 +180,7 @@ cd ..
 Start local dependency containers:
 
 ```powershell
-docker compose -f backend/docker-compose.yml up -d mongodb redis qdrant
+docker compose -f backend/docker-compose.yml up -d mongodb redis
 ```
 
 ## Running the App
@@ -192,7 +191,7 @@ Recommended one-command local startup from the repository root:
 npm run dev:all
 ```
 
-This starts the Vite frontend, Express backend API, and backend worker in one terminal. Use this for normal local development after MongoDB, Redis, and Qdrant are running.
+This starts the Vite frontend, Express backend API, and backend worker in one terminal. Use this for normal local development after MongoDB and Redis are running.
 
 Expected local URLs:
 
@@ -208,7 +207,7 @@ Stop the development processes with `Ctrl+C`. Stop local containers when no long
 docker compose -f backend/docker-compose.yml down
 ```
 
-To remove local MongoDB/Redis/Qdrant data volumes as well:
+To remove local MongoDB/Redis data volumes as well:
 
 ```powershell
 docker compose -f backend/docker-compose.yml down -v
@@ -312,22 +311,22 @@ See [docs/openapi-automation.md](docs/openapi-automation.md) and [docs/oci-opena
 
 ## Docker and Container Notes
 
-`backend/docker-compose.yml` is the recommended local dependency compose file. It starts MongoDB, Redis, and Qdrant only.
+`backend/docker-compose.yml` is the recommended local dependency compose file. It starts MongoDB and Redis only.
 
 ```powershell
-docker compose -f backend/docker-compose.yml up -d mongodb redis qdrant
+docker compose -f backend/docker-compose.yml up -d mongodb redis
 ```
 
-The root `docker-compose.yml` and `Dockerfile` are not the current full-stack production deployment path. Treat them as legacy/experimental frontend-plus-Ollama assets unless the development team decides to build a full application container strategy.
+The root `docker-compose.yml` and `Dockerfile` are legacy local assets. OCI GenAI Hosted Deployment uses the dedicated definitions under `deploy/hosted/`.
 
-For a production container deployment, create separate runtime definitions for:
+The Hosted Deployment topology contains two application images:
 
-- Frontend static hosting or Vite preview replacement.
-- Backend API process.
-- Backend worker process.
-- MongoDB-compatible service.
-- Redis-compatible cache/queue service.
-- Optional Qdrant or replacement retrieval service.
+- `har-analyzer-app`: React assets and Express API on `0.0.0.0:8080`.
+- `har-analyzer-worker`: BullMQ worker with health endpoints on `0.0.0.0:8080`.
+
+Both use MongoDB and Redis. In Hosted Deployment, uploaded artifacts are exchanged through OCI Object Storage; no shared volume is required. See [OCI GenAI Hosted Deployment](docs/OCI_GENAI_HOSTED_DEPLOYMENT.md) for image builds, environment variables, IAM, and validation.
+
+The hosted build accepts an approved internal Node base through `scripts/build-hosted-images.ps1 -NodeImage <internal-node-image>`; Docker Hub access is not required when a mirror is supplied.
 
 ## Current VM/VCAP Deployment
 
@@ -370,11 +369,14 @@ Current API security posture:
 
 ## AI Behavior
 
-AI features are assistive, not the source of truth. The analyzer builds structured context from deterministic HAR/log evidence, sends that bounded context to OCA when configured, and displays AI output with deterministic fallback behavior when AI is unavailable or returns unusable output.
+AI features are assistive, not the source of truth. The analyzer builds structured context from deterministic HAR/log evidence, sends that bounded context from the backend to the OpenAI Responses API when configured, and displays deterministic fallback behavior when AI is unavailable or returns unusable output.
 
 Operational expectations:
 
-- `OCA_BASE_URL` and `OCA_TOKEN` must be configured in `backend/.env` or the deployment environment.
+- Configure `OPENAI_API_KEY` and an explicitly approved `OPENAI_MODEL` only when enabling AI; initial deployments can omit both.
+- `OPENAI_BASE_URL` defaults to `https://api.openai.com/v1` and accepts only HTTPS when overridden.
+- Without OpenAI configuration, deterministic Insights remain available, the AI chat control is hidden, and readiness is unaffected.
+- The backend sends `store: false`; the key is never compiled into or returned to the browser.
 - AI output can vary between runs because it is generated by a model.
 - Deterministic analyzer evidence, raw request details, parser metadata, and issue tags should be used to validate any AI explanation.
 - The application should not claim an AI-confirmed root cause when only analyzer evidence is available.
@@ -403,9 +405,9 @@ Check:
 
 Check:
 
-- `OCA_BASE_URL`.
-- `OCA_TOKEN`.
-- `OCA_MODEL`.
+- `OPENAI_API_KEY`.
+- `OPENAI_MODEL`.
+- `OPENAI_BASE_URL` when an approved gateway is required.
 - Proxy variables if running from an Oracle network that requires outbound proxy configuration.
 - Backend logs from `/api/ai/status` requests.
 

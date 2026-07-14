@@ -36,7 +36,7 @@ Set `OPENAPI_SERVER_URL` or `PUBLIC_API_URL` in the backend environment when the
 
 ## Important Integration Note
 
-`POST /api/v1/har/{fileId}/insights` is the preferred HAR automation endpoint after upload and processing are complete. It builds the HAR context server-side, calls the AI path when OCA is available, and returns deterministic fallback findings when OCA is unavailable or returns unusable output.
+`POST /api/v1/har/{fileId}/insights` is the preferred HAR automation endpoint after upload and processing are complete. It builds the HAR context server-side, calls the configured OpenAI Responses API when available, and returns deterministic fallback findings when AI is unavailable or returns unusable output.
 
 `POST /api/ai/insights` still exists for advanced callers that already have their own prepared `context` string. The React UI can continue to use it directly.
 
@@ -111,8 +111,8 @@ Invoke-RestMethod "$baseUrl/api/v1/har/$fileId/insights" -Method Post
 
 `POST /api/v1/har/{fileId}/insights` returns:
 
-- `ai.source = "oca"` when OCA generated the insight result
-- `ai.source = "deterministic_fallback"` when OCA is unavailable, returns an error, returns empty content, or returns invalid JSON
+- `ai.source = "openai"` when OpenAI generated the insight result
+- `ai.source = "deterministic_fallback"` when OpenAI is unavailable, returns an error, returns empty content, or returns invalid JSON
 
 Fallback output is intentionally conservative. It uses backend evidence rules from the generated HAR context, such as 5xx failures and authentication-focused 401/403 responses.
 
@@ -150,7 +150,7 @@ Recommended starting point for a controlled internal deployment:
 - Chunk size: 8 MB client-side chunks
 - Disk: at least 3x the largest expected active HAR size, plus MongoDB storage
 - Queue concurrency: start conservative, then increase after measuring CPU, RAM, and Mongo insert time
-- Monitoring: track upload failures, queue depth, processing duration, worker restarts, retention cleanup counts, and OCA fallback rate
+- Monitoring: track upload failures, queue depth, processing duration, worker restarts, retention cleanup counts, and OpenAI fallback rate
 
 ## Security Note
 

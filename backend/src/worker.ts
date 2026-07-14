@@ -5,16 +5,24 @@ import { HAR_QUEUE_NAME, LOG_QUEUE_NAME } from './config/queueNames';
 import { processHarFile } from './workers/harProcessor';
 import { processConsoleLog } from './workers/logProcessor';
 import { logError, logInfo, measureDurationMs } from './config/observability';
+import { startWorkerHealthServer } from './workerHealthServer';
 
 dotenv.config();
 
 let harWorker: Worker | null = null;
 let logWorker: Worker | null = null;
 let shuttingDown = false;
+let ready = false;
+let startupFailed = false;
+const healthServer = startWorkerHealthServer({
+  isReady: () => ready,
+  isShuttingDown: () => shuttingDown || startupFailed,
+});
 
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
+  ready = false;
 
   console.log(`\n⏳ ${signal} received, stopping workers...`);
 
@@ -26,6 +34,8 @@ async function shutdown(signal: string): Promise<void> {
   await closeDatabases().catch((error) => {
     console.error('❌ Failed to close worker database connections:', error);
   });
+
+  await new Promise<void>((resolve) => healthServer.close(() => resolve()));
 
   process.exit(0);
 }
@@ -143,6 +153,8 @@ async function startWorker() {
       console.error(`❌ [Worker] Log job ${job?.id} failed:`, err.message);
     });
 
+    ready = true;
+
     console.log('\n=================================');
     console.log('👷 Workers started successfully');
     console.log(`📊 Concurrency per process: ${concurrency}`);
@@ -150,9 +162,11 @@ async function startWorker() {
     console.log('=================================\n');
     logInfo('worker.started', { concurrency });
   } catch (error) {
+    ready = false;
+    startupFailed = true;
     console.error('❌ Failed to start worker:', error);
     logError('worker.start.failed', { error });
-    process.exit(1);
+    process.exitCode = 1;
   }
 }
 

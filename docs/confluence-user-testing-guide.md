@@ -625,7 +625,7 @@ Fail:
 
 - Access control is expected to be finalized before wider exposure.
 - Current API validation is intended for trusted internal testing.
-- OCA tokens can expire. Summary, errors, and context endpoints can still work when AI is unavailable.
+- OpenAI access can be unavailable or rate-limited. Summary, errors, and context endpoints still work through deterministic analysis when AI is unavailable.
 - Very large HAR files require chunked upload.
 - Worker service must be running for files to reach `ready`.
 - AI output supports diagnosis but does not replace engineer review.

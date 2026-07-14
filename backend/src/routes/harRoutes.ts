@@ -4,6 +4,7 @@ import { createGzip } from 'zlib';
 import path from 'path';
 import { getMongoDb } from '../config/database';
 import { getRedis } from '../config/database';
+import { getArtifactStore } from '../services/artifactStore';
 
 const router = express.Router();
 
@@ -47,28 +48,31 @@ router.get('/:fileId', async (req: Request, res: Response) => {
       process.env.PROCESSED_DIR || path.join(process.cwd(), 'processed')
     );
 
+    let artifactKey: string | null = typeof fileDoc?.artifactKey === 'string'
+      ? fileDoc.artifactKey
+      : null;
     let filePath: string | null = null;
 
-    if (fileDoc?.filePath) {
+    if (!artifactKey && fileDoc?.filePath) {
       filePath = fileDoc.filePath as string;
-    } else {
+    } else if (!artifactKey) {
       const metadataRaw = await redis.get(`file:${fileId}:metadata`);
       if (!metadataRaw) {
         return res.status(404).json({ error: 'File not found' });
       }
 
-      const metadata = JSON.parse(metadataRaw) as { fileName?: string };
+      const metadata = JSON.parse(metadataRaw) as { fileName?: string; artifactKey?: string };
+      if (metadata.artifactKey) {
+        artifactKey = metadata.artifactKey;
+      }
       if (!metadata.fileName) {
         return res.status(404).json({ error: 'File metadata not found' });
       }
 
-      const safeFileName = path.basename(metadata.fileName);
-      filePath = path.join(processedDir, `${fileId}_${safeFileName}`);
-    }
-
-    const resolvedFilePath = path.resolve(filePath);
-    if (!resolvedFilePath.startsWith(processedDir)) {
-      return res.status(400).json({ error: 'Invalid file path' });
+      if (!artifactKey) {
+        const safeFileName = path.basename(metadata.fileName);
+        filePath = path.join(processedDir, `${fileId}_${safeFileName}`);
+      }
     }
 
     const acceptEncoding = req.headers['accept-encoding'] || '';
@@ -80,7 +84,18 @@ router.get('/:fileId', async (req: Request, res: Response) => {
       res.setHeader('Vary', 'Accept-Encoding');
     }
 
-    const fileStream = createReadStream(resolvedFilePath);
+    let fileStream: NodeJS.ReadableStream;
+    if (artifactKey) {
+      fileStream = (await getArtifactStore().open(artifactKey)).body;
+    } else {
+      if (!filePath) return res.status(404).json({ error: 'File artifact not found' });
+      const resolvedFilePath = path.resolve(filePath);
+      if (resolvedFilePath !== processedDir && !resolvedFilePath.startsWith(`${processedDir}${path.sep}`)) {
+        return res.status(400).json({ error: 'Invalid file path' });
+      }
+      fileStream = createReadStream(resolvedFilePath);
+    }
+
     fileStream.on('error', (streamErr: NodeJS.ErrnoException) => {
       if (!res.headersSent) {
         if (streamErr.code === 'ENOENT') {

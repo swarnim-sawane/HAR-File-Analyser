@@ -5,6 +5,7 @@ import {
   cleanupExpiredAnalysisData,
   parseRetentionCleanupConfig,
 } from '../services/retentionCleanupService';
+import { getArtifactStore } from '../services/artifactStore';
 
 dotenv.config();
 
@@ -21,6 +22,7 @@ async function main() {
     const result = await cleanupExpiredAnalysisData({
       db: getMongoDb(),
       redis: getRedis(),
+      artifactStore: getArtifactStore(),
       uploadDir,
       processedDir,
       maxAgeHours: config.maxAgeHours,

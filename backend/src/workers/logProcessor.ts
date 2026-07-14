@@ -4,6 +4,9 @@ import { LOG_QUEUE_NAME } from '../config/queueNames';
 import { streamParseConsoleLog, ParsedLogEntry } from '../services/streamingParser';
 import { publishToFile } from '../utils/socketHelper';
 import { logError, logInfo, measureDurationMs } from '../config/observability';
+import os from 'os';
+import path from 'path';
+import { getArtifactStore, materializeArtifact } from '../services/artifactStore';
 
 // FIXED: Don't call getRedis() at module load time
 let redis: any = null;
@@ -21,7 +24,8 @@ export function initLogQueue(): Queue {
 interface LogJobData {
   fileId: string;
   fileName: string;
-  filePath: string;
+  artifactKey?: string;
+  filePath?: string;
   fileSize: number;
   fileType: string;
   hash: string;
@@ -36,7 +40,8 @@ interface LogJobData {
  */
 export async function processConsoleLog(data: LogJobData): Promise<void> {
   const startedAt = Date.now();
-  const { fileId, fileName, filePath, fileSize } = data;
+  const { fileId, fileName, fileSize } = data;
+  let materializedCleanup: (() => Promise<void>) | undefined;
 
   // Initialize redis if not already done
   if (!redis) {
@@ -48,6 +53,23 @@ export async function processConsoleLog(data: LogJobData): Promise<void> {
   try {
     // Update status
     await updateFileStatus(fileId, 'parsing');
+
+    let processingPath = data.filePath;
+    if (data.artifactKey) {
+      const destination = path.join(
+        process.env.WORKER_SCRATCH_DIR || path.join(os.tmpdir(), 'har-analyzer-worker'),
+        fileId,
+        path.basename(fileName),
+      );
+      const materialized = await materializeArtifact(
+        getArtifactStore(),
+        data.artifactKey,
+        destination,
+      );
+      processingPath = materialized.filePath;
+      materializedCleanup = materialized.cleanup;
+    }
+    if (!processingPath) throw new Error('Processing job is missing artifactKey and filePath.');
 
     const statsAccumulator = {
       levels: {} as Record<string, number>,
@@ -63,6 +85,7 @@ export async function processConsoleLog(data: LogJobData): Promise<void> {
     // Step 1: Parse log file and store entries in MongoDB
     const db = getMongoDb();
     const logsCollection = db.collection('console_logs');
+    await logsCollection.deleteMany({ fileId });
     let batchBuffer: ParsedLogEntry[] = [];
     const BATCH_SIZE = 1000;
     let totalEntries = 0;
@@ -72,7 +95,7 @@ export async function processConsoleLog(data: LogJobData): Promise<void> {
     let lastProgressEmit = 0;
     const PROGRESS_EMIT_EVERY = 5000; // emit progress every 5k entries
 
-    await streamParseConsoleLog(filePath, async (entry, index) => {
+    await streamParseConsoleLog(processingPath, async (entry, index) => {
       batchBuffer.push(entry);
       updateStatsWithEntry(statsAccumulator, entry);
       totalEntries++;
@@ -131,10 +154,10 @@ export async function processConsoleLog(data: LogJobData): Promise<void> {
     await emitProgress(fileId, 'analyzing', 90);
 
     // Step 3: Store file metadata in MongoDB
-    await db.collection('console_log_files').insertOne({
+    await db.collection('console_log_files').replaceOne({ fileId }, {
       fileId,
       fileName,
-      filePath,
+      ...(data.artifactKey ? { artifactKey: data.artifactKey } : { filePath: data.filePath }),
       fileSize,
       hash: data.hash,
       totalEntries,
@@ -142,7 +165,7 @@ export async function processConsoleLog(data: LogJobData): Promise<void> {
       uploadedAt: new Date(data.uploadedAt),
       processedAt: new Date(),
       status: 'ready'
-    });
+    }, { upsert: true });
 
     // Update status to ready
     await updateFileStatus(fileId, 'ready', {
@@ -172,6 +195,10 @@ export async function processConsoleLog(data: LogJobData): Promise<void> {
     });
     await updateFileStatus(fileId, 'error', { error: (error as Error).message });
     throw error;
+  } finally {
+    await materializedCleanup?.().catch((error) => {
+      console.warn(`Failed to remove worker scratch artifact for ${fileId}:`, error);
+    });
   }
 }
 

@@ -29,7 +29,7 @@ describe('Redwood theme surface smoke tests', () => {
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ connected: true }),
+      json: async () => ({ configured: true, connected: true }),
     } as Response) as typeof fetch;
   });
 
@@ -111,7 +111,7 @@ describe('Redwood theme surface smoke tests', () => {
     const user = userEvent.setup();
     render(<FloatingAiChat />);
 
-    await user.click(screen.getByRole('button', { name: /ai assistant/i }));
+    await user.click(await screen.findByRole('button', { name: /ai assistant/i }));
 
     expect(screen.getByRole('heading', { name: /ai assistant/i })).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/ask about this har file/i)).toBeInTheDocument();

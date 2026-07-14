@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { Queue } from 'bullmq';
-import { getMongoDb, getQdrant, getRedis } from '../config/database';
+import { getMongoDb, getRedis } from '../config/database';
 import {
   deriveOverallStatus,
   getOpsStatusColor,
@@ -13,6 +13,8 @@ import {
   type OpsStatusLevel,
 } from '../config/observability';
 import { HAR_QUEUE_NAME, LOG_QUEUE_NAME } from '../config/queueNames';
+import { getOpenAiConfig, getOpenAiConfigurationError } from '../config/openAiConfig';
+import { getArtifactStore } from '../services/artifactStore';
 
 const router = express.Router();
 
@@ -146,51 +148,53 @@ async function checkQueue(id: string, label: string, queueName: string): Promise
   }
 }
 
-async function checkQdrant(): Promise<OpsCheck> {
-  const startedAt = Date.now();
-  try {
-    const collections = await getQdrant().getCollections();
-    return buildCheck({
-      id: 'qdrant',
-      label: 'Qdrant',
-      status: 'ok',
-      detail: `${collections.collections.length} collection${collections.collections.length === 1 ? '' : 's'} available.`,
-      latencyMs: measureDurationMs(startedAt),
-      affectsOverall: false,
-      data: { collections: collections.collections.map((collection) => collection.name) },
-    });
-  } catch (error) {
-    return buildCheck({
-      id: 'qdrant',
-      label: 'Qdrant',
-      status: 'unknown',
-      detail: 'Optional embedding store is not connected or not configured.',
-      latencyMs: measureDurationMs(startedAt),
-      affectsOverall: false,
-    });
-  }
-}
-
 function checkAiConfiguration(): OpsCheck {
-  const hasBaseUrl = Boolean(process.env.OCA_BASE_URL);
-  const hasToken = Boolean(process.env.OCA_TOKEN);
-  const hasModel = Boolean(process.env.OCA_MODEL);
-  const configured = hasBaseUrl && hasToken;
+  const configurationError = getOpenAiConfigurationError();
+  const config = configurationError ? null : getOpenAiConfig();
+  const configured = Boolean(config);
 
   return buildCheck({
-    id: 'oca',
-    label: 'Oracle Code Assist',
+    id: 'openai',
+    label: 'OpenAI API',
     status: configured ? 'ok' : 'warning',
     detail: configured
-      ? `Configured${hasModel ? ` with model ${process.env.OCA_MODEL}` : ''}.`
-      : 'Optional AI is missing OCA_BASE_URL or OCA_TOKEN.',
+      ? `Configured with model ${config?.model}.`
+      : configurationError || 'Optional AI is not configured.',
     affectsOverall: false,
     data: {
-      baseUrlConfigured: hasBaseUrl,
-      tokenConfigured: hasToken,
-      modelConfigured: hasModel,
+      baseUrlConfigured: Boolean(config?.baseUrl),
+      apiKeyConfigured: Boolean(config?.apiKey),
+      modelConfigured: Boolean(config?.model),
     },
   });
+}
+
+async function checkArtifactStore(): Promise<OpsCheck> {
+  const startedAt = Date.now();
+  const store = getArtifactStore();
+  try {
+    await store.probe();
+    return buildCheck({
+      id: 'artifactStore',
+      label: store.kind === 'oci-object-storage' ? 'OCI Object Storage' : 'Local artifact storage',
+      status: 'ok',
+      detail: `${store.kind} artifact store is available.`,
+      latencyMs: measureDurationMs(startedAt),
+      affectsOverall: true,
+      data: { kind: store.kind },
+    });
+  } catch (error) {
+    logError('ops.artifact_store.error', { kind: store.kind, error });
+    return buildCheck({
+      id: 'artifactStore',
+      label: store.kind === 'oci-object-storage' ? 'OCI Object Storage' : 'Local artifact storage',
+      status: 'error',
+      detail: error instanceof Error ? error.message : 'Artifact store probe failed.',
+      latencyMs: measureDurationMs(startedAt),
+      affectsOverall: true,
+      data: { kind: store.kind },
+    });
+  }
 }
 
 async function getDirectorySize(dirPath: string, maxEntries = 5000): Promise<{ fileCount: number; sizeBytes: number; truncated: boolean }> {
@@ -271,16 +275,13 @@ async function getStorageSnapshot(id: string, label: string, dirPath: string): P
 
 export async function buildOpsStatus() {
   const uploadDir = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads');
-  const processedDir = process.env.PROCESSED_DIR || path.join(process.cwd(), 'processed');
-
-  const [mongo, redis, harQueueStatus, logQueueStatus, qdrant, uploadsStorage, processedStorage] = await Promise.all([
+  const [mongo, redis, harQueueStatus, logQueueStatus, artifactStore, uploadsStorage] = await Promise.all([
     checkMongo(),
     checkRedis(),
     checkQueue('harQueue', 'HAR queue', HAR_QUEUE_NAME),
     checkQueue('logQueue', 'Console log queue', LOG_QUEUE_NAME),
-    checkQdrant(),
+    checkArtifactStore(),
     getStorageSnapshot('uploads', 'Upload directory', uploadDir),
-    getStorageSnapshot('processed', 'Processed directory', processedDir),
   ]);
 
   const checks = [
@@ -288,10 +289,10 @@ export async function buildOpsStatus() {
     redis,
     harQueueStatus,
     logQueueStatus,
-    qdrant,
+    artifactStore,
     checkAiConfiguration(),
   ];
-  const storage = [uploadsStorage, processedStorage];
+  const storage = [uploadsStorage];
   const overallStatus = deriveOverallStatus([...checks, ...storage]);
 
   return {

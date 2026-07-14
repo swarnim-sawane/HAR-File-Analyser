@@ -142,7 +142,7 @@ const SUMMARY_METRIC_META = [
   { key: 'sections', label: 'Review Areas', note: 'Grouped coverage', Icon: FileTextIcon },
 ] as const;
 
-const MODEL_BADGE_LABEL = 'Using OCA gpt-5.4';
+const MODEL_BADGE_LABEL = 'AI-assisted review';
 
 function formatContext(finding: InsightFinding) {
   return [finding.product, finding.component].filter(Boolean).join(' / ');
@@ -184,7 +184,7 @@ function getNoFindingsCopy(variant: 'har' | 'console') {
       notes: [
         {
           label: 'What happened',
-          body: 'The log was parsed and OCA returned a completed response, but no finding had enough concrete evidence and actionable remediation to display.',
+          body: 'The log was parsed and the AI service returned a completed response, but no finding had enough concrete evidence and actionable remediation to display.',
         },
         {
           label: 'Why findings are withheld',
@@ -205,7 +205,7 @@ function getNoFindingsCopy(variant: 'har' | 'console') {
     notes: [
       {
         label: 'What happened',
-        body: 'The HAR was parsed and OCA returned a completed response, but no finding had enough concrete request evidence and actionable remediation to display.',
+        body: 'The HAR was parsed and the AI service returned a completed response, but no finding had enough concrete request evidence and actionable remediation to display.',
       },
       {
         label: 'Why findings are withheld',
