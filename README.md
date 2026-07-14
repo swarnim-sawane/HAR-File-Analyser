@@ -326,7 +326,7 @@ The Hosted Deployment topology contains two application images:
 
 Both use MongoDB and Redis. In Hosted Deployment, uploaded artifacts are exchanged through OCI Object Storage; no shared volume is required. See [OCI GenAI Hosted Deployment](docs/OCI_GENAI_HOSTED_DEPLOYMENT.md) for image builds, environment variables, IAM, and validation.
 
-The hosted build accepts an approved internal Node base through `scripts/build-hosted-images.ps1 -NodeImage <internal-node-image>`; Docker Hub access is not required when a mirror is supplied.
+The hosted build requires an approved Oracle Artifactory, OCIR, or Oracle Container Registry Node base through `scripts/build-hosted-images.ps1 -NodeImage <approved-node-image>`. It has no public Docker Hub default and rejects Docker Hub image references.
 
 ## Current VM/VCAP Deployment
 

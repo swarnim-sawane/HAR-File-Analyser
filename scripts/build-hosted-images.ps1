@@ -1,11 +1,25 @@
 param(
   [string]$AppImage = "har-analyzer-app:hosted-local",
   [string]$WorkerImage = "har-analyzer-worker:hosted-local",
-  [string]$NodeImage = "node:22-alpine"
+  [string]$NodeImage = $env:HAR_NODE_IMAGE
 )
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
+
+if ([string]::IsNullOrWhiteSpace($NodeImage)) {
+  throw "NodeImage is required. Supply an approved Oracle Artifactory, OCIR, or Oracle Container Registry Node base image; public Docker Hub images are not permitted."
+}
+
+$registryHost = ($NodeImage -split '/', 2)[0].ToLowerInvariant()
+$approvedRegistry =
+  $registryHost -eq 'container-registry.oracle.com' -or
+  $registryHost -match '\.ocir\.io$' -or
+  $registryHost -match '\.artifactory\.oci\.oraclecorp\.com$'
+
+if (-not $approvedRegistry) {
+  throw "Unapproved base-image registry '$registryHost'. Use Oracle Artifactory, OCIR, or Oracle Container Registry; public Docker Hub images are not permitted."
+}
 
 function Invoke-HostedImageBuild {
   param(

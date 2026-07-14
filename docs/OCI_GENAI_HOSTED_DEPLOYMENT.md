@@ -14,7 +14,7 @@ This document defines the deployment contract for running HAR Analyzer in the OC
 | Redis | Supports `REDIS_URL`, TLS, username, and password | OCI Cache Redis connection URI |
 | File storage | OCI Object Storage adapter implemented | Namespace, bucket, resource-principal IAM policy, and lifecycle policy |
 | AI | Optional: OpenAI Responses API implemented; deterministic fallback retained | None for initial deployment; GCGA-approved key, model, and egress can be added later |
-| Image build | Reproducible Dockerfiles and Rancher Desktop build script included; application builds pass | Approved internal Node 22 base image mirror and OCIR destination |
+| Image build | Reproducible Dockerfiles and Rancher Desktop build script included; application builds pass | Approved Oracle Artifactory, OCIR, or Oracle Container Registry Node base image and OCIR destination |
 
 ## Repository Validation
 
@@ -29,7 +29,7 @@ Validated on 2026-07-14 from branch `codex/genai-hosted-readiness`:
 - Legacy OCA, browser-side AI, local-model, and unused vector retrieval runtime paths were removed.
 - Git whitespace validation passed.
 
-Rancher Desktop reaches BuildKit, but the current corporate network blocks Docker Hub while resolving `node:22-alpine`. No candidate image was produced. Use the approved internal Artifactory/OCIR mirror through the build script `-NodeImage` parameter, then complete the validation steps in this document before pushing an image to OCIR.
+Public Docker Hub images are prohibited. The Dockerfiles have no public-registry default, and the build script rejects Docker Hub references. Supply an approved Oracle Artifactory, OCIR, or Oracle Container Registry Node base through `-NodeImage`, then complete the validation steps in this document before pushing an image to OCIR.
 
 ## Target Architecture
 
@@ -184,7 +184,7 @@ npm run build
 npm --prefix backend run build
 
 powershell -ExecutionPolicy Bypass -File scripts/build-hosted-images.ps1 `
-  -NodeImage <approved-registry>/library/node:22-alpine `
+  -NodeImage <approved-oracle-registry>/<node-image>:<immutable-tag> `
   -AppImage bom.ocir.io/<namespace>/har-analyzer/har-app:<tag> `
   -WorkerImage bom.ocir.io/<namespace>/har-analyzer/har-worker:<tag>
 ```
@@ -217,7 +217,7 @@ Use immutable release tags. Do not deploy `latest`.
 
 - Hosted Application creation rights for the application and worker runtimes.
 - OCIR repositories and image-push access.
-- Approved internal mirror path for the Node 22 Alpine base image.
+- Approved Oracle Artifactory, OCIR, or Oracle Container Registry path for the Node base image.
 - Final OAuth application, internal URL, and DNS configuration.
 - Confirmation that Socket.IO/WebSocket upgrades are supported by the Hosted Application ingress.
 - Approved MongoDB endpoint reachable from both runtimes.
