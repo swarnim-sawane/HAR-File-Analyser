@@ -4,22 +4,30 @@ import { closeDatabases, connectDatabases, getRedis } from './config/database';
 import { HAR_QUEUE_NAME, LOG_QUEUE_NAME } from './config/queueNames';
 import { processHarFile } from './workers/harProcessor';
 import { processConsoleLog } from './workers/logProcessor';
+import { startWorkerHealthServer } from './workerHealthServer';
 
 dotenv.config();
 
 let harWorker: Worker | null = null;
 let logWorker: Worker | null = null;
 let shuttingDown = false;
+let ready = false;
+const healthServer = startWorkerHealthServer({
+  isReady: () => ready,
+  isShuttingDown: () => shuttingDown,
+});
 
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
+  ready = false;
 
   console.log(`\n⏳ ${signal} received, stopping workers...`);
 
   await Promise.allSettled([
     harWorker?.close(),
     logWorker?.close(),
+    new Promise<void>((resolve) => healthServer.close(() => resolve())),
   ]);
 
   await closeDatabases().catch((error) => {
@@ -99,12 +107,15 @@ async function startWorker() {
       console.error(`❌ [Worker] Log job ${job?.id} failed:`, err.message);
     });
 
+    ready = true;
+
     console.log('\n=================================');
     console.log('👷 Workers started successfully');
     console.log(`📊 Concurrency per process: ${concurrency}`);
     console.log('📡 WebSocket delivery: Redis pub/sub via backend');
     console.log('=================================\n');
   } catch (error) {
+    ready = false;
     console.error('❌ Failed to start worker:', error);
     process.exit(1);
   }

@@ -269,6 +269,10 @@ The DNS hostname is also supported:
 
 Both frontend origins are allowed by the backend CORS configuration.
 
+## OCI GenAI Hosted Deployment
+
+Use the combined app image and worker image documented in [docs/OCI_GENAI_HOSTED_DEPLOYMENT.md](docs/OCI_GENAI_HOSTED_DEPLOYMENT.md). Both bind to `0.0.0.0:8080`, run as non-root, and require an approved Oracle-hosted base image rather than Docker Hub.
+
 ## VM Deployment
 
 This section captures the current real-world deployment flow, including the constraints that make the VM different from a normal server.

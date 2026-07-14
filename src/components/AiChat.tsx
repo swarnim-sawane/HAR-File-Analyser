@@ -109,7 +109,7 @@ Answer the user's questions about this HAR file. Be concise, helpful, and specif
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
 
-      let assistantMessage: Message = {
+      const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
         content: '',
@@ -119,7 +119,7 @@ Answer the user's questions about this HAR file. Be concise, helpful, and specif
       setMessages(prev => [...prev, assistantMessage]);
 
       if (reader) {
-        while (true) {
+        for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
 

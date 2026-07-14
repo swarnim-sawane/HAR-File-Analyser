@@ -16,6 +16,7 @@ vi.mock('reactflow', async () => {
   return {
     __esModule: true,
     default: ({ nodes, edges, nodeTypes, children, nodesDraggable, onNodesChange, onEdgesChange, onInit }: any) => {
+      // eslint-disable-next-line react-hooks/rules-of-hooks
       ReactModule.useEffect(() => {
         onInit?.({ fitView: reactFlowFitViewMock });
       }, [onInit]);

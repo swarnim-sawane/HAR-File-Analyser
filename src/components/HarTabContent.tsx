@@ -221,9 +221,9 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
 
       {harState.error && (
         <div className="error-banner">
-          <span className="error-icon">âš ï¸</span>
+          <span className="error-icon">!</span>
           <span>{harState.error}</span>
-          <button onClick={harState.clearData} className="btn-dismiss">âœ•</button>
+          <button onClick={harState.clearData} className="btn-dismiss">x</button>
         </div>
       )}
 

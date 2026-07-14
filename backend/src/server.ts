@@ -1,5 +1,6 @@
 import express from 'express';
 import http from 'http';
+import path from 'path';
 import cors from 'cors';
 import { Server as SocketIOServer } from 'socket.io';
 import dotenv from 'dotenv';
@@ -7,6 +8,7 @@ import { connectDatabases, closeDatabases, getRedis } from './config/database';
 import { configureOutboundProxy } from './config/outboundProxy';
 import { buildAllowedOrigins } from './config/corsOrigins';
 import { setSocketIOInstance } from './utils/socketHelper';
+import { getRuntimeBinding } from './config/runtimeBinding';
 
 dotenv.config();
 const outboundProxyUrl = configureOutboundProxy();
@@ -16,7 +18,7 @@ if (outboundProxyUrl) {
 
 const app = express();
 const server = http.createServer(app);
-const PORT = process.env.PORT || 4000;
+const { host: HOST, port: PORT } = getRuntimeBinding(process.env, 4000);
 const ALLOWED_ORIGINS = buildAllowedOrigins();
 
 app.use(cors({
@@ -195,7 +197,7 @@ async function startServer() {
     const mcpRoutes = (await import('./routes/mcpRoutes')).default;
 
     // 4. Health check endpoint
-    app.get('/health', (req, res) => {
+    app.get('/health', (_req, res) => {
       res.json({
         status: 'ok',
         timestamp: new Date().toISOString(),
@@ -204,6 +206,13 @@ async function startServer() {
           redis: 'connected',
           qdrant: 'connected'
         }
+      });
+    });
+
+    app.get('/ready', (_req, res) => {
+      res.json({
+        status: 'ready',
+        timestamp: new Date().toISOString(),
       });
     });
 
@@ -217,9 +226,23 @@ async function startServer() {
     app.use('/mcp', mcpRoutes);
     app.use('/api/mcp', mcpRoutes);
 
+    const staticDirectory = process.env.STATIC_DIR
+      ? path.resolve(process.env.STATIC_DIR)
+      : null;
+    if (staticDirectory) {
+      app.use(express.static(staticDirectory, { index: false }));
+      app.get('*', (req, res, next) => {
+        if (req.path.startsWith('/api/') || req.path.startsWith('/socket.io/') || req.path.startsWith('/mcp')) {
+          return next();
+        }
+        return res.sendFile(path.join(staticDirectory, 'index.html'));
+      });
+      console.log(`Serving frontend assets from ${staticDirectory}`);
+    }
+
     // 6. Start HTTP server
-    server.listen(PORT, () => {
-      console.log(`✅ Server running on http://localhost:${PORT}`);
+    server.listen(PORT, HOST, () => {
+      console.log(`✅ Server running on http://${HOST}:${PORT}`);
       console.log(`📡 WebSocket server ready`);
       console.log(`🔔 Redis pub/sub bridge active`);
       console.log(`🌐 CORS enabled for:`);

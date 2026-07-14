@@ -80,7 +80,7 @@ const FloatingAiChat: React.FC<FloatingAiChatProps> = ({ harData, logData }) => 
 
     // Convert "#N -" style markers into proper numbered markdown items.
     normalized = normalized.replace(
-      /^[ \t]*(?:[\u2022\u25CF\u25AA\u25B8\u25B9]\s*)?#(\d+)\s*[\u2014\u2013\u2012\u2015\-]\s+/gm,
+      /^[ \t]*(?:[\u2022\u25CF\u25AA\u25B8\u25B9]\s*)?#(\d+)\s*[\u2014\u2013\u2012\u2015-]\s+/gm,
       '$1. '
     );
 
@@ -205,7 +205,7 @@ ${fileContext}`;
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
 
-      let assistantMessage: Message = {
+      const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
         content: '',
@@ -215,7 +215,7 @@ ${fileContext}`;
       setMessages(prev => [...prev, assistantMessage]);
 
       if (reader) {
-        while (true) {
+        for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
 
