@@ -2,13 +2,26 @@ import express from 'express';
 import { once } from 'events';
 import type { AddressInfo } from 'net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const recordAiUsageEventMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
+
+vi.mock('../services/aiUsageService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/aiUsageService')>();
+  return {
+    ...actual,
+    recordAiUsageEvent: recordAiUsageEventMock,
+  };
+});
+
 import aiRouter, { generateInsightsForContext, validateAiChatPayload } from './aiRoutes';
 
 const ORIGINAL_ENV = { ...process.env };
+const ORIGINAL_FETCH = global.fetch;
 
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
   vi.unstubAllGlobals();
+  recordAiUsageEventMock.mockClear();
 });
 
 describe('generateInsightsForContext', () => {
@@ -101,7 +114,20 @@ describe('generateInsightsForContext', () => {
       `event: response.output_text.delta\n` +
       `data: ${JSON.stringify({ type: 'response.output_text.delta', delta: insightJson })}\n\n` +
       `event: response.completed\n` +
-      `data: ${JSON.stringify({ type: 'response.completed' })}\n\n`,
+      `data: ${JSON.stringify({
+        type: 'response.completed',
+        response: {
+          id: 'resp_insights_123',
+          model: 'approved-model-2026-07',
+          usage: {
+            input_tokens: 1200,
+            input_tokens_details: { cached_tokens: 300 },
+            output_tokens: 450,
+            output_tokens_details: { reasoning_tokens: 120 },
+            total_tokens: 1650,
+          },
+        },
+      })}\n\n`,
       { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
     ));
     vi.stubGlobal('fetch', fetchMock);
@@ -124,6 +150,19 @@ describe('generateInsightsForContext', () => {
       store: false,
       max_output_tokens: 3500,
     });
+    expect(recordAiUsageEventMock).toHaveBeenCalledWith(expect.objectContaining({
+      operation: 'insights',
+      status: 'completed',
+      model: 'approved-model-2026-07',
+      providerResponseId: 'resp_insights_123',
+      usage: {
+        inputTokens: 1200,
+        cachedInputTokens: 300,
+        outputTokens: 450,
+        reasoningTokens: 120,
+        totalTokens: 1650,
+      },
+    }));
   });
 
   it('bounds chat history and validates message shapes before calling OpenAI', () => {
@@ -137,6 +176,117 @@ describe('generateInsightsForContext', () => {
       status: 400,
     });
     expect(validateAiChatPayload([{ role: 'user', content: 'hello' }], 'diagnostic context')).toBeNull();
+  });
+
+  it('records provider-reported usage for streamed chat responses', async () => {
+    process.env.OPENAI_API_KEY = 'test-key';
+    process.env.OPENAI_MODEL = 'approved-model';
+    const upstreamResponse = new Response(
+      `data: ${JSON.stringify({ type: 'response.output_text.delta', delta: 'Check the 503 response.' })}\n\n`
+      + `data: ${JSON.stringify({
+        type: 'response.completed',
+        response: {
+          id: 'resp_chat_123',
+          model: 'approved-model-2026-07',
+          usage: {
+            input_tokens: 200,
+            output_tokens: 50,
+            total_tokens: 250,
+          },
+        },
+      })}\n\n`,
+      { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+    );
+    vi.stubGlobal('fetch', vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).startsWith('http://127.0.0.1:')) {
+        return ORIGINAL_FETCH(input, init);
+      }
+      return Promise.resolve(upstreamResponse);
+    }));
+
+    const app = express();
+    app.use(express.json());
+    app.use('/api/ai', aiRouter);
+    const server = app.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+
+    try {
+      const address = server.address() as AddressInfo;
+      const response = await ORIGINAL_FETCH(`http://127.0.0.1:${address.port}/api/ai/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [{ role: 'user', content: 'What failed?' }],
+          systemPrompt: 'Use the supplied HAR evidence.',
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain('Check the 503 response.');
+      expect(recordAiUsageEventMock).toHaveBeenCalledWith(expect.objectContaining({
+        operation: 'chat',
+        status: 'completed',
+        model: 'approved-model-2026-07',
+        providerResponseId: 'resp_chat_123',
+        usage: expect.objectContaining({
+          inputTokens: 200,
+          outputTokens: 50,
+          totalTokens: 250,
+        }),
+      }));
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
+    }
+  });
+
+  it('accounts for the OpenAI connectivity probe separately from user operations', async () => {
+    process.env.OPENAI_API_KEY = 'test-key';
+    process.env.OPENAI_MODEL = 'approved-model';
+    vi.stubGlobal('fetch', vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).startsWith('http://127.0.0.1:')) {
+        return ORIGINAL_FETCH(input, init);
+      }
+      return Promise.resolve(new Response(JSON.stringify({
+        id: 'resp_status_123',
+        model: 'approved-model-2026-07',
+        usage: {
+          input_tokens: 8,
+          output_tokens: 2,
+          total_tokens: 10,
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+    }));
+
+    const app = express();
+    app.use('/api/ai', aiRouter);
+    const server = app.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+
+    try {
+      const address = server.address() as AddressInfo;
+      const response = await ORIGINAL_FETCH(`http://127.0.0.1:${address.port}/api/ai/status`);
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        configured: true,
+        connected: true,
+      });
+      expect(recordAiUsageEventMock).toHaveBeenCalledWith(expect.objectContaining({
+        operation: 'status_probe',
+        status: 'completed',
+        providerResponseId: 'resp_status_123',
+        usage: expect.objectContaining({ totalTokens: 10 }),
+      }));
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
+    }
   });
 
   it('does not expose an upstream OpenAI error body in logs or fallback metadata', async () => {

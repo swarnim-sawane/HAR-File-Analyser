@@ -15,6 +15,12 @@ import {
 import { HAR_QUEUE_NAME, LOG_QUEUE_NAME } from '../config/queueNames';
 import { getOpenAiConfig, getOpenAiConfigurationError } from '../config/openAiConfig';
 import { getArtifactStore } from '../services/artifactStore';
+import {
+  getAiUsagePricing,
+  getAiUsageSummary,
+  isAiUsageTrackingEnabled,
+  parseAiUsageSummaryQuery,
+} from '../services/aiUsageService';
 
 const router = express.Router();
 
@@ -165,6 +171,8 @@ function checkAiConfiguration(): OpsCheck {
       baseUrlConfigured: Boolean(config?.baseUrl),
       apiKeyConfigured: Boolean(config?.apiKey),
       modelConfigured: Boolean(config?.model),
+      usageTrackingEnabled: isAiUsageTrackingEnabled(),
+      costRatesConfigured: Boolean(getAiUsagePricing()),
     },
   });
 }
@@ -322,6 +330,21 @@ router.get('/status', async (_req: Request, res: Response) => {
       timestamp: new Date().toISOString(),
       error: error instanceof Error ? error.message : 'Failed to build operations status.',
     });
+  }
+});
+
+router.get('/ai-usage', async (req: Request, res: Response) => {
+  const parsedQuery = parseAiUsageSummaryQuery(req.query as Record<string, unknown>);
+  if (!parsedQuery.value) {
+    return res.status(400).json({ error: parsedQuery.error || 'Invalid AI usage query.' });
+  }
+
+  try {
+    const summary = await getAiUsageSummary(parsedQuery.value);
+    return res.json(summary);
+  } catch (error) {
+    logError('ops.ai_usage.error', { error });
+    return res.status(500).json({ error: 'Failed to build AI usage summary.' });
   }
 });
 

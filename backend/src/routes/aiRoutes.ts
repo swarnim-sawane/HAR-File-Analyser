@@ -14,6 +14,12 @@ import {
   type InsightsSourceType,
 } from '../utils/insightRules';
 import { getOpenAiConfig, getOpenAiConfigurationError, type OpenAiConfig } from '../config/openAiConfig';
+import {
+  extractOpenAiResponseMetadata,
+  recordAiUsageEvent,
+  type AiUsageOperation,
+  type OpenAiResponseMetadata,
+} from '../services/aiUsageService';
 
 const router = Router();
 type FetchResponse = Awaited<ReturnType<typeof fetch>>;
@@ -294,16 +300,22 @@ function getOpenAiStreamDelta(payload: unknown): string {
   return '';
 }
 
+interface OpenAiStreamResult {
+  output: string;
+  metadata: OpenAiResponseMetadata;
+}
+
 async function readOpenAiResponseStream(
   response: FetchResponse,
   onDelta?: (delta: string) => void,
-): Promise<string> {
+): Promise<OpenAiStreamResult> {
   const reader = response.body?.getReader();
   if (!reader) throw new Error('OpenAI returned no response body.');
 
   const decoder = new TextDecoder();
   let buffered = '';
   let output = '';
+  let metadata: OpenAiResponseMetadata = {};
 
   const processEvent = (rawEvent: string) => {
     for (const line of rawEvent.split(/\r?\n/)) {
@@ -312,7 +324,14 @@ async function readOpenAiResponseStream(
       if (!data || data === '[DONE]') continue;
 
       try {
-        const delta = getOpenAiStreamDelta(JSON.parse(data));
+        const payload = JSON.parse(data);
+        const eventMetadata = extractOpenAiResponseMetadata(payload);
+        metadata = {
+          responseId: eventMetadata.responseId ?? metadata.responseId,
+          model: eventMetadata.model ?? metadata.model,
+          usage: eventMetadata.usage ?? metadata.usage,
+        };
+        const delta = getOpenAiStreamDelta(payload);
         if (!delta) continue;
         output += delta;
         onDelta?.(delta);
@@ -335,7 +354,30 @@ async function readOpenAiResponseStream(
 
   buffered += decoder.decode();
   if (buffered.trim()) processEvent(buffered);
-  return output;
+  return { output, metadata };
+}
+
+async function accountOpenAiRequest(input: {
+  requestId: string;
+  operation: AiUsageOperation;
+  status: 'completed' | 'failed';
+  configuredModel: string;
+  metadata?: OpenAiResponseMetadata;
+  providerHttpStatus?: number;
+  startedAt: number;
+  failureCategory?: 'configuration' | 'upstream_http' | 'stream' | 'unknown';
+}): Promise<void> {
+  await recordAiUsageEvent({
+    requestId: input.requestId,
+    operation: input.operation,
+    status: input.status,
+    model: input.metadata?.model ?? input.configuredModel,
+    providerResponseId: input.metadata?.responseId,
+    providerHttpStatus: input.providerHttpStatus,
+    durationMs: Date.now() - input.startedAt,
+    usage: input.metadata?.usage,
+    failureCategory: input.failureCategory,
+  });
 }
 
 function writeStatusEvent(
@@ -730,6 +772,9 @@ export async function generateInsightsForContext(
     throw new Error(reason);
   }
 
+  const usageStartedAt = Date.now();
+  let usageAccountingAttempted = false;
+
   try {
     log(`-> OpenAI Responses fetch start | model=${openAiConfig.model}`);
 
@@ -742,17 +787,37 @@ export async function generateInsightsForContext(
 
     if (!upstream.ok) {
       await upstream.body?.cancel();
+      await accountOpenAiRequest({
+        requestId,
+        operation: 'insights',
+        status: 'failed',
+        configuredModel: openAiConfig.model,
+        providerHttpStatus: upstream.status,
+        startedAt: usageStartedAt,
+        failureCategory: 'upstream_http',
+      });
+      usageAccountingAttempted = true;
       const reason = `OpenAI request failed (${upstream.status}). Verify the approved model and API key.`;
       log(`OpenAI error | status=${upstream.status}`);
       if (options.allowDeterministicFallback) return fallback(reason);
       throw new Error(reason);
     }
 
-    const accumulatedContent = await readOpenAiResponseStream(upstream);
+    const streamResult = await readOpenAiResponseStream(upstream);
+    await accountOpenAiRequest({
+      requestId,
+      operation: 'insights',
+      status: 'completed',
+      configuredModel: openAiConfig.model,
+      metadata: streamResult.metadata,
+      providerHttpStatus: upstream.status,
+      startedAt: usageStartedAt,
+    });
+    usageAccountingAttempted = true;
 
-    log(`OpenAI stream complete | chars=${accumulatedContent.length}`);
+    log(`OpenAI stream complete | chars=${streamResult.output.length}`);
 
-    const rawContent = accumulatedContent;
+    const rawContent = streamResult.output;
     if (!rawContent.trim()) {
       const reason = 'OpenAI returned empty content.';
       if (options.allowDeterministicFallback) return fallback(reason);
@@ -802,6 +867,16 @@ export async function generateInsightsForContext(
       ai: { source: 'openai' },
     };
   } catch (err) {
+    if (!usageAccountingAttempted) {
+      await accountOpenAiRequest({
+        requestId,
+        operation: 'insights',
+        status: 'failed',
+        configuredModel: openAiConfig.model,
+        startedAt: usageStartedAt,
+        failureCategory: 'stream',
+      });
+    }
     const reason = `Insights failed: ${(err as Error)?.message ?? String(err)}`;
     log(`ERROR: ${String(err)}`);
     if (options.allowDeterministicFallback) return fallback(reason);
@@ -853,6 +928,13 @@ router.post('/chat', async (req: Request, res: ExpressResponse) => {
   if (openAiConfigurationError) {
     return res.status(503).json({ error: openAiConfigurationError });
   }
+  const openAiConfig = getOpenAiConfig();
+  if (!openAiConfig) {
+    return res.status(503).json({ error: 'OpenAI configuration could not be loaded.' });
+  }
+  const requestId = randomUUID();
+  const usageStartedAt = Date.now();
+  let usageAccountingAttempted = false;
 
   try {
     const openAiResponse = await fetchOpenAiResponses(allMessages, {
@@ -862,6 +944,16 @@ router.post('/chat', async (req: Request, res: ExpressResponse) => {
 
     if (!openAiResponse.ok) {
       await openAiResponse.body?.cancel();
+      await accountOpenAiRequest({
+        requestId,
+        operation: 'chat',
+        status: 'failed',
+        configuredModel: openAiConfig.model,
+        providerHttpStatus: openAiResponse.status,
+        startedAt: usageStartedAt,
+        failureCategory: 'upstream_http',
+      });
+      usageAccountingAttempted = true;
       return res.status(openAiResponse.status).json({
         error: `OpenAI request failed (${openAiResponse.status}).`,
       });
@@ -869,12 +961,32 @@ router.post('/chat', async (req: Request, res: ExpressResponse) => {
 
     // Keep our own SSE contract stable so the frontend is independent of provider event formats.
     setSseHeaders(res);
-    await readOpenAiResponseStream(openAiResponse, (delta) => {
+    const streamResult = await readOpenAiResponseStream(openAiResponse, (delta) => {
       writeSseEvent(res, { choices: [{ delta: { content: delta } }] });
     });
+    await accountOpenAiRequest({
+      requestId,
+      operation: 'chat',
+      status: 'completed',
+      configuredModel: openAiConfig.model,
+      metadata: streamResult.metadata,
+      providerHttpStatus: openAiResponse.status,
+      startedAt: usageStartedAt,
+    });
+    usageAccountingAttempted = true;
     writeSseDone(res);
     res.end();
   } catch (err) {
+    if (!usageAccountingAttempted) {
+      await accountOpenAiRequest({
+        requestId,
+        operation: 'chat',
+        status: 'failed',
+        configuredModel: openAiConfig.model,
+        startedAt: usageStartedAt,
+        failureCategory: 'stream',
+      });
+    }
     console.error('OpenAI proxy error:', err);
     if (res.headersSent) {
       writeSseEvent(res, { error: 'OpenAI streaming request failed.' });
@@ -922,6 +1034,8 @@ router.get('/status', async (_req: Request, res: ExpressResponse) => {
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000);
+  const requestId = randomUUID();
+  const usageStartedAt = Date.now();
 
   try {
     const response = await fetchOpenAiResponses(
@@ -933,13 +1047,48 @@ router.get('/status', async (_req: Request, res: ExpressResponse) => {
       },
     );
 
-    await response.body?.cancel();
+    if (response.ok) {
+      let metadata: OpenAiResponseMetadata = {};
+      try {
+        metadata = extractOpenAiResponseMetadata(await response.json());
+      } catch {
+        metadata = {};
+      }
+      await accountOpenAiRequest({
+        requestId,
+        operation: 'status_probe',
+        status: 'completed',
+        configuredModel: openAiConfig.model,
+        metadata,
+        providerHttpStatus: response.status,
+        startedAt: usageStartedAt,
+      });
+    } else {
+      await response.body?.cancel();
+      await accountOpenAiRequest({
+        requestId,
+        operation: 'status_probe',
+        status: 'failed',
+        configuredModel: openAiConfig.model,
+        providerHttpStatus: response.status,
+        startedAt: usageStartedAt,
+        failureCategory: 'upstream_http',
+      });
+    }
     return res.json({
       configured: true,
       connected: response.ok,
       model: openAiConfig.model,
     });
   } catch {
+    await accountOpenAiRequest({
+      requestId,
+      operation: 'status_probe',
+      status: 'failed',
+      configuredModel: openAiConfig.model,
+      startedAt: usageStartedAt,
+      failureCategory: 'stream',
+    });
     return res.json({ configured: true, connected: false, model: openAiConfig.model });
   } finally {
     clearTimeout(timer);

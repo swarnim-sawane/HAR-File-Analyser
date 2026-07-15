@@ -134,6 +134,12 @@ export async function connectDatabases() {
     await ensureMongoIndex(db.collection('console_logs'), { fileId: 1, parseFormat: 1, index: 1 });
     await ensureMongoIndex(db.collection('console_logs'), { fileId: 1, parseWarnings: 1, index: 1 });
 
+    // Usage accounting stores provider metadata only, never prompts or model output.
+    await ensureMongoIndex(db.collection('ai_usage_events'), { requestId: 1 }, { unique: true });
+    await ensureMongoIndex(db.collection('ai_usage_events'), { createdAt: -1 });
+    await ensureMongoIndex(db.collection('ai_usage_events'), { model: 1, createdAt: -1 });
+    await ensureMongoIndex(db.collection('ai_usage_events'), { operation: 1, createdAt: -1 });
+
     console.log('✅ MongoDB indexes created');
 
     // Redis - FIXED for BullMQ

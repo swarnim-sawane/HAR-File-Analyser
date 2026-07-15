@@ -141,6 +141,40 @@ export function buildOpenApiDocument(serverUrl: string): OpenApiDocument {
           '503': jsonResponse('#/components/schemas/OpsStatusResponse', 'One or more core runtime checks failed'),
         },
       }),
+      '/api/ops/ai-usage': path('get', {
+        tags: ['Operations'],
+        summary: 'Get aggregated OpenAI token usage and estimated cost',
+        operationId: 'getAiUsage',
+        parameters: [
+          {
+            name: 'from',
+            in: 'query',
+            schema: { type: 'string', format: 'date-time' },
+            description: 'Inclusive range start. Defaults to 30 days before to.',
+          },
+          {
+            name: 'to',
+            in: 'query',
+            schema: { type: 'string', format: 'date-time' },
+            description: 'Inclusive range end. Defaults to the current time.',
+          },
+          {
+            name: 'operation',
+            in: 'query',
+            schema: { type: 'string', enum: ['chat', 'insights', 'status_probe'] },
+          },
+          {
+            name: 'model',
+            in: 'query',
+            schema: { type: 'string', maxLength: 200 },
+          },
+        ],
+        responses: {
+          '200': jsonResponse('#/components/schemas/AiUsageSummaryResponse'),
+          '400': errorResponse,
+          '500': errorResponse,
+        },
+      }),
       '/api/upload/chunk': path('post', {
         tags: ['Upload'],
         summary: 'Upload one file chunk',
@@ -537,6 +571,106 @@ export function buildOpenApiDocument(serverUrl: string): OpenApiDocument {
                 nodeVersion: { type: 'string' },
                 platform: { type: 'string' },
                 pid: { type: 'integer' },
+              },
+            },
+          },
+        },
+        AiUsageTotals: {
+          type: 'object',
+          properties: {
+            requests: { type: 'integer' },
+            completedRequests: { type: 'integer' },
+            failedRequests: { type: 'integer' },
+            usageCapturedRequests: { type: 'integer' },
+            usageMissingRequests: { type: 'integer' },
+            inputTokens: { type: 'integer' },
+            cachedInputTokens: { type: 'integer' },
+            outputTokens: { type: 'integer' },
+            reasoningTokens: { type: 'integer' },
+            totalTokens: { type: 'integer' },
+            estimatedCostUsd: { type: 'number', format: 'double', nullable: true },
+            costedRequests: { type: 'integer' },
+            unpricedRequests: { type: 'integer' },
+          },
+        },
+        AiUsageSummaryResponse: {
+          type: 'object',
+          properties: {
+            provider: { type: 'string', enum: ['openai'] },
+            generatedAt: { type: 'string', format: 'date-time' },
+            range: {
+              type: 'object',
+              properties: {
+                from: { type: 'string', format: 'date-time' },
+                to: { type: 'string', format: 'date-time' },
+              },
+            },
+            filters: {
+              type: 'object',
+              properties: {
+                operation: { type: 'string', nullable: true },
+                model: { type: 'string', nullable: true },
+              },
+            },
+            totals: { $ref: '#/components/schemas/AiUsageTotals' },
+            byModel: {
+              type: 'array',
+              items: {
+                allOf: [
+                  { $ref: '#/components/schemas/AiUsageTotals' },
+                  {
+                    type: 'object',
+                    properties: { model: { type: 'string' } },
+                  },
+                ],
+              },
+            },
+            byOperation: {
+              type: 'array',
+              items: {
+                allOf: [
+                  { $ref: '#/components/schemas/AiUsageTotals' },
+                  {
+                    type: 'object',
+                    properties: {
+                      operation: { type: 'string', enum: ['chat', 'insights', 'status_probe'] },
+                    },
+                  },
+                ],
+              },
+            },
+            byDay: {
+              type: 'array',
+              items: {
+                allOf: [
+                  { $ref: '#/components/schemas/AiUsageTotals' },
+                  {
+                    type: 'object',
+                    properties: { date: { type: 'string', format: 'date' } },
+                  },
+                ],
+              },
+            },
+            pricing: {
+              type: 'object',
+              properties: {
+                currency: { type: 'string', enum: ['USD'] },
+                estimate: { type: 'boolean' },
+                configured: { type: 'boolean' },
+                currentRatesPerMillionTokens: {
+                  type: 'object',
+                  nullable: true,
+                  additionalProperties: true,
+                },
+                note: { type: 'string' },
+              },
+            },
+            privacy: {
+              type: 'object',
+              properties: {
+                promptsStored: { type: 'boolean', enum: [false] },
+                responsesStored: { type: 'boolean', enum: [false] },
+                apiKeysStored: { type: 'boolean', enum: [false] },
               },
             },
           },

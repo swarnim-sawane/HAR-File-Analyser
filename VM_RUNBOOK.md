@@ -321,6 +321,10 @@ db.har_files.find().sort({uploadedAt:-1}).limit(5)
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=<model approved for the GCGA key>
 OPENAI_API_KEY=<inject through the approved secret mechanism>
+AI_USAGE_TRACKING_ENABLED=true
+OPENAI_INPUT_USD_PER_1M_TOKENS=<approved input rate>
+OPENAI_CACHED_INPUT_USD_PER_1M_TOKENS=<approved cached-input rate>
+OPENAI_OUTPUT_USD_PER_1M_TOKENS=<approved output rate>
 
 # Databases
 MONGODB_URL=mongodb://localhost:27017/har-analyzer
