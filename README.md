@@ -135,6 +135,7 @@ Backend local defaults:
 
 ```env
 PORT=4000
+WORKER_HEALTH_PORT=4001
 PUBLIC_API_URL=http://localhost:4000
 OPENAPI_SERVER_URL=http://localhost:4000
 

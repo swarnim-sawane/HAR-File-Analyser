@@ -10,6 +10,18 @@ describe('getRuntimeBinding', () => {
     });
   });
 
+  it('does not reuse the local API port for the worker health server', () => {
+    expect(getRuntimeBinding({ PORT: '4000' }, 4001, 'WORKER_HEALTH_PORT')).toEqual({
+      host: '0.0.0.0',
+      port: 4001,
+    });
+    expect(getRuntimeBinding(
+      { PORT: '4000', WORKER_HEALTH_PORT: '4101' },
+      4001,
+      'WORKER_HEALTH_PORT',
+    )).toEqual({ host: '0.0.0.0', port: 4101 });
+  });
+
   it('uses port 8080 for Hosted Deployment without declaring PORT', () => {
     expect(getRuntimeBinding({ HOSTED_DEPLOYMENT: 'true' }, 4000)).toEqual({
       host: '0.0.0.0',
@@ -22,5 +34,10 @@ describe('getRuntimeBinding', () => {
   it('honors a platform-provided PORT value', () => {
     expect(getRuntimeBinding({ HOSTED_DEPLOYMENT: 'true', PORT: '9090' }, 4000))
       .toEqual({ host: '0.0.0.0', port: 9090 });
+    expect(getRuntimeBinding(
+      { HOSTED_DEPLOYMENT: 'true', PORT: '9090' },
+      4001,
+      'WORKER_HEALTH_PORT',
+    )).toEqual({ host: '0.0.0.0', port: 9090 });
   });
 });
