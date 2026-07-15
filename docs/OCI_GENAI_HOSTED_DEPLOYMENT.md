@@ -16,9 +16,25 @@ This document defines the deployment contract for running HAR Analyzer in the OC
 | AI | Optional: OpenAI Responses API implemented; deterministic fallback retained | None for initial deployment; GCGA-approved key, model, and egress can be added later |
 | Image build | Reproducible Dockerfiles and Rancher Desktop build script included; application builds pass | Approved Oracle Artifactory, OCIR, or Oracle Container Registry Node base image and OCIR destination |
 
+## Relationship to the OCI Container Instance POC
+
+The June 2026 OCI Container Instance deployment remains the proof that the web, API, worker, MongoDB, and Redis application flow works in OCI. It is not the final Hosted Deployment topology.
+
+| Validated Container Instance POC | GenAI Hosted Deployment replacement |
+| --- | --- |
+| `har-web` nginx container on port 80 | React assets served by the `har-analyzer-app` Express container on port 8080 |
+| `har-api` container on port 4000 | `har-analyzer-app` Hosted Application on `0.0.0.0:8080` |
+| `har-worker` shared the instance network and workspace | Separate `har-analyzer-worker` Hosted Application on `0.0.0.0:8080` |
+| MongoDB sidecar on `localhost:27017` | Approved MongoDB service reachable from both Hosted Applications |
+| Redis sidecar on `localhost:6379` | OCI Cache Redis URI reachable from both Hosted Applications |
+| Shared `/workspace` upload and processed directories | OCI Object Storage for durable/cross-container artifacts; `/tmp` for disposable scratch only |
+| Public IP and nginx reverse proxy | Hosted Application endpoint protected by the selected OAuth or IAM authentication path |
+
+Do not copy the old five-container configuration into Hosted Deployment. In particular, do not deploy MongoDB or Redis sidecars, configure `localhost` database endpoints, mount a shared volume, or reuse ports 80, 3000, or 4000.
+
 ## Repository Validation
 
-Validated on 2026-07-14 from branch `codex/genai-hosted-readiness`:
+Validated on 2026-07-15 from branch `codex/genai-hosted-readiness`:
 
 - Backend: 23 test files and 115 tests passed.
 - Frontend: 36 test files and 285 tests passed.
@@ -29,7 +45,9 @@ Validated on 2026-07-14 from branch `codex/genai-hosted-readiness`:
 - Legacy OCA, browser-side AI, local-model, and unused vector retrieval runtime paths were removed.
 - Git whitespace validation passed.
 
-Public Docker Hub images are prohibited. The Dockerfiles have no public-registry default, and the build script rejects Docker Hub references. Supply an approved Oracle Artifactory, OCIR, or Oracle Container Registry Node base through `-NodeImage`, then complete the validation steps in this document before pushing an image to OCIR.
+The local Hosted Deployment image rehearsal reached Oracle Linux base-image resolution and then stopped because the corporate VPN refused HTTPS connections to both `container-registry.oracle.com` and `container-registry-bom.oracle.com`. No application image was pushed. Use the OCI DevOps managed-build fallback below or provide an approved internal mirror before creating a Hosted Deployment artifact.
+
+Public Docker Hub images are prohibited. The Dockerfiles have no public-registry default, and the build script rejects Docker Hub references. The repository includes `deploy/hosted/Dockerfile.node-base` to build Node.js 22 on the Oracle Linux 9 slim image from Oracle Container Registry. Publish that base to the project OCIR repository, use its immutable tag through `-NodeImage`, then complete the validation steps in this document before pushing an application image to OCIR.
 
 ## Target Architecture
 
@@ -156,6 +174,8 @@ The application can be deployed before a governed OpenAI key is available:
 
 Hosted Deployment supplies or reserves the runtime port. The application honors `PORT` when the platform injects it and otherwise uses `8080` when `HOSTED_DEPLOYMENT=true`. Do not hard-code ports `80`, `3000`, or `4000` in the Hosted Application configuration.
 
+Do not declare `PORT`, `K_SERVICE`, `K_CONFIGURATION`, `K_REVISION`, `OCI_RESOURCE_PRINCIPAL_VERSION`, `OCI_RESOURCE_PRINCIPAL_PRIVATE_PEM`, `OCI_RESOURCE_PRINCIPAL_RPST`, or any `KUBERNETES_*` variable in the image or Hosted Application configuration. Hosted Deployment owns these names.
+
 ## OCI IAM and Storage
 
 Create a dedicated private Object Storage bucket in the `har-analyzer` compartment. Associate both Hosted Application resource principals with a dynamic group or the platform-equivalent identity mapping.
@@ -183,13 +203,42 @@ npm --prefix backend run test
 npm run build
 npm --prefix backend run build
 
+powershell -ExecutionPolicy Bypass -File scripts/build-hosted-node-base.ps1 `
+  -NodeBaseImage bom.ocir.io/<namespace>/har-analyzer/node-base:ol9-node22-<release>
+
+docker push bom.ocir.io/<namespace>/har-analyzer/node-base:ol9-node22-<release>
+
 powershell -ExecutionPolicy Bypass -File scripts/build-hosted-images.ps1 `
-  -NodeImage <approved-oracle-registry>/<node-image>:<immutable-tag> `
+  -NodeImage bom.ocir.io/<namespace>/har-analyzer/node-base:ol9-node22-<release> `
   -AppImage bom.ocir.io/<namespace>/har-analyzer/har-app:<tag> `
   -WorkerImage bom.ocir.io/<namespace>/har-analyzer/har-worker:<tag>
 ```
 
-The script builds `linux/amd64` images and fails if the resulting architecture is not `amd64`.
+If the global Oracle Container Registry endpoint is blocked by the corporate network, use an approved Oracle regional mirror for the base build, for example:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/build-hosted-node-base.ps1 `
+  -OracleLinuxImage container-registry-bom.oracle.com/os/oraclelinux:9-slim `
+  -NodeBaseImage bom.ocir.io/<namespace>/har-analyzer/node-base:ol9-node22-<release>
+```
+
+If both Oracle endpoints are blocked, mirror `container-registry.oracle.com/os/oraclelinux:9-slim` into the approved internal Artifactory or OCIR from an OCI DevOps build runner and pass that mirror URI through `-OracleLinuxImage`.
+
+### OCI DevOps managed-build fallback
+
+Use `deploy/hosted/build_spec.yaml` when the corporate VPN blocks Oracle Container Registry or package downloads from Rancher Desktop. Configure an OCI DevOps **Managed Build** stage with this file as its build-spec path. Use the Oracle Linux 8 runner so the included Podman commands are available.
+
+The managed build produces three named Docker image artifacts:
+
+```text
+har-analyzer-node-base-image
+har-analyzer-app-image
+har-analyzer-worker-image
+```
+
+Add one **Deliver Artifacts** stage per artifact and map them to the corresponding private OCIR repository with the same immutable release version. The build stage performs the full frontend/backend test and build suite before constructing the images. If the runner cannot reach the global Oracle registry, set the build-spec `ORACLE_LINUX_IMAGE` variable to an approved internal Oracle Linux 9 slim mirror.
+
+The scripts build `linux/amd64` images. The application build fails if an image is not `amd64`, runs as root, does not expose 8080, or declares a Hosted Deployment reserved environment variable.
 
 Push after authenticating Rancher Desktop to OCIR:
 
@@ -199,6 +248,94 @@ docker push bom.ocir.io/<namespace>/har-analyzer/har-worker:<tag>
 ```
 
 Use immutable release tags. Do not deploy `latest`.
+
+## Deployment Order in the `har-analyzer` Compartment
+
+### 1. Confirm platform inputs
+
+Record these values in the team-owned secret/configuration system, not in Git:
+
+- Target OCI region where GenAI Hosted Deployment is enabled.
+- `har-analyzer` compartment OCID.
+- OCIR namespace, repository compartment, and push credentials.
+- Operator group and Hosted Application dynamic-group names.
+- OAuth identity domain, confidential application, audience, and scope, or the approved IAM-authenticated onboarding path.
+- MongoDB URI and TLS requirements.
+- OCI Cache Redis URI.
+- Object Storage namespace and bucket.
+- VCN and subnet that can reach MongoDB and Redis.
+
+Do not assume the Mumbai region used by the Container Instance POC supports Hosted Deployment. Select a region shown as supported in the target tenancy and confirm it with the platform team before building region-qualified OCIR tags.
+
+### 2. Create OCIR repositories and storage
+
+Create private repositories for:
+
+```text
+har-analyzer/node-base
+har-analyzer/har-app
+har-analyzer/har-worker
+```
+
+Create a private Object Storage bucket in `har-analyzer`, add a lifecycle rule for stale objects under `har-analyzer/tmp/`, and retain the namespace and bucket name for environment configuration.
+
+### 3. Apply IAM
+
+Create a dynamic group whose rules include Hosted Application, IAM Hosted Application when used, and Hosted Deployment resource principals in the `har-analyzer` compartment:
+
+```text
+Any {resource.type='generativeaihostedapplication', resource.compartment.id='<har-analyzer-compartment-ocid>'}
+Any {resource.type='generativeaihostedapplicationiam', resource.compartment.id='<har-analyzer-compartment-ocid>'}
+Any {resource.type='generativeaihosteddeployment', resource.compartment.id='<har-analyzer-compartment-ocid>'}
+```
+
+Grant the runtime dynamic group access to pull the three private repositories, read Vulnerability Scanning results, inspect the artifact bucket, and manage objects only in that bucket. Grant the operator group permission to create, read, update, delete, move, inspect, and invoke Hosted Applications/Deployments in `har-analyzer`.
+
+Also grant Vulnerability Scanning Service permission to read the OCIR repositories and compartment. Use the exact policy syntax approved for the tenancy; the policy intent is listed under **OCI IAM and Storage**.
+
+### 4. Build, scan, and push immutable images
+
+Use the Rancher Desktop commands in **Build with Rancher Desktop**. Push the Node base, application, and worker images, verify all three manifests resolve from OCIR, and confirm the application and worker scans contain no Critical findings before creating deployments.
+
+### 5. Create `har-analyzer-app`
+
+Create the first Hosted Application with these settings:
+
+| Setting | Initial value |
+| --- | --- |
+| Name | `har-analyzer-app` |
+| Minimum replicas | `1` |
+| Maximum replicas | `2` initially; tune after load testing |
+| Network | Custom VCN/subnet with MongoDB, Redis, Object Storage, and approved outbound access |
+| Endpoint | Internal/public selection approved by the platform team |
+| Authentication | OAuth identity-domain configuration or approved IAM path |
+| Container | `har-analyzer/har-app:<immutable-tag>` |
+| Command override | None |
+
+Add the shared and application environment variables from **Required Configuration**. Omit OpenAI variables for the initial deployment. Do not add `PORT` or any other reserved variable.
+
+After the application endpoint exists, set `CORS_ORIGIN` to its browser origin (scheme and host only). Use the final invoke/base URL for `PUBLIC_API_URL` and `OPENAPI_SERVER_URL` only after confirming the platform route shape; same-origin frontend API calls do not require either variable.
+
+### 6. Create `har-analyzer-worker`
+
+Create a second Hosted Application with these settings:
+
+| Setting | Initial value |
+| --- | --- |
+| Name | `har-analyzer-worker` |
+| Minimum replicas | `1` |
+| Maximum replicas | `1` for the first production test |
+| Network | Same reachable network path as the application |
+| Endpoint | Private/internal where supported; only health routing is required |
+| Container | `har-analyzer/har-worker:<immutable-tag>` |
+| Command override | None |
+| `WORKER_CONCURRENCY` | `2` |
+
+Use the same MongoDB, Redis, Object Storage, and resource-principal settings as the application. Do not configure OpenAI, CORS, or public API variables on the worker.
+
+### 7. Activate and validate
+
+Create one deployment for each Hosted Application, select the corresponding immutable OCIR tag, choose **Deploy and activate**, and wait for both resources to become Active. Run the checks in **Deployment Validation** before inviting users.
 
 ## Deployment Validation
 
@@ -212,6 +349,13 @@ Use immutable release tags. Do not deploy `latest`.
 8. Confirm AI returns an OpenAI-backed response when configured and deterministic fallback when the key is absent.
 9. Restart the application and worker independently and repeat an upload to verify there is no shared-filesystem dependency.
 10. Review `/api/ops/status`, application logs, worker logs, queue depth, and retention behavior.
+
+The browser path has an additional platform gate because HAR Analyzer is a full SPA and uses Socket.IO, while the Hosted Deployment examples focus on JSON/SSE APIs:
+
+1. Confirm the authenticated invoke URL can return the frontend HTML and all JS/CSS assets.
+2. Confirm browser requests preserve the custom path after the Hosted Application invoke prefix.
+3. Confirm Socket.IO polling and WebSocket upgrade traffic are supported through the ingress.
+4. If any of these fail, keep the API and worker on Hosted Deployment and serve the frontend from the approved internal static/VCAP hosting path. Do not broadly release a partially working combined endpoint.
 
 ## Inputs Required from the Platform Team
 

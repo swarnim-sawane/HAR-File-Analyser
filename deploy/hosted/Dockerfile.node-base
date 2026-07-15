@@ -1,0 +1,18 @@
+ARG ORACLE_LINUX_IMAGE=container-registry.oracle.com/os/oraclelinux:9-slim
+
+FROM ${ORACLE_LINUX_IMAGE}
+
+ARG NODEJS_STREAM=22
+
+RUN microdnf install -y dnf shadow-utils \
+    && dnf -y module reset nodejs \
+    && dnf -y module install nodejs:${NODEJS_STREAM} \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf /var/cache/yum
+
+RUN groupadd --gid 10001 node \
+    && useradd --uid 10001 --gid 10001 --home-dir /tmp --no-create-home --shell /sbin/nologin node \
+    && node --version \
+    && npm --version
+
+ENV HOME=/tmp

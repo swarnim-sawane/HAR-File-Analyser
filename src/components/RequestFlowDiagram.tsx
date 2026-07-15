@@ -799,10 +799,19 @@ const RequestFlowDiagram: React.FC<RequestFlowDiagramProps> = ({
     const target = phaseRefs.current.get(phaseId);
     if (!target) return;
 
-    const scrollContainer = target.closest<HTMLElement>('.flow-tab-panel') ?? stageRef.current;
+    const targetRect = target.getBoundingClientRect();
+    const stage = stageRef.current;
+
+    if (stage) {
+      const stageRect = stage.getBoundingClientRect();
+      const top = Math.max(0, stage.scrollTop + targetRect.top - stageRect.top - PHASE_SCROLL_GAP_PX);
+      stage.scrollTo({ behavior: 'smooth', top });
+      return;
+    }
+
+    const scrollContainer = target.closest<HTMLElement>('.flow-tab-panel');
     const stickyHeight = stickyStackRef.current?.getBoundingClientRect().height ?? 0;
     const offset = stickyHeight + PHASE_SCROLL_GAP_PX;
-    const targetRect = target.getBoundingClientRect();
 
     if (scrollContainer) {
       const containerRect = scrollContainer.getBoundingClientRect();

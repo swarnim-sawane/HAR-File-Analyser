@@ -254,6 +254,8 @@ describe('HarTabContent Redwood theme smoke test', () => {
 
     await user.click(screen.getByRole('button', { name: /request flow/i }));
 
+    expect(document.querySelector('.har-tab-content')).toHaveClass('is-active', 'is-flow-active');
+
     const flowToggle = screen.getByRole('radiogroup', { name: /request flow view/i });
     expect(flowToggle).toBeInTheDocument();
 

@@ -33,7 +33,6 @@ FROM ${NODE_IMAGE} AS runtime
 ENV NODE_ENV=production \
     HOSTED_DEPLOYMENT=true \
     HOST=0.0.0.0 \
-    PORT=8080 \
     STATIC_DIR=/app/public \
     HOME=/tmp \
     TMPDIR=/tmp \

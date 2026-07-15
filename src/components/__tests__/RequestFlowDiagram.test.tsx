@@ -136,7 +136,7 @@ describe('RequestFlowDiagram', () => {
     expect(screen.queryByRole('button', { name: /zoom/i })).not.toBeInTheDocument();
   });
 
-  it('renders a horizontal phase overview and scrolls the selected phase below sticky controls', () => {
+  it('renders a horizontal phase overview and scrolls the selected phase inside the journey stage', () => {
     const scrollIntoView = vi.fn();
     window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
     const scrollTo = vi.fn();
@@ -200,7 +200,7 @@ describe('RequestFlowDiagram', () => {
     fireEvent.click(screen.getByRole('button', { name: /go to oauth callback phase/i }));
 
     expect(scrollIntoView).not.toHaveBeenCalled();
-    expect(scrollTo).toHaveBeenCalledWith({ behavior: 'smooth', top: 568 });
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: 'smooth', top: 658 });
   });
 
   it('keeps journey phases visible when an external request filter narrows visible rows', () => {

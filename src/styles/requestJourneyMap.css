@@ -450,15 +450,16 @@
 }
 
 .flow-tab-panel .request-flow-shell {
-  height: auto;
-  min-height: 100%;
-  overflow: visible;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.flow-tab-panel .request-flow-stage {
-  flex: 0 0 auto;
+.flow-tab-panel .request-flow-stage--journey {
+  flex: 1 1 0;
+  min-height: 0;
   overflow-x: auto;
-  overflow-y: visible;
+  overflow-y: scroll;
 }
 
 .request-flow-stage--journey {

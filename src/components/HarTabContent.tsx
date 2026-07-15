@@ -257,7 +257,10 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
 
   return (
     // Keep mounted but hidden — preserves hook state (filters, selected entry, etc.)
-    <div style={{ display: isActive ? undefined : 'none' }}>
+    <div
+      className={`har-tab-content ${isActive ? 'is-active' : ''} ${activeTab === 'flow' ? 'is-flow-active' : ''}`}
+      style={{ display: isActive ? undefined : 'none' }}
+    >
 
       {/* Sub-tabs: only show once data is loaded */}
       {harState.harData && (

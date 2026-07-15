@@ -2399,7 +2399,49 @@ html[data-theme='dark'] .recent-file-card:hover {
     background: var(--bg-secondary);
 }
 
+/* Keep Request Flow inside the remaining viewport so its stage owns scrolling. */
+.app-container:has(.har-tab-content.is-active.is-flow-active) {
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.main-content:has(.har-tab-content.is-active.is-flow-active) {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.main-content:has(.har-tab-content.is-active.is-flow-active) > .tool-selector,
+.main-content:has(.har-tab-content.is-active.is-flow-active) > .har-file-tabs {
+    flex: 0 0 auto;
+}
+
+.har-tab-content.is-active.is-flow-active {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.har-tab-content.is-active.is-flow-active > .har-sticky-header {
+    position: relative;
+    top: auto;
+    z-index: 3;
+    flex: 0 0 auto;
+}
+
+.har-tab-content.is-active.is-flow-active > .flow-tab-shell {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+    isolation: isolate;
+}
+
 .flow-view-toggle-bar {
+    position: relative;
+    z-index: 2;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -13381,8 +13423,31 @@ html[data-theme='redwood'] .scorecard-finding-meta {
 
 .request-flow-stage--journey {
   padding: 10px 14px 14px;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: scroll;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: auto;
+  scrollbar-color: var(--text-tertiary) var(--bg-tertiary);
   background: linear-gradient(180deg, rgba(244, 247, 251, 0.92), rgba(241, 245, 249, 0.98));
+}
+
+.request-flow-stage--journey::-webkit-scrollbar {
+  width: 12px;
+}
+
+.request-flow-stage--journey::-webkit-scrollbar-track {
+  background: var(--bg-tertiary);
+}
+
+.request-flow-stage--journey::-webkit-scrollbar-thumb {
+  border: 3px solid var(--bg-tertiary);
+  border-radius: 999px;
+  background: var(--text-tertiary);
+}
+
+.request-flow-stage--journey::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
 }
 
 .request-flow-phase-timeline {
