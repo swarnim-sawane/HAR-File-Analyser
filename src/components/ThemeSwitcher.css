@@ -52,11 +52,15 @@
 }
 
 .theme-switcher-swatch {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
+  display: block;
+  width: 10px;
+  height: 10px;
+  aspect-ratio: 1;
+  border-radius: 50%;
   border: 1px solid rgba(15, 23, 42, 0.14);
-  flex-shrink: 0;
+  clip-path: circle(50%);
+  flex: 0 0 10px;
+  overflow: hidden;
 }
 
 .theme-switcher-swatch--light {
