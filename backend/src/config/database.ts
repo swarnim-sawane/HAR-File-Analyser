@@ -69,7 +69,17 @@ export async function ensureMongoIndex(
   indexSpec: IndexSpecification,
   options: CreateIndexesOptions = {},
 ): Promise<string | undefined> {
-  const indexes = await collection.indexes();
+  let indexes: ExistingMongoIndex[];
+  try {
+    indexes = await collection.indexes();
+  } catch (error) {
+    const mongoError = error as { code?: number; codeName?: string };
+    if (mongoError.code === 26 || mongoError.codeName === 'NamespaceNotFound') {
+      return collection.createIndex(indexSpec, options);
+    }
+    throw error;
+  }
+
   if (hasEquivalentIndex(indexes, indexSpec, options)) {
     return undefined;
   }
