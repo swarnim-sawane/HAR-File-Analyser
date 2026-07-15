@@ -1,13 +1,18 @@
 
 # HAR Analyzer — Ops & Debug Runbook
 
+> [!IMPORTANT]
+> This runbook describes the legacy VM/VCAP deployment. Its OCA token-refresh
+> instructions are obsolete because OCA has been decommissioned. Use
+> `OPENAI_API_KEY`, `OPENAI_MODEL`, and the approved secret process instead.
+
 ## Stack Overview
 
 | Service | Process | Port | Notes |
 |---|---|---|---|
-| Frontend | `har-frontend` (PM2 id:7) | 3000 | Static files via python3 http.server |
-| Backend API | `har-backend` (PM2 ids:2-5) | 4000 | 4x cluster, Express + TypeScript |
-| Worker | `har-worker` (PM2 ids:6-7) | 4001 | 2x fork mode, BullMQ, --expose-gc --max-old-space-size=4096 |
+| Frontend | `har-frontend` | 3000 | Static files via `python3 -m http.server` |
+| Backend API | `har-backend` | 4000 | 4x cluster, Express + TypeScript |
+| Worker | `har-worker` | N/A | 2x fork mode, BullMQ, --expose-gc --max-old-space-size=4096 |
 | MongoDB | system service | 27017 | `har-analyzer` database |
 | Redis | system service | 6379 | Job queue + pub/sub |
 
@@ -18,288 +23,11 @@
 
 ***
 
-## Experimental Support Analyzer Workbench Deployment
+## AI Credential Update
 
-The experimental deployment must stay separate from the original HAR Analyzer
-deployment. Do not reuse ports 3000, 4000, 4173, or 4317 for the experiment.
-
-| Service | PM2 Process | Port | Path |
-|---|---|---|---|
-| HAR experimental frontend | `har-exp-frontend` | 3100 | `/refresh/home/Downloads/har-analyzer-exp` |
-| HAR experimental backend | `har-exp-backend` | 4100 | `/refresh/home/Downloads/har-analyzer-exp/backend` |
-| HAR experimental worker | `har-exp-worker` | n/a | `/refresh/home/Downloads/har-analyzer-exp/backend` |
-| Support Analyzer MCP endpoint | `har-exp-backend` | 4100 | `http://10.65.39.163:4100/mcp` |
-| Support Workbench experimental frontend | `support-workbench-exp-frontend` | 4174 | `/refresh/home/Downloads/support-workbench-exp` |
-| Support Workbench experimental backend | `support-workbench-exp-backend` | 4318 | `/refresh/home/Downloads/support-workbench-exp/backend` |
-
-**Experimental UI URL:** `http://10.65.39.163:3100`
-**Experimental Workbench embed URL:** `http://10.65.39.163:4174/?embedded=1&theme=dark`
-**Experimental HAR backend URL:** `http://10.65.39.163:4100`
-**Experimental MCP URL:** `http://10.65.39.163:4100/mcp`
-**Experimental Workbench backend URL:** `http://10.65.39.163:4318`
-
-### Source Branch
-
-The current experimental HAR shell work is pushed from:
+OpenAI credentials are GCGA-managed secrets and do not use the former hourly OCA refresh flow. Rotate the key through the approved secret-management process, update the backend environment, and restart the backend.
 
 ```bash
-https://github.com/swarnim-sawane/HAR-File-Analyser.git
-branch: unified-support-workbench
-```
-
-The embedded AI Diagnosis workbench is pushed from:
-
-```bash
-https://github.com/swarnim-sawane/support-workbench.git
-branch: uat
-```
-
-Use the original `main` branch only for the existing production-style HAR
-deployment. Use `unified-support-workbench` for the experimental Support
-Analyzer Workbench. Use `uat` for the experimental Support Workbench embed.
-
-### Critical VM Rule: No npm install on VCAP
-
-Do not run `npm install`, `npm ci`, or frontend `npm run build` on the VCAP VM.
-Build locally, then copy build artifacts to the VM.
-
-Allowed on VM:
-
-- `git fetch`, `git checkout`, `git pull`
-- PM2 restarts
-- extracting tarballs created locally
-- using already-copied `node_modules`
-- backend `npm run build` only if the Linux dependencies already exist and no package changes were made
-
-Not allowed on VM:
-
-- dependency installation from npm registry
-- frontend Vite builds
-- changing the original 3000/4000 deployment while updating the experiment
-
-### Local Build for Experimental HAR Frontend
-
-Before copying frontend artifacts, set local `.env.production` for the
-experimental ports:
-
-```powershell
-VITE_API_URL=http://10.65.39.163:4100
-VITE_BACKEND_URL=http://10.65.39.163:4100
-VITE_WS_URL=http://10.65.39.163:4100
-VITE_SUPPORT_WORKBENCH_URL=http://10.65.39.163:4174
-```
-
-Then build and copy the frontend:
-
-```powershell
-cd "C:\Users\ssawane\Documents\Work\HAR LATEST\Experimental build\HAR-File-Analyser"
-git checkout unified-support-workbench
-git pull origin unified-support-workbench
-npm run build
-scp -r dist oracle@celvpvm05798.us.oracle.com:/refresh/home/Downloads/har-analyzer-exp/
-```
-
-On the VM:
-
-```bash
-cd /refresh/home/Downloads/har-analyzer-exp
-git fetch origin unified-support-workbench
-git checkout unified-support-workbench
-git pull origin unified-support-workbench
-pm2 restart har-exp-frontend --update-env
-pm2 save
-```
-
-### If Backend Code or Dependencies Changed
-
-If `backend/`, `package.json`, `package-lock.json`, `backend/package.json`, or
-`backend/package-lock.json` changed, do an artifact deployment instead of a
-simple frontend copy.
-
-Local machine:
-
-```powershell
-cd "C:\Users\ssawane\Documents\Work\HAR LATEST\Experimental build\HAR-File-Analyser"
-git checkout unified-support-workbench
-git pull origin unified-support-workbench
-npm run build
-cd backend
-npm run build
-cd ..
-tar -czf har-analyzer-exp-artifacts.tgz dist package.json package-lock.json node_modules backend/package.json backend/package-lock.json backend/node_modules backend/dist shared scripts VM_RUNBOOK.md
-scp har-analyzer-exp-artifacts.tgz oracle@celvpvm05798.us.oracle.com:/refresh/home/Downloads/
-```
-
-VM:
-
-```bash
-cd /refresh/home/Downloads/har-analyzer-exp
-git fetch origin unified-support-workbench
-git checkout unified-support-workbench
-git pull origin unified-support-workbench
-tar -xzf /refresh/home/Downloads/har-analyzer-exp-artifacts.tgz -C /refresh/home/Downloads/har-analyzer-exp
-pm2 restart har-exp-backend --update-env
-pm2 restart har-exp-frontend --update-env
-pm2 restart har-exp-worker --update-env
-pm2 save
-```
-
-### Local Build for Experimental Support Workbench
-
-Pulling the Support Workbench source is not enough when frontend, backend, or
-runtime code changes. The experimental PM2 apps run compiled output from
-`frontend/dist`, `backend/dist`, and `runtime/dist`, so build locally and copy
-those artifacts to the VM.
-
-Local machine:
-
-```powershell
-cd "C:\Users\ssawane\Documents\Work\claude-code"
-git checkout uat
-git pull origin uat
-npm run test
-npm run build
-tar -czf support-workbench-exp-artifacts.tgz frontend/dist backend/dist runtime/dist package.json package-lock.json frontend/package.json backend/package.json runtime/package.json frontend-server.mjs
-scp support-workbench-exp-artifacts.tgz oracle@celvpvm05798.us.oracle.com:/refresh/home/Downloads/
-```
-
-VM:
-
-```bash
-cd /refresh/home/Downloads/support-workbench-exp
-git fetch origin uat
-git checkout uat
-git pull origin uat
-tar -xzf /refresh/home/Downloads/support-workbench-exp-artifacts.tgz -C /refresh/home/Downloads/support-workbench-exp
-pm2 restart support-workbench-exp-backend --update-env
-pm2 restart support-workbench-exp-frontend --update-env
-pm2 save
-```
-
-If package files changed, also copy the matching local `node_modules` artifact.
-Do not run `npm install` or `npm ci` on the VM.
-
-### Experimental HAR Backend .env Minimums
-
-```bash
-PORT=4100
-MONGODB_URL=mongodb://localhost:27017/har-analyzer-exp
-REDIS_HOST=localhost
-REDIS_PORT=6379
-HAR_QUEUE_NAME=har-processing-exp
-LOG_QUEUE_NAME=log-processing-exp
-UPLOAD_DIR=/refresh/home/Downloads/har-analyzer-exp/runtime/uploads
-PROCESSED_DIR=/refresh/home/Downloads/har-analyzer-exp/runtime/processed
-CORS_ORIGIN=http://10.65.39.163:3100
-SUPPORT_WORKBENCH_API_URL=http://localhost:4318
-SUPPORT_ANALYZER_HAR_API_URL=http://localhost:4100
-SUPPORT_ANALYZER_UI_URL=http://10.65.39.163:3100
-QDRANT_URL=http://localhost:6333
-HTTPS_PROXY=http://www-proxy-phx.oraclecorp.com:80
-HTTP_PROXY=http://www-proxy-phx.oraclecorp.com:80
-NO_PROXY=localhost,127.0.0.1,10.65.39.163,celvpvm05798.us.oracle.com
-```
-
-### Experimental MCP Server
-
-The normal MCP access path is the VCAP-hosted HTTP endpoint exposed by
-`har-exp-backend`:
-
-```text
-http://10.65.39.163:4100/mcp
-```
-
-Engineers should configure the approved LLM client with that URL. They should
-not need to run a local MCP process for normal usage.
-
-The endpoint calls the experimental HAR backend on 4100 and the experimental
-Support Workbench backend on 4318. Workspace state is persisted through Redis so
-PM2 cluster workers can share MCP workspaces.
-
-HTTP smoke test after extracting backend artifacts and restarting
-`har-exp-backend`:
-
-```bash
-curl -s -X POST http://localhost:4100/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
-```
-
-Expected response includes these tools:
-
-- `create_workspace`
-- `upload_evidence`
-- `list_evidence`
-- `analyze_evidence`
-- `search_evidence`
-- `inspect_evidence`
-- `ask_ai_diagnosis`
-- `generate_support_report`
-- `open_in_workbench`
-
-Example remote MCP client config for the experimental VM:
-
-```json
-{
-  "mcpServers": {
-    "support-analyzer-workbench": {
-      "url": "http://10.65.39.163:4100/mcp"
-    }
-  }
-}
-```
-
-The older stdio entry point still exists for maintainers who are debugging the
-MCP implementation directly:
-
-```bash
-cd /refresh/home/Downloads/har-analyzer-exp/backend
-node dist/mcp/server.js
-```
-
-### Experimental Verification
-
-Run these after every experimental deploy:
-
-```bash
-curl -I http://localhost:3100
-curl -s http://localhost:4100/health
-curl -s http://localhost:4318/api/health/oca
-curl -I "http://localhost:4174/?embedded=1&theme=dark"
-pm2 list
-```
-
-Expected PM2 processes online:
-
-- `har-exp-backend`
-- `har-exp-worker`
-- `har-exp-frontend`
-- `support-workbench-exp-backend`
-- `support-workbench-exp-frontend`
-
-If files uploaded in Visual Analysis do not appear in AI Diagnosis, check:
-
-```bash
-grep SUPPORT_WORKBENCH_API_URL /refresh/home/Downloads/har-analyzer-exp/backend/.env
-grep -o "10\.65\.39\.163:4174\|localhost:4173" /refresh/home/Downloads/har-analyzer-exp/dist/assets/*.js | sort | uniq -c
-pm2 logs har-exp-backend --lines 100
-pm2 logs support-workbench-exp-backend --lines 100
-```
-
-The frontend bundle must reference `10.65.39.163:4174`, not `localhost:4173`,
-for the experimental AI Diagnosis iframe.
-
-***
-
-## Daily Token Refresh (OCA expires ~1hr)
-
-```bash
-refresh-token   # alias in ~/.bashrc — prompts for token, updates .env, restarts backend
-```
-
-Manual alternative:
-```bash
-sed -i 's/^OCA_TOKEN=.*/OCA_TOKEN=YOUR_NEW_TOKEN/' ~/Downloads/har-analyzer/backend/.env
 pm2 restart har-backend --update-env
 ```
 
@@ -314,7 +42,7 @@ git checkout main
 git pull origin main
 
 # Frontend build — .env.production MUST have both vars
-# C:\Users\ssawane\Downloads\har-analyzer\.env.production:
+# C:\Users\ssawane\Documents\Work\HAR LATEST\Deployed build\HAR-File-Analyser\.env.production:
 #   VITE_API_URL=http://10.65.39.163:4000
 #   VITE_BACKEND_URL=http://10.65.39.163:4000
 npm run build
@@ -326,21 +54,56 @@ scp -r dist oracle@celvpvm05798.us.oracle.com:/refresh/home/Downloads/har-analyz
 ### Step 2 — On VM
 ```bash
 # Pull latest code
-cd ~/Downloads/har-analyzer
-git pull origin main
+cd /refresh/home/Downloads/har-analyzer
+git -c http.proxy=http://www-proxy-phx.oraclecorp.com:80 \
+    -c https.proxy=http://www-proxy-phx.oraclecorp.com:80 \
+    pull origin main
+git log -1 --oneline
 
 # Rebuild backend (TypeScript only — tsc works without native binaries)
 cd backend
 npm run build
+cd ..
 
-# Restart everything
+# Restart backend
 pm2 restart har-backend --update-env
-pm2 restart har-frontend --update-env
+
+# Frontend - replace stale/temp script based processes with direct python server.
+pm2 delete har-frontend
+pm2 start "python3" \
+  --name har-frontend \
+  -- -m http.server 3000 --directory /refresh/home/Downloads/har-analyzer/dist
 
 # Workers — DO NOT use pm2 restart for workers (loses --expose-gc flag).
-# Instead, delete and re-create from the config file:
+# /tmp is ephemeral, so recreate the config before starting workers.
+cat > /tmp/worker.config.cjs <<'EOF'
+module.exports = {
+  apps: [{
+    name: 'har-worker',
+    script: '/refresh/home/Downloads/har-analyzer/backend/dist/worker.js',
+    instances: 2,
+    exec_mode: 'fork',
+    node_args: '--max-old-space-size=4096 --expose-gc',
+    env: {
+      NODE_ENV: 'production',
+      WORKER_CONCURRENCY: '4',
+    }
+  }]
+};
+EOF
+
 pm2 delete har-worker
 pm2 start /tmp/worker.config.cjs
+
+# Verify before saving. Do not run pm2 save while har-frontend or har-worker is missing/errored.
+pm2 list
+pm2 show har-worker | grep "interpreter args"
+curl -I http://localhost:3000
+curl http://localhost:4000/health
+curl http://localhost:4000/openapi.json | grep "/api/v1/har"
+# Optional after a ready HAR exists:
+# curl -X POST http://localhost:4000/api/v1/har/PASTE_READY_FILEID/insights
+
 pm2 save
 ```
 
@@ -380,21 +143,40 @@ If AI chat silently fails or uploads go to `localhost`, the build used wrong/mis
 
 **Verify after every deploy:**
 ```bash
-grep -o "10\.65\.39\.163:4000" ~/Downloads/har-analyzer/dist/assets/*.js | wc -l
+grep -o "10\.65\.39\.163:4000" /refresh/home/Downloads/har-analyzer/dist/assets/*.js | wc -l
 # Must return 2 or more
 ```
 
-### 4. Worker Node.js flags are silently ignored by `pm2 start --node-args`
+### 4. Frontend PM2 process must not depend on `/tmp/serve-frontend.sh`
+If `har-frontend` is `errored` and logs show:
+
+```text
+bash: /tmp/serve-frontend.sh: No such file or directory
+```
+
+delete and recreate it with the direct Python command:
+
+```bash
+pm2 delete har-frontend
+pm2 start "python3" \
+  --name har-frontend \
+  -- -m http.server 3000 --directory /refresh/home/Downloads/har-analyzer/dist
+
+curl -I http://localhost:3000
+pm2 save
+```
+
+### 5. Worker Node.js flags are silently ignored by `pm2 start --node-args`
 `pm2 start dist/worker.js --node-args="--expose-gc"` appears to work but
 `pm2 show har-worker` will show no interpreter args and `global.gc()` calls
 will be silent no-ops. The only reliable way is a config file.
 
-**Config file at `/tmp/worker.config.cjs` (recreate if VM reboots):**
+**Config file at `/tmp/worker.config.cjs` (recreate before every deploy because `/tmp` is ephemeral):**
 ```js
 module.exports = {
   apps: [{
     name: 'har-worker',
-    script: '/home/oracle/Downloads/har-analyzer/backend/dist/worker.js',
+    script: '/refresh/home/Downloads/har-analyzer/backend/dist/worker.js',
     instances: 2,
     exec_mode: 'fork',
     node_args: '--max-old-space-size=4096 --expose-gc',
@@ -410,13 +192,13 @@ module.exports = {
 ```bash
 pm2 delete har-worker
 pm2 start /tmp/worker.config.cjs
-pm2 save
 # Verify flags applied:
 pm2 show har-worker | grep "interpreter args"
 # Expected: --max-old-space-size=4096 | --expose-gc
+pm2 save
 ```
 
-### 5. MongoDB duplicate key on re-upload
+### 6. MongoDB duplicate key on re-upload
 If you see `E11000 duplicate key error ... fileId_1`, a stale record exists.
 
 **Fix:**
@@ -426,8 +208,58 @@ db = db.getSiblingDB('har-analyzer')
 db.har_files.deleteMany({ fileId: "PASTE_CONFLICTING_FILEID_HERE" })
 exit
 pm2 restart har-backend --update-env
-pm2 restart har-worker --update-env
+# Recreate worker from the config in section 5 if processing needs a restart.
+pm2 delete har-worker
+pm2 start /tmp/worker.config.cjs
 ```
+
+### 7. Clear stale BullMQ jobs
+Use this only when old jobs are being replayed and you intentionally want to clear pending HAR/log processing work. `pm2 flush` only clears PM2 logs; it does not clear Redis queues.
+
+```bash
+# Stop workers first so they do not keep consuming stale jobs.
+pm2 delete har-worker
+
+# Inspect queue backlog.
+redis-cli LLEN bull:har-processing:wait
+redis-cli ZCARD bull:har-processing:delayed
+redis-cli ZCARD bull:har-processing:failed
+redis-cli LLEN bull:log-processing:wait
+redis-cli ZCARD bull:log-processing:delayed
+redis-cli ZCARD bull:log-processing:failed
+
+# Clear only this application's BullMQ queues.
+redis-cli --scan --pattern 'bull:har-processing:*' | xargs -r redis-cli DEL
+redis-cli --scan --pattern 'bull:log-processing:*' | xargs -r redis-cli DEL
+
+# Recreate /tmp/worker.config.cjs from section 5 if missing, then start workers.
+pm2 start /tmp/worker.config.cjs
+```
+
+### 8. Retention cleanup for large diagnostic files
+Retention cleanup is disabled unless `RETENTION_CLEANUP_ENABLED=true` is set in `backend/.env`. Use dry-run first so the deletion counts can be reviewed before removing customer diagnostic artifacts.
+
+```bash
+cd /refresh/home/Downloads/har-analyzer/backend
+npm run build
+
+# Dry-run: prints JSON counts without deleting files or database records.
+RETENTION_MAX_AGE_HOURS=168 RETENTION_CLEANUP_DRY_RUN=true npm run cleanup:retention
+
+# Actual cleanup after reviewing dry-run output.
+RETENTION_MAX_AGE_HOURS=168 RETENTION_CLEANUP_DRY_RUN=false npm run cleanup:retention
+```
+
+For scheduled cleanup through the backend process, add these to `backend/.env` and restart `har-backend`:
+
+```bash
+RETENTION_CLEANUP_ENABLED=true
+RETENTION_MAX_AGE_HOURS=168
+RETENTION_CLEANUP_INTERVAL_MINUTES=60
+RETENTION_CLEANUP_DRY_RUN=false
+```
+
+The cleanup removes expired `har_files`, `har_entries`, `console_log_files`, `console_logs`, Redis metadata/status keys, processed files, and stale upload chunks that are older than the configured cutoff.
 
 ***
 
@@ -447,17 +279,15 @@ pm2 flush
 # Check all process status
 pm2 list
 
-# Verify OCA is reachable from shell
-curl -s -o /dev/null -w "%{http_code}" \
-  https://code-internal.aiservice.us-chicago-1.oci.oraclecloud.com/20250206/app/litellm/v1/models \
-  -H "Authorization: Bearer $(grep OCA_TOKEN ~/Downloads/har-analyzer/backend/.env | cut -d= -f2)"
-# Expected: 200
+# Verify the backend can reach its configured OpenAI endpoint without printing the key
+curl -s http://127.0.0.1:4000/api/ai/status
+# Expected: HTTP 200; inspect the JSON connected flag
 
-# Verify proxy is in PM2 env
-pm2 env 2 | grep -i proxy
+# Verify proxy is in PM2 env; use any current har-backend id from pm2 list.
+pm2 env <har-backend-id> | grep -i proxy
 
 # Check what API URL is baked into frontend
-grep -o "10\.65\.39\.163:4000\|localhost:4000" ~/Downloads/har-analyzer/dist/assets/*.js | sort | uniq -c
+grep -o "10\.65\.39\.163:4000\|localhost:4000" /refresh/home/Downloads/har-analyzer/dist/assets/*.js | sort | uniq -c
 
 # MongoDB shell
 mongosh
@@ -473,26 +303,24 @@ db.har_files.find().sort({uploadedAt:-1}).limit(5)
 |---|---|---|
 | `All HAR uploads failed` | Frontend pointing to `localhost:4000` | Rebuild with correct `.env.production` |
 | `E11000 duplicate key` | Stale MongoDB record | `deleteMany({ fileId: "..." })` in mongosh |
-| `ConnectTimeoutError` on OCA | Node.js fetch ignores proxy | Ensure `setGlobalDispatcher` is in `server.ts` |
+| `ConnectTimeoutError` on OpenAI | Runtime cannot reach the approved endpoint | Verify approved egress and proxy environment, then restart the backend |
 | `fetch failed` in Node test | No proxy set | Proxy vars missing from `.env` |
 | AI chat shows old UI | Wrong branch built | `git checkout main` before building |
-| `OCA proxy error: fetch failed` | Token expired | Run `refresh-token` alias |
-| Worker processes stale jobs | PM2 in-memory retry | `pm2 flush` then `pm2 restart har-worker` |
+| OpenAI returns `401` or `403` | Key is invalid, revoked, or not authorized for the configured model | Rotate the GCGA secret or correct `OPENAI_MODEL`, then restart the backend |
+| Worker processes stale jobs | Old BullMQ jobs still pending in Redis | Stop `har-worker`, clear only `bull:har-processing:*` / `bull:log-processing:*`, then recreate worker from config |
+| `bash: /tmp/serve-frontend.sh: No such file or directory` | PM2 frontend points to a deleted temp script | Recreate `har-frontend` with `python3 -m http.server` |
+| `[PM2][ERROR] File /tmp/worker.config.cjs not found` | `/tmp` worker config disappeared | Recreate `/tmp/worker.config.cjs`, then `pm2 start /tmp/worker.config.cjs` |
+| `Document is larger than the maximum size 16777216` | Old worker build stored oversized HAR body text in MongoDB | Pull latest `main`, rebuild backend, restart workers |
 
 ***
 
 ## Backend .env Template
 
 ```bash
-# Oracle Cloud AI
-OCA_BASE_URL=https://code-internal.aiservice.us-chicago-1.oci.oraclecloud.com/20250206/app/litellm/v1
-OCA_MODEL=oca/gpt-5.4
-OCA_TOKEN=<refresh every ~1hr via refresh-token alias>
-OCA_TOKEN_SET_AT=0
-
-# Ollama fallback
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=llama3.2
+# Approved OpenAI API (backend only)
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=<model approved for the GCGA key>
+OPENAI_API_KEY=<inject through the approved secret mechanism>
 
 # Databases
 MONGODB_URL=mongodb://localhost:27017/har-analyzer
@@ -501,7 +329,13 @@ REDIS_PORT=6379
 UPLOAD_DIR=/tmp/har-processed
 PROCESSED_DIR=/tmp/har-processed
 
-# Corporate proxy (required for Node.js fetch to reach OCA)
+# Retention cleanup (disabled unless explicitly enabled)
+RETENTION_CLEANUP_ENABLED=false
+RETENTION_MAX_AGE_HOURS=168
+RETENTION_CLEANUP_INTERVAL_MINUTES=60
+RETENTION_CLEANUP_DRY_RUN=false
+
+# Corporate proxy (only when required for approved outbound HTTPS)
 HTTPS_PROXY=http://www-proxy-phx.oraclecorp.com:80
 HTTP_PROXY=http://www-proxy-phx.oraclecorp.com:80
 https_proxy=http://www-proxy-phx.oraclecorp.com:80

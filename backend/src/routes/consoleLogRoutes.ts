@@ -121,9 +121,19 @@ function listProjection() {
 }
 
 function parsePositiveInt(value: unknown, fallback: number, max?: number): number {
-  const parsed = Number.parseInt(String(value ?? ''), 10);
-  const safe = Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  const raw = String(value ?? '');
+  const parsed = /^\d+$/.test(raw) ? Number.parseInt(raw, 10) : Number.NaN;
+  const safe = Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
   return max ? Math.min(safe, max) : safe;
+}
+
+function parseNonNegativeInt(value: unknown): number | null {
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
 export async function buildFacets(logsCollection: any, filter: Record<string, unknown>) {
@@ -225,7 +235,10 @@ router.get('/:fileId/entries', async (req: Request, res: Response) => {
 router.get('/:fileId/entries/:index', async (req: Request, res: Response) => {
   try {
     const { fileId, index } = req.params;
-    const entryIndex = parseInt(index);
+    const entryIndex = parseNonNegativeInt(index);
+    if (entryIndex === null) {
+      return res.status(400).json({ error: 'Invalid entry index' });
+    }
 
     const db = getMongoDb();
     const logsCollection = db.collection('console_logs');
@@ -318,8 +331,8 @@ router.get('/:fileId/search', async (req: Request, res: Response) => {
   try {
     const { fileId } = req.params;
     const { level, source, search } = req.query;
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 100;
+    const page = parsePositiveInt(req.query.page, 1);
+    const limit = parsePositiveInt(req.query.limit, 100, 1000);
     const skip = (page - 1) * limit;
 
     const db = getMongoDb();
@@ -329,18 +342,19 @@ router.get('/:fileId/search', async (req: Request, res: Response) => {
     const filter: any = { fileId };
     
     if (level) {
-      filter.level = { $regex: new RegExp(`^${level}$`, 'i') };
+      filter.level = { $regex: new RegExp(`^${escapeRegExp(String(level))}$`, 'i') };
     }
     if (source) {
       filter.source = source;
     }
     if (search) {
-      filter.message = { $regex: search, $options: 'i' };
+      filter.message = { $regex: escapeRegExp(String(search)), $options: 'i' };
     }
 
     // Get filtered entries
     const entries = await logsCollection
       .find(filter)
+      .sort({ index: 1 })
       .skip(skip)
       .limit(limit)
       .toArray();

@@ -89,29 +89,6 @@ export const useHarData = (): UseHarDataReturn => {
     });
   }, []);
 
-  const exportFilteredData = useCallback(() => {
-    if (!harData) return;
-
-    const dataToExport = {
-      log: {
-        ...harData.log,
-        entries: filteredEntries,
-      },
-    };
-
-    const blob = new Blob([JSON.stringify(dataToExport, null, 2)], {
-      type: 'application/json',
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `filtered-har-${Date.now()}.json`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  }, [harData]);
-
   const filteredEntries = useMemo(() => {
     if (!harData) return [];
 
@@ -146,6 +123,29 @@ export const useHarData = (): UseHarDataReturn => {
 
     return entries;
   }, [harData, filters, searchIndex]);
+
+  const exportFilteredData = useCallback(() => {
+    if (!harData) return;
+
+    const dataToExport = {
+      log: {
+        ...harData.log,
+        entries: filteredEntries,
+      },
+    };
+
+    const blob = new Blob([JSON.stringify(dataToExport, null, 2)], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `filtered-har-${Date.now()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, [filteredEntries, harData]);
 
   return {
     harData,

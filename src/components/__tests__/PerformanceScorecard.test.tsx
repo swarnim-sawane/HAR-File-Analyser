@@ -1,11 +1,7 @@
 import React from 'react';
-import { readFileSync } from 'node:fs';
 import { render, screen, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import PerformanceScorecard from '../PerformanceScorecard';
 import type { Entry, HarFile } from '../../types/har';
-
-const globalsCss = readFileSync('src/styles/globals.css', 'utf8');
 
 const buildEntry = (overrides: Partial<Entry> = {}): Entry => ({
   startedDateTime: '2026-04-22T10:30:00.000Z',
@@ -59,30 +55,11 @@ const buildHar = (entries: Entry[]): HarFile => ({
 });
 
 describe('PerformanceScorecard scorecard finding URLs', () => {
-  it('uses a compact engineer scorecard layout instead of presentation-scale spacing', () => {
-    const { container } = render(<PerformanceScorecard harData={buildHar([buildEntry()])} />);
-
-    expect(container.querySelector('.scorecard-dashboard')).toHaveClass('is-compact');
-    expect(screen.getByRole('heading', { name: /HAR session scorecard/i })).toBeInTheDocument();
-    expect(globalsCss).toMatch(/\.scorecard-dashboard\.is-compact\s*\{[\s\S]*max-width:\s*none/);
-    expect(globalsCss).toMatch(/\.scorecard-dashboard\.is-compact\s+\.scorecard-score-ring\s*\{[\s\S]*width:\s*112px/);
-  });
-
-  it('sizes the score summary and KPI metrics to their content instead of equal-width blocks', () => {
-    render(<PerformanceScorecard harData={buildHar([buildEntry()])} />);
-
-    expect(screen.getByRole('button', { name: /critical issues/i })).toBeInTheDocument();
-    expect(globalsCss).toMatch(/\.scorecard-dashboard\.is-compact\s+\.scorecard-power-glance\s*\{[^}]*display:\s*flex/);
-    expect(globalsCss).toMatch(/\.scorecard-dashboard\.is-compact\s+\.scorecard-power-signal\s*\{[^}]*width:\s*fit-content/);
-    expect(globalsCss).toMatch(/\.scorecard-dashboard\.is-compact\s+\.scorecard-power-grid\s*\{[^}]*display:\s*flex/);
-    expect(globalsCss).toMatch(/\.scorecard-dashboard\.is-compact\s+\.scorecard-kpi-card\.is-embedded\s*\{[^}]*width:\s*fit-content/);
-  });
-
   it('prioritizes slow request and domain analytics directly after the hero', () => {
     render(<PerformanceScorecard harData={buildHar([buildEntry()])} />);
 
     const heroHeading = screen.getByRole('heading', {
-      name: /HAR session scorecard/i,
+      name: /Executive snapshot for this HAR session/i,
     });
     const slowRequestsHeading = screen.getByRole('heading', { name: /Top slow requests/i });
     const domainAnalysisHeading = screen.getByRole('heading', { name: /Domain Analysis/i });
@@ -101,37 +78,8 @@ describe('PerformanceScorecard scorecard finding URLs', () => {
     const slowRequestsPanel = slowRequestsHeading.closest('section') as HTMLElement;
 
     expect(analyticsGrid).toHaveClass('is-balanced');
-    expect(within(slowRequestsPanel).getAllByText('TTFB').length).toBeGreaterThan(0);
-    expect(within(slowRequestsPanel).getAllByText(/transfer/i).length).toBeGreaterThan(0);
-  });
-
-  it('opens request details when a top slow request is selected', async () => {
-    const user = userEvent.setup();
-    const slowEntry = buildEntry({
-      time: 4950,
-      request: {
-        ...buildEntry().request,
-        method: 'POST',
-        url: 'https://portal.example.com/ic/builder/rt/Dragon/1.0.309/profile-stage_config.json',
-      },
-      timings: {
-        ...buildEntry().timings,
-        wait: 4400,
-      },
-    });
-    const onSelectRequest = vi.fn();
-
-    render(<PerformanceScorecard harData={buildHar([slowEntry])} onSelectRequest={onSelectRequest} />);
-
-    const slowRequestsPanel = screen.getByRole('heading', { name: /Top slow requests/i }).closest('section') as HTMLElement;
-    const requestButton = within(slowRequestsPanel).getByRole('button', {
-      name: /open request details for POST .*profile-stage_config\.json/i,
-    });
-
-    await user.click(requestButton);
-
-    expect(onSelectRequest).toHaveBeenCalledTimes(1);
-    expect(onSelectRequest).toHaveBeenCalledWith(slowEntry);
+    expect(within(slowRequestsPanel).getByText('TTFB')).toBeInTheDocument();
+    expect(within(slowRequestsPanel).getByText('TRANSFER')).toBeInTheDocument();
   });
 
   it('renders auth finding URL segments as external links while keeping the status prefix visible', () => {

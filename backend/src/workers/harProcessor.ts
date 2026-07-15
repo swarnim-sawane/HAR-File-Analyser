@@ -2,8 +2,12 @@ import { Queue } from 'bullmq';
 import { getRedis, getMongoDb } from '../config/database';
 import { HAR_QUEUE_NAME } from '../config/queueNames';
 import { streamParseHar, ParsedHarEntry } from '../services/streamingParser';
-import { promises as fs } from 'fs';
+import os from 'os';
+import path from 'path';
 import { publishToFile } from '../utils/socketHelper';
+import { prepareHarEntryForStorage } from './harEntryStorage';
+import { logError, logInfo, measureDurationMs } from '../config/observability';
+import { getArtifactStore, materializeArtifact } from '../services/artifactStore';
 
 // ✅ REMOVED: import { emitToFile } from '../utils/socketHelper';
 // Now using Redis pub/sub instead
@@ -24,16 +28,14 @@ export function initHarQueue(): Queue {
 interface HarJobData {
   fileId: string;
   fileName: string;
-  filePath: string;
+  artifactKey?: string;
+  filePath?: string;
   fileSize: number;
   fileType: string;
   hash: string;
   uploadedAt: string;
   compressed?: string;
 }
-
-const MAX_HAR_PAYLOAD_TEXT_CHARS = 256 * 1024;
-const MONGO_TRUNCATION_REASON = 'mongo-document-size-limit';
 
 /**
  * Process HAR file: parse, store, and calculate stats
@@ -43,7 +45,9 @@ const MONGO_TRUNCATION_REASON = 'mongo-document-size-limit';
  * ✅ FIXED: Events emitted via Redis pub/sub for cross-process communication
  */
 export async function processHarFile(data: HarJobData): Promise<void> {
-  const { fileId, fileName, filePath, fileSize } = data;
+  const startedAt = Date.now();
+  const { fileId, fileName, fileSize } = data;
+  let materializedCleanup: (() => Promise<void>) | undefined;
   
   // Initialize redis if not already done
   if (!redis) {
@@ -55,6 +59,23 @@ export async function processHarFile(data: HarJobData): Promise<void> {
   try {
     // Update status
     await updateFileStatus(fileId, 'parsing');
+
+    let processingPath = data.filePath;
+    if (data.artifactKey) {
+      const destination = path.join(
+        process.env.WORKER_SCRATCH_DIR || path.join(os.tmpdir(), 'har-analyzer-worker'),
+        fileId,
+        path.basename(fileName),
+      );
+      const materialized = await materializeArtifact(
+        getArtifactStore(),
+        data.artifactKey,
+        destination,
+      );
+      processingPath = materialized.filePath;
+      materializedCleanup = materialized.cleanup;
+    }
+    if (!processingPath) throw new Error('Processing job is missing artifactKey and filePath.');
 
     // ✅ FIXED: Calculate stats on-the-fly instead of storing all entries
     const statsAccumulator = {
@@ -73,6 +94,7 @@ export async function processHarFile(data: HarJobData): Promise<void> {
     // Step 1: Parse HAR file and store entries in MongoDB
     const db = getMongoDb();
     const entriesCollection = db.collection('har_entries');
+    await entriesCollection.deleteMany({ fileId });
     let batchBuffer: ParsedHarEntry[] = [];
     // Larger batches = fewer MongoDB round-trips per file.
     // 2000 entries * ~2 KB avg = ~4 MB per insert, well within driver limits.
@@ -86,7 +108,7 @@ export async function processHarFile(data: HarJobData): Promise<void> {
     // domain string over and over (common in large HAR files).
     const domainCache = new Map<string, string>();
 
-    await streamParseHar(filePath, async (entry, index) => {
+    await streamParseHar(processingPath, async (entry, index) => {
       batchBuffer.push(entry);
 
       // ✅ FIXED: Update stats on-the-fly (pass domain cache to avoid re-parsing URLs)
@@ -96,11 +118,7 @@ export async function processHarFile(data: HarJobData): Promise<void> {
       // Batch insert every BATCH_SIZE entries
       if (batchBuffer.length >= BATCH_SIZE) {
         const createdAt = new Date();
-        const toInsert = batchBuffer.map(e => ({
-          ...sanitizeHarEntryForMongo(e),
-          fileId,
-          createdAt
-        }));
+        const toInsert = batchBuffer.map(e => prepareHarEntryForStorage(e, fileId, createdAt));
 
         await entriesCollection.insertMany(toInsert, { ordered: false });
         batchCount++;
@@ -122,11 +140,8 @@ export async function processHarFile(data: HarJobData): Promise<void> {
 
     // Insert remaining entries
     if (batchBuffer.length > 0) {
-      const toInsert = batchBuffer.map(e => ({
-        ...sanitizeHarEntryForMongo(e),
-        fileId,
-        createdAt: new Date()
-      }));
+      const createdAt = new Date();
+      const toInsert = batchBuffer.map(e => prepareHarEntryForStorage(e, fileId, createdAt));
       await entriesCollection.insertMany(toInsert, { ordered: false });
       batchBuffer = []; // Clear buffer
     }
@@ -144,10 +159,10 @@ export async function processHarFile(data: HarJobData): Promise<void> {
     await emitProgress(fileId, 'analyzing', 90);
 
     // Step 3: Store file metadata in MongoDB
-    await db.collection('har_files').insertOne({
+    await db.collection('har_files').replaceOne({ fileId }, {
       fileId,
       fileName,
-      filePath,
+      ...(data.artifactKey ? { artifactKey: data.artifactKey } : { filePath: data.filePath }),
       fileSize,
       hash: data.hash,
       totalEntries,
@@ -155,7 +170,7 @@ export async function processHarFile(data: HarJobData): Promise<void> {
       uploadedAt: new Date(data.uploadedAt),
       processedAt: new Date(),
       status: 'ready'
-    });
+    }, { upsert: true });
 
     // ✅ CRITICAL FIX: Wait for MongoDB write to be fully committed
     await new Promise(resolve => setTimeout(resolve, 200));
@@ -167,60 +182,30 @@ export async function processHarFile(data: HarJobData): Promise<void> {
     });
     
     await emitProgress(fileId, 'complete', 100);
+    logInfo('har.processing.completed', {
+      fileId,
+      fileSize,
+      totalEntries,
+      errors: stats.errors,
+      durationMs: measureDurationMs(startedAt),
+    });
     console.log(`✅ HAR file processing complete: ${fileId} (${totalEntries} entries)`);
     
   } catch (error) {
     console.error(`❌ HAR processing failed for ${fileId}:`, error);
+    logError('har.processing.failed', {
+      fileId,
+      fileSize,
+      error,
+      durationMs: measureDurationMs(startedAt),
+    });
     await updateFileStatus(fileId, 'error', { error: (error as Error).message });
     throw error;
+  } finally {
+    await materializedCleanup?.().catch((error) => {
+      console.warn(`Failed to remove worker scratch artifact for ${fileId}:`, error);
+    });
   }
-}
-
-export function sanitizeHarEntryForMongo(entry: ParsedHarEntry): ParsedHarEntry {
-  return {
-    ...entry,
-    request: sanitizeHarRequest(entry.request),
-    response: sanitizeHarResponse(entry.response),
-  };
-}
-
-function sanitizeHarRequest(request: any): any {
-  if (!request || typeof request !== 'object') return request;
-
-  return {
-    ...request,
-    postData: truncateTextContainer(request.postData),
-  };
-}
-
-function sanitizeHarResponse(response: any): any {
-  if (!response || typeof response !== 'object') return response;
-
-  return {
-    ...response,
-    content: truncateTextContainer(response.content),
-  };
-}
-
-function truncateTextContainer(container: any): any {
-  if (!container || typeof container !== 'object' || typeof container.text !== 'string') {
-    return container;
-  }
-
-  if (container.text.length <= MAX_HAR_PAYLOAD_TEXT_CHARS) {
-    return container;
-  }
-
-  return {
-    ...container,
-    text: container.text.slice(0, MAX_HAR_PAYLOAD_TEXT_CHARS),
-    _truncated: {
-      field: 'text',
-      originalLength: container.text.length,
-      retainedLength: MAX_HAR_PAYLOAD_TEXT_CHARS,
-      reason: MONGO_TRUNCATION_REASON,
-    },
-  };
 }
 
 /**

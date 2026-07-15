@@ -1,0 +1,89 @@
+version: 0.1
+component: build
+timeoutInSeconds: 7200
+runAs: root
+shell: bash
+failImmediatelyOnError: true
+
+env:
+  variables:
+    ORACLE_LINUX_IMAGE: "container-registry.oracle.com/os/oraclelinux:9-slim"
+    NODEJS_STREAM: "22"
+
+steps:
+  - type: Command
+    name: "Test application"
+    timeoutInSeconds: 2400
+    command: |
+      set -euo pipefail
+      cd "${OCI_PRIMARY_SOURCE_DIR}"
+      node --version
+      npm --version
+      npm ci
+      npm --prefix backend ci
+      npm run test
+      npm --prefix backend run test
+      npm run build
+      npm --prefix backend run build
+
+  - type: Command
+    name: "Build Oracle Node base"
+    timeoutInSeconds: 1800
+    command: |
+      set -euo pipefail
+      cd "${OCI_PRIMARY_SOURCE_DIR}"
+      podman build --platform linux/amd64 \
+        --build-arg "ORACLE_LINUX_IMAGE=${ORACLE_LINUX_IMAGE}" \
+        --build-arg "NODEJS_STREAM=${NODEJS_STREAM}" \
+        -f deploy/hosted/Dockerfile.node-base \
+        -t localhost/har-analyzer-node-base:build .
+
+  - type: Command
+    name: "Build Hosted Deployment images"
+    timeoutInSeconds: 2400
+    command: |
+      set -euo pipefail
+      cd "${OCI_PRIMARY_SOURCE_DIR}"
+      podman build --platform linux/amd64 \
+        --build-arg "NODE_IMAGE=localhost/har-analyzer-node-base:build" \
+        -f deploy/hosted/Dockerfile.app \
+        -t localhost/har-analyzer-app:build .
+      podman build --platform linux/amd64 \
+        --build-arg "NODE_IMAGE=localhost/har-analyzer-node-base:build" \
+        -f deploy/hosted/Dockerfile.worker \
+        -t localhost/har-analyzer-worker:build .
+
+  - type: Command
+    name: "Validate Hosted Deployment image contract"
+    timeoutInSeconds: 300
+    command: |
+      set -euo pipefail
+      for image in localhost/har-analyzer-app:build localhost/har-analyzer-worker:build; do
+        architecture="$(podman image inspect "${image}" --format '{{.Architecture}}')"
+        test "${architecture}" = "amd64"
+
+        image_user="$(podman image inspect "${image}" --format '{{.Config.User}}')"
+        test -n "${image_user}"
+        test "${image_user}" != "0"
+        test "${image_user}" != "root"
+
+        exposed_ports="$(podman image inspect "${image}" --format '{{json .Config.ExposedPorts}}')"
+        echo "${exposed_ports}" | grep -q '8080/tcp'
+
+        configured_environment="$(podman image inspect "${image}" --format '{{range .Config.Env}}{{println .}}{{end}}')"
+        if echo "${configured_environment}" | grep -Eq '^(PORT|K_SERVICE|K_CONFIGURATION|K_REVISION|OCI_RESOURCE_PRINCIPAL_VERSION|OCI_RESOURCE_PRINCIPAL_PRIVATE_PEM|OCI_RESOURCE_PRINCIPAL_RPST|KUBERNETES_[^=]*)='; then
+          echo "${image} declares a Hosted Deployment reserved environment variable." >&2
+          exit 1
+        fi
+      done
+
+outputArtifacts:
+  - name: har-analyzer-node-base-image
+    type: DOCKER_IMAGE
+    location: localhost/har-analyzer-node-base:build
+  - name: har-analyzer-app-image
+    type: DOCKER_IMAGE
+    location: localhost/har-analyzer-app:build
+  - name: har-analyzer-worker-image
+    type: DOCKER_IMAGE
+    location: localhost/har-analyzer-worker:build

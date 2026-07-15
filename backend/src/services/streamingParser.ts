@@ -47,7 +47,7 @@ export interface ParsedLogEntry {
 }
 
 const CORS_FAILURE_PATTERN =
-  /\b(CORS_BLOCKED|blocked by cors policy|cross-origin request blocked|preflight request[^.\n]*(?:fail|failed|doesn'?t pass|not pass|blocked|denied)|(?:no|missing)\s+['"]?access-control-allow-origin|access control check[^.\n]*(?:fail|failed|doesn'?t pass|not pass|blocked|denied)|cors policy[^.\n]*(?:fail|failed|blocked|denied))\b/i;
+  /\b(CORS_BLOCKED|blocked by cors policy|cross-origin request blocked|preflight request[^.\n]*(?:fail|failed|doesn'?t pass|not pass|blocked|denied)|(?:no|missing)\s+['"]?access-control-allow-origin|access-control-allow-origin[^.\n]*(?:missing|not present|absent|required)|access control check[^.\n]*(?:fail|failed|doesn'?t pass|not pass|blocked|denied)|cors policy[^.\n]*(?:fail|failed|blocked|denied))\b/i;
 const NETWORK_ERROR_PATTERN =
   /\b(failed to fetch|network ?error|net::err_|request failed|load failed|connection (?:refused|reset|timed out)|err_connection|err_failed)\b/i;
 const BROWSER_POLICY_PATTERN =
@@ -122,6 +122,32 @@ function normalizeLogLevel(level: unknown): string {
 /**
  * Stream parse HAR file without loading entire file into memory
  */
+function stripUtf8BomTransform(): Transform {
+  let isFirstChunk = true;
+
+  return new Transform({
+    transform(chunk, encoding, callback) {
+      try {
+        if (!isFirstChunk) {
+          callback(null, chunk);
+          return;
+        }
+
+        isFirstChunk = false;
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding as BufferEncoding);
+        if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
+          callback(null, buffer.subarray(3));
+          return;
+        }
+
+        callback(null, chunk);
+      } catch (error) {
+        callback(error as Error);
+      }
+    },
+  });
+}
+
 export async function streamParseHar(
   filePath: string,
   onEntry: (entry: ParsedHarEntry, index: number) => Promise<void>,
@@ -164,9 +190,9 @@ export async function streamParseHar(
 
   try {
     if (options?.compressed === 'gzip') {
-      await pipeline(fileStream, createGunzip(), JSONStream.parse('log.entries.*'), transformStage);
+      await pipeline(fileStream, createGunzip(), stripUtf8BomTransform(), JSONStream.parse('log.entries.*'), transformStage);
     } else {
-      await pipeline(fileStream, JSONStream.parse('log.entries.*'), transformStage);
+      await pipeline(fileStream, stripUtf8BomTransform(), JSONStream.parse('log.entries.*'), transformStage);
     }
   } catch (error) {
     console.error('HAR parsing error:', error);
@@ -465,6 +491,8 @@ function parseLogLine(line: string, index: number): ParsedLogEntry | null {
 
     // ✅ Common log patterns
     const patterns = [
+      // 2026-05-26T10:00:00.000Z ERROR Message
+      /^(\d{4}-\d{2}-\d{2}T[\d:.]+(?:Z|[+-]\d{2}:?\d{2})?)\s+(\w+)\s+(.+)$/,
       // [2024-01-15 10:30:45] ERROR: Message
       /^\[([\d\-\s:.,]+)\]\s+(\w+):\s+(.+)$/,
       // 2024-01-15 10:30:45 ERROR Message

@@ -84,18 +84,6 @@ class WebSocketClient {
       this.emit('indexing:progress', data);
     });
 
-    // AI event listeners
-    this.socket.on('ai:stream', (data) => {
-      this.emit('ai:stream', data);
-    });
-
-    this.socket.on('ai:complete', (data) => {
-      this.emit('ai:complete', data);
-    });
-
-    this.socket.on('ai:error', (data) => {
-      this.emit('ai:error', data);
-    });
   }
 
   subscribeToFile(fileId: string): void {
@@ -107,16 +95,6 @@ class WebSocketClient {
       console.log('Subscribed to file:', fileId);
     } else {
       console.warn('Socket not connected, will subscribe on connect');
-    }
-  }
-
-  sendAiQuery(fileId: string, query: string): void {
-    if (this.socket?.connected) {
-      this.socket.emit('ai:query', { fileId, query, timestamp: Date.now() });
-      console.log('AI query sent:', fileId, query);
-    } else {
-      console.error('WebSocket not connected, cannot send AI query');
-      throw new Error('WebSocket not connected');
     }
   }
 

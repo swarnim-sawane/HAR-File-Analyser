@@ -207,7 +207,7 @@ const ConsoleLogList: React.FC<ConsoleLogListProps> = ({
     return priorities[getConsoleDisplayLevel(entry)] || 0;
   };
 
-  const sortEntries = (items: ConsoleLogEntry[]) =>
+  const sortEntries = useCallback((items: ConsoleLogEntry[]) =>
     [...items].sort((a, b) => {
       let comparison = 0;
 
@@ -221,9 +221,9 @@ const ConsoleLogList: React.FC<ConsoleLogListProps> = ({
       }
 
       return sortDirection === 'asc' ? comparison : -comparison;
-    });
+    }), [sortDirection, sortField]);
 
-  const sortedEntries = useMemo(() => sortEntries(entries), [entries, sortDirection, sortField]);
+  const sortedEntries = useMemo(() => sortEntries(entries), [entries, sortEntries]);
 
   const visibleSummary = useMemo(() => {
     let errorCount = 0;
@@ -400,7 +400,7 @@ const ConsoleLogList: React.FC<ConsoleLogListProps> = ({
         })),
       ];
     });
-  }, [groupedEntries, sortedEntries, sortDirection, sortField]);
+  }, [groupedEntries, sortedEntries, sortEntries]);
 
   const virtualLayout = useMemo(() => {
     const offsets: number[] = [];

@@ -30,6 +30,14 @@ vi.mock('../ConsoleLogAiInsights', () => ({
   default: () => <div data-testid="console-ai-insights">Console AI insights mock</div>,
 }));
 
+vi.mock('../Toolbar', () => ({
+  default: () => <div>Console toolbar mock</div>,
+}));
+
+vi.mock('../FloatingAiChat', () => ({
+  default: () => null,
+}));
+
 describe('ConsoleLogTabContent', () => {
   beforeEach(() => {
     apiClientMocks.getLogStatus.mockReset();
@@ -110,6 +118,10 @@ describe('ConsoleLogTabContent', () => {
         initialData={null}
         isActive={true}
         backendUrl="http://localhost:4000"
+        recentFiles={[]}
+        onAddNewTab={vi.fn()}
+        onLoadRecentNewTab={vi.fn()}
+        onClearRecent={vi.fn()}
       />,
     );
 
@@ -143,6 +155,10 @@ describe('ConsoleLogTabContent', () => {
         initialData={null}
         isActive={true}
         backendUrl="http://localhost:4000"
+        recentFiles={[]}
+        onAddNewTab={vi.fn()}
+        onLoadRecentNewTab={vi.fn()}
+        onClearRecent={vi.fn()}
       />,
     );
 
@@ -169,6 +185,10 @@ describe('ConsoleLogTabContent', () => {
         initialData={null}
         isActive={true}
         backendUrl="http://localhost:4000"
+        recentFiles={[]}
+        onAddNewTab={vi.fn()}
+        onLoadRecentNewTab={vi.fn()}
+        onClearRecent={vi.fn()}
       />,
     );
 

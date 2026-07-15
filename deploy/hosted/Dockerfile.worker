@@ -15,7 +15,6 @@ FROM ${NODE_IMAGE} AS runtime
 ENV NODE_ENV=production \
     HOSTED_DEPLOYMENT=true \
     HOST=0.0.0.0 \
-    PORT=8080 \
     HOME=/tmp \
     TMPDIR=/tmp \
     WORKER_SCRATCH_DIR=/tmp/har-analyzer-worker

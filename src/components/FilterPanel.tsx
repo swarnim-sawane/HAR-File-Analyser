@@ -5,13 +5,9 @@ import { FilterOptions } from '../types/har';
 interface FilterPanelProps {
   filters: FilterOptions;
   onFilterChange: (filters: Partial<FilterOptions>) => void;
-  fileSummary?: {
-    name: string;
-    meta: string;
-  };
 }
 
-const FilterPanel: React.FC<FilterPanelProps> = ({ filters, onFilterChange, fileSummary }) => {
+const FilterPanel: React.FC<FilterPanelProps> = ({ filters, onFilterChange }) => {
   const handleStatusCodeChange = (code: keyof FilterOptions['statusCodes']) => {
     onFilterChange({
       statusCodes: {
@@ -31,14 +27,6 @@ const FilterPanel: React.FC<FilterPanelProps> = ({ filters, onFilterChange, file
 
   return (
     <div className="filter-panel har-filter-panel">
-      {fileSummary && (
-        <div className="filter-file-summary" aria-label="Active file">
-          <span className="filter-file-kicker">File</span>
-          <strong title={fileSummary.name}>{fileSummary.name}</strong>
-          <span>{fileSummary.meta}</span>
-        </div>
-      )}
-
       <div className="filter-section">
         <h3>Filter by HTTP Status Codes</h3>
         <div className="checkbox-group">

@@ -168,6 +168,98 @@ function buildAnalyzerEvidenceInsights(
   ];
 }
 
+function firstHarEvidenceLine(context: string, headingPattern: RegExp): string | null {
+  const lines = context.split(/\r?\n/);
+  const headingIndex = lines.findIndex((line) => headingPattern.test(line));
+  if (headingIndex === -1) return null;
+
+  return lines
+    .slice(headingIndex + 1)
+    .find((line) => /\bstatus:\d{3}\b/i.test(line) || /\bstatus\b[^0-9]{0,8}\d{3}\b/i.test(line))
+    ?.trim() ?? null;
+}
+
+function inferOracleProductFromHarLine(line: string): { product?: string; component?: string } {
+  if (/idcs|oauth2|openid|sso|token/i.test(line)) {
+    return { product: 'IDCS', component: 'Authentication/session flow' };
+  }
+
+  if (/\/ords(?:\/|$)|ords\./i.test(line)) {
+    return { product: 'ORDS', component: 'ORDS REST endpoint' };
+  }
+
+  if (/vbcs|visualbuilder|visual-builder|\/ic\/builder|vb\./i.test(line)) {
+    return { product: 'VBCS', component: 'Visual Builder application' };
+  }
+
+  return {};
+}
+
+function buildHarServerErrorFinding(context: string): InsightFinding | null {
+  const evidenceLine = firstHarEvidenceLine(context, /5XX SERVER ERRORS/i);
+  if (!evidenceLine) return null;
+
+  const product = inferOracleProductFromHarLine(evidenceLine);
+
+  return {
+    severity: /x\d+\s+failures|\brepeated\b/i.test(context) ? 'critical' : 'high',
+    title: 'HTTP 5xx failure detected in HAR',
+    ...product,
+    what: `The HAR contains a server-side failure that should be triaged before successful 2xx performance signals: ${evidenceLine}.`,
+    why: 'A 5xx response means the browser reached a backend or gateway layer that failed while handling the request; this is higher priority than slow successful responses.',
+    evidence: evidenceLine,
+    fix: 'Route this to the owning backend or platform team with the failing endpoint, status code, timestamp, and server-side logs for the same request window.',
+    srGuidance:
+      'Collect application server logs, gateway/proxy logs, and any ORDS or WebLogic diagnostic logs around the failed request timestamp.',
+  };
+}
+
+function buildHarClientErrorFinding(context: string): InsightFinding | null {
+  const evidenceLine = firstHarEvidenceLine(context, /4XX CLIENT ERRORS/i);
+  if (!evidenceLine) return null;
+
+  const product = inferOracleProductFromHarLine(evidenceLine);
+  const isAuth = /\bstatus:(401|403)\b|\b(401|403)\b/i.test(evidenceLine);
+
+  return {
+    severity: isAuth ? 'high' : 'medium',
+    title: isAuth
+      ? 'Authentication or authorization failure detected in HAR'
+      : 'HTTP 4xx failure detected in HAR',
+    ...product,
+    what: `The HAR contains a client/error-tier response that is likely relevant to the reported issue: ${evidenceLine}.`,
+    why: isAuth
+      ? '401/403 responses usually indicate an authentication, authorization, token, or stale-session problem and should be checked before performance-only findings.'
+      : '4xx responses indicate the browser requested a resource or endpoint the server rejected or could not resolve.',
+    evidence: evidenceLine,
+    fix: isAuth
+      ? 'Validate the sign-in/sign-out sequence, token/session freshness, IDCS/OAM policy, and the application redirect target for this request.'
+      : 'Validate the requested endpoint, route/module registration, proxy rewrite rule, and application deployment mapping for this request.',
+    srGuidance: isAuth
+      ? 'Collect IDCS/OAM audit events, browser timestamps, user identifier, and application session logs around the failing 401/403 request.'
+      : 'Collect application routing/deployment details and server or proxy access logs for the failing 4xx request.',
+  };
+}
+
+function buildHarDeterministicInsights(context: string, sourceType: InsightsSourceType): InsightSection[] {
+  if (sourceType !== 'har') return [];
+
+  const findings = [
+    buildHarServerErrorFinding(context),
+    buildHarClientErrorFinding(context),
+  ].filter((finding): finding is InsightFinding => Boolean(finding));
+
+  if (findings.length === 0) return [];
+
+  return [
+    {
+      type: 'critical_issues',
+      title: 'Critical Issues',
+      findings,
+    },
+  ];
+}
+
 export function buildDeterministicInsights(
   context: string,
   sourceType: InsightsSourceType = 'har'
@@ -183,6 +275,7 @@ export function buildDeterministicInsights(
   }
 
   sections.push(...buildAnalyzerEvidenceInsights(context, sourceType));
+  sections.push(...buildHarDeterministicInsights(context, sourceType));
 
   return sections;
 }

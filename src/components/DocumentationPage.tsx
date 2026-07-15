@@ -9,20 +9,16 @@ import {
 } from '../content/documentation';
 import {
   ArrowLeftIcon,
-  ArrowRightLongIcon,
-  CodeIcon,
   ConsoleIcon,
   GlobeIcon,
   NetworkIcon,
   RouteIcon,
-  ServerIcon,
   ShieldIcon,
   SparklesIcon,
 } from './Icons';
 
 interface DocumentationPageProps {
   onBackToAnalyzer?: () => void;
-  onOpenMcpServices?: () => void;
 }
 
 const iconMap = {
@@ -34,30 +30,11 @@ const iconMap = {
   sparkles: SparklesIcon,
 };
 
-const guideGroups = [
-  {
-    title: 'Start',
-    ids: ['what-this-product-is', 'workspace-layout', 'supported-file-types'],
-  },
-  {
-    title: 'Analyze',
-    ids: ['visual-analysis-har', 'visual-analysis-logs', 'basic-viewers', 'ai-diagnosis'],
-  },
-  {
-    title: 'Operate',
-    ids: ['common-scenarios', 'handoff-quality', 'troubleshooting'],
-  },
-];
-
 const getHashSectionId = () => window.location.hash.replace(/^#/, '');
 
-const DocumentationPage: React.FC<DocumentationPageProps> = ({ onBackToAnalyzer, onOpenMcpServices }) => {
+const DocumentationPage: React.FC<DocumentationPageProps> = ({ onBackToAnalyzer }) => {
   const pageRef = useRef<HTMLDivElement>(null);
   const sectionIds = useMemo(() => documentationSections.map((section) => section.id), []);
-  const sectionById = useMemo(
-    () => new Map(documentationSections.map((section) => [section.id, section])),
-    []
-  );
   const [activeSectionId, setActiveSectionId] = useState<string | null>(() => {
     const initialHash = getHashSectionId();
     return sectionIds.includes(initialHash) ? initialHash : null;
@@ -143,113 +120,37 @@ const DocumentationPage: React.FC<DocumentationPageProps> = ({ onBackToAnalyzer,
     scrollToSection(sectionId, 'smooth');
   };
 
-  const handleMcpGuideClick = () => {
-    if (onOpenMcpServices) {
-      onOpenMcpServices();
-      return;
-    }
-
-    window.history.pushState({}, '', '/docs/mcp');
-    window.dispatchEvent(new PopStateEvent('popstate'));
-  };
-
   return (
-    <div ref={pageRef} className="docs-page docs-reference-page">
-      <div className="docs-shell docs-reference-shell">
-        <section className="docs-index-hero" aria-labelledby="documentation-title">
-          <div className="docs-index-hero-copy">
+    <div ref={pageRef} className="docs-page">
+      <div className="docs-shell">
+        <section className="docs-hero" aria-labelledby="documentation-title">
+          <div className="docs-hero-copy">
             <p className="docs-eyebrow">{documentationIntro.eyebrow}</p>
             <h1 id="documentation-title">{documentationIntro.title}</h1>
-            <p>{documentationIntro.lead}</p>
+            <p className="docs-lead">{documentationIntro.lead}</p>
           </div>
-          <div className="docs-index-actions">
-            <button type="button" className="docs-primary-button" onClick={handleMcpGuideClick}>
-              <ServerIcon />
-              <span>MCP Access</span>
-            </button>
-            {onBackToAnalyzer && (
-              <button type="button" className="docs-secondary-button" onClick={onBackToAnalyzer}>
-                <ArrowLeftIcon />
-                <span>Back to Analyzer</span>
-              </button>
-            )}
-          </div>
-        </section>
-
-        <section className="docs-index-overview" aria-label="Documentation overview">
-          <article className="docs-index-card docs-index-card--wide">
-            <p className="docs-eyebrow">Start here</p>
-            <h2>Use the right guide for the job</h2>
+          <div className="docs-hero-note">
+            <strong>Why this page exists</strong>
             <p>{documentationIntro.note}</p>
-            <div className="docs-index-stats">
-              {documentationHighlights.map((item) => (
-                <span key={item.label}>
-                  <strong>{item.label}</strong>
-                  {item.value}
-                </span>
-              ))}
+          </div>
+        </section>
+
+        <section className="docs-highlight-strip" aria-label="Documentation highlights">
+          {documentationHighlights.map((item) => (
+            <div key={item.label} className="docs-highlight-item">
+              <span>{item.label}</span>
+              <strong>{item.value}</strong>
             </div>
-          </article>
-
-          <article className="docs-index-card docs-integration-card">
-            <p className="docs-eyebrow">Developer integrations</p>
-            <h2>MCP Server</h2>
-            <p>
-              Configure an approved LLM client to call analyzer tools, upload evidence, inspect exact rows,
-              ask AI Diagnosis, and open workbench links.
-            </p>
-            <button type="button" className="docs-link-button" onClick={handleMcpGuideClick}>
-              <CodeIcon />
-              <span>Open MCP setup</span>
-              <ArrowRightLongIcon />
-            </button>
-          </article>
+          ))}
         </section>
 
-        <section className="docs-guide-index" aria-labelledby="docs-guide-index-title">
-          <div className="docs-section-heading">
-            <p className="docs-eyebrow">Guides</p>
-            <h2 id="docs-guide-index-title">Product documentation</h2>
-            <p>Pick the workflow you need, or use the table of contents below for the full reference.</p>
-          </div>
-          <div className="docs-guide-groups">
-            {guideGroups.map((group) => (
-              <article key={group.title} className="docs-guide-group">
-                <h3>{group.title}</h3>
-                <div>
-                  {group.ids.map((sectionId) => {
-                    const section = sectionById.get(sectionId);
-                    if (!section) return null;
-
-                    const Icon = iconMap[section.icon];
-
-                    return (
-                      <a
-                        key={section.id}
-                        href={`#${section.id}`}
-                        className="docs-guide-link"
-                        onClick={(event) => handleNavClick(event, section.id)}
-                      >
-                        <Icon />
-                        <span>
-                          <strong>{section.title}</strong>
-                          <small>{section.summary}</small>
-                        </span>
-                      </a>
-                    );
-                  })}
-                </div>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <div className="docs-content-shell docs-reference-content">
+        <div className="docs-content-shell">
           <aside className="docs-sidebar" aria-labelledby="docs-nav-title">
             <div className="docs-sidebar-panel">
               <div className="docs-sidebar-head">
-                <p className="docs-eyebrow">On This Page</p>
-                <h2 id="docs-nav-title">Reference</h2>
+                <p className="docs-eyebrow">Quick Links</p>
+                <h2 id="docs-nav-title">Jump to section</h2>
+                <p className="docs-sidebar-copy">Use this panel to move through the guide without losing your reading position.</p>
               </div>
               <nav className="docs-sidebar-nav" aria-label="Documentation section navigation">
                 {documentationSections.map((section, index) => {
@@ -278,7 +179,7 @@ const DocumentationPage: React.FC<DocumentationPageProps> = ({ onBackToAnalyzer,
                 const Icon = iconMap[section.icon];
 
                 return (
-                  <section key={section.id} id={section.id} className="docs-section docs-reference-section">
+                  <section key={section.id} id={section.id} className="docs-section">
                     <div className="docs-section-header">
                       <div className="docs-section-marker">
                         <span>{String(index + 1).padStart(2, '0')}</span>

@@ -29,7 +29,7 @@ describe('Redwood theme surface smoke tests', () => {
 
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ connected: true }),
+      json: async () => ({ configured: true, connected: true }),
     } as Response) as typeof fetch;
   });
 
@@ -43,12 +43,8 @@ describe('Redwood theme surface smoke tests', () => {
     render(<DocumentationPage onBackToAnalyzer={vi.fn()} />);
 
     expect(document.documentElement.dataset.theme).toBe('redwood');
-    expect(screen.getByRole('heading', { name: /support analyzer workbench documentation/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /har file analyzer documentation/i })).toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: /documentation section navigation/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /mcp access/i })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /mcp server/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /open mcp setup/i })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /product documentation/i })).toBeInTheDocument();
   });
 
   it('renders the compare workspace in Redwood mode for both upload and active views', async () => {
@@ -115,7 +111,7 @@ describe('Redwood theme surface smoke tests', () => {
     const user = userEvent.setup();
     render(<FloatingAiChat />);
 
-    await user.click(screen.getByRole('button', { name: /ai assistant/i }));
+    await user.click(await screen.findByRole('button', { name: /ai assistant/i }));
 
     expect(screen.getByRole('heading', { name: /ai assistant/i })).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/ask about this har file/i)).toBeInTheDocument();

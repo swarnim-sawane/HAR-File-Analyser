@@ -13,6 +13,7 @@ import {
   normalizeInsightsSourceType,
   type InsightsSourceType,
 } from '../utils/insightRules';
+import { getOpenAiConfig, getOpenAiConfigurationError, type OpenAiConfig } from '../config/openAiConfig';
 
 const router = Router();
 type FetchResponse = Awaited<ReturnType<typeof fetch>>;
@@ -57,6 +58,19 @@ interface InsightsResult {
   }>;
 }
 
+export interface InsightsGenerationResponse {
+  result: InsightsResult;
+  ai: {
+    source: 'openai' | 'deterministic_fallback';
+    fallbackReason?: string;
+  };
+}
+
+export interface GenerateInsightsOptions {
+  allowDeterministicFallback?: boolean;
+  requestId?: string;
+}
+
 const HEALTH_VALUES: HealthLevel[] = ['critical', 'degraded', 'warning', 'healthy'];
 const SECTION_VALUES: InsightSectionType[] = [
   'analyzer_evidence',
@@ -96,6 +110,9 @@ const HARD_TIMEOUT_MS = 105000;
 // exceeding the 105s hard limit. Previously 30s was cutting off legitimate slow responses.
 const UPSTREAM_INACTIVITY_MS = 55000;
 const STATUS_UPDATE_INTERVAL_MS = 5000;
+const MAX_AI_CONTEXT_CHARS = 1_000_000;
+const MAX_AI_CHAT_MESSAGES = 50;
+const MAX_AI_CHAT_INPUT_CHARS = 500_000;
 
 const INSIGHTS_SYSTEM_PROMPT = `You are an Oracle Support Analyst helping L1/L2 engineers triage issues from HAR traces and browser console logs.
 Return ONLY a strict JSON object. No markdown. No prose outside JSON.
@@ -120,6 +137,9 @@ Console priority override:
 - blocked by CORS policy, failed preflight access-control checks, and missing Access-Control-Allow-Origin are high-priority root-cause signals.
 - TypeError: Failed to fetch is a browser symptom when paired with CORS/preflight evidence, not the root cause.
 - For CORS evidence on /ords/ endpoints, name the owning layer as ORDS/proxy CORS, not generic VBCS. Recommend fixing OPTIONS/preflight headers and allowed origins.
+- If CORS_PREFLIGHT_EVIDENCE shows an OPTIONS response without Access-Control-Allow-Origin, or a paired request with status=0, treat that as the root CORS/preflight failure before any favicon/static 401.
+- NETWORK FAILURES / STATUS 0 indicates a browser-blocked, aborted, or otherwise response-less request. Correlate it with CORS_PREFLIGHT_EVIDENCE before calling it connectivity.
+- LOW-PRIORITY STATIC ASSET ERRORS are supporting noise unless the main document, app bundle, or API call is affected. Do not name favicon.ico, icons, fonts, maps, or images as root cause when application failure evidence exists.
 
 Context field guide:
 - 5XX SERVER ERRORS / HTTP 5XX SERVER ERRORS IN LOGS sections contain the highest-priority findings — always produce at least one finding for every distinct 5xx endpoint before reporting performance issues.
@@ -137,7 +157,7 @@ function setSseHeaders(res: ExpressResponse): void {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   // Flush headers immediately so the client receives the SSE opening and initial
-  // status events before Node.js pauses execution waiting for the OCA upstream fetch.
+  // status events before Node.js pauses execution waiting for the OpenAI upstream fetch.
   res.flushHeaders();
 }
 
@@ -147,6 +167,175 @@ function writeSseEvent(res: ExpressResponse, payload: unknown): void {
 
 function writeSseDone(res: ExpressResponse): void {
   res.write('data: [DONE]\n\n');
+}
+
+interface AiMessage {
+  role: 'system' | 'developer' | 'user' | 'assistant';
+  content: string;
+}
+
+export interface AiPayloadValidationError {
+  status: 400 | 413;
+  error: string;
+}
+
+export function validateAiChatPayload(
+  messages: unknown,
+  systemPrompt: unknown,
+): AiPayloadValidationError | null {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return { status: 400, error: 'messages array required' };
+  }
+
+  if (messages.length > MAX_AI_CHAT_MESSAGES) {
+    return { status: 413, error: `A maximum of ${MAX_AI_CHAT_MESSAGES} chat messages is allowed.` };
+  }
+
+  if (systemPrompt !== undefined && typeof systemPrompt !== 'string') {
+    return { status: 400, error: 'systemPrompt must be a string' };
+  }
+
+  let totalChars = typeof systemPrompt === 'string' ? systemPrompt.length : 0;
+  for (const message of messages) {
+    if (
+      !message
+      || typeof message !== 'object'
+      || !['user', 'assistant'].includes(String((message as { role?: unknown }).role))
+      || typeof (message as { content?: unknown }).content !== 'string'
+    ) {
+      return { status: 400, error: 'Each message must contain a user or assistant role and string content.' };
+    }
+    totalChars += (message as { content: string }).content.length;
+  }
+
+  if (totalChars > MAX_AI_CHAT_INPUT_CHARS) {
+    return { status: 413, error: 'AI chat input is too large.' };
+  }
+
+  return null;
+}
+
+interface OpenAiResponseOptions {
+  stream: boolean;
+  maxOutputTokens?: number;
+  signal?: AbortSignal;
+}
+
+function buildOpenAiResponsesPayload(
+  config: OpenAiConfig,
+  messages: AiMessage[],
+  options: OpenAiResponseOptions,
+): Record<string, unknown> {
+  const instructions = messages
+    .filter((message) => message.role === 'system' || message.role === 'developer')
+    .map((message) => message.content.trim())
+    .filter(Boolean)
+    .join('\n\n');
+
+  const input = messages
+    .filter((message) => (message.role === 'user' || message.role === 'assistant') && message.content.trim())
+    .map((message) => ({
+      role: message.role === 'assistant' ? 'assistant' : 'user',
+      content: message.content,
+    }));
+
+  return {
+    model: config.model,
+    ...(instructions ? { instructions } : {}),
+    input,
+    stream: options.stream,
+    // Diagnostic artifacts can contain sensitive operational evidence. Do not retain responses.
+    store: false,
+    ...(options.maxOutputTokens ? { max_output_tokens: options.maxOutputTokens } : {}),
+  };
+}
+
+async function fetchOpenAiResponses(
+  messages: AiMessage[],
+  options: OpenAiResponseOptions,
+): Promise<FetchResponse> {
+  const config = getOpenAiConfig();
+  if (!config) throw new Error(getOpenAiConfigurationError());
+
+  return fetch(`${config.baseUrl}/responses`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${config.apiKey}`,
+    },
+    body: JSON.stringify(buildOpenAiResponsesPayload(config, messages, options)),
+    signal: options.signal,
+  });
+}
+
+function getOpenAiStreamDelta(payload: unknown): string {
+  if (!payload || typeof payload !== 'object') return '';
+
+  const event = payload as {
+    type?: unknown;
+    delta?: unknown;
+    error?: { message?: unknown };
+  };
+
+  if (event.type === 'error' || event.type === 'response.failed') {
+    const message = typeof event.error?.message === 'string'
+      ? event.error.message
+      : 'OpenAI response failed.';
+    throw new Error(message);
+  }
+
+  if (
+    (event.type === 'response.output_text.delta' || event.type === 'response.refusal.delta') &&
+    typeof event.delta === 'string'
+  ) {
+    return event.delta;
+  }
+
+  return '';
+}
+
+async function readOpenAiResponseStream(
+  response: FetchResponse,
+  onDelta?: (delta: string) => void,
+): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('OpenAI returned no response body.');
+
+  const decoder = new TextDecoder();
+  let buffered = '';
+  let output = '';
+
+  const processEvent = (rawEvent: string) => {
+    for (const line of rawEvent.split(/\r?\n/)) {
+      if (!line.startsWith('data:')) continue;
+      const data = line.slice(5).trim();
+      if (!data || data === '[DONE]') continue;
+
+      try {
+        const delta = getOpenAiStreamDelta(JSON.parse(data));
+        if (!delta) continue;
+        output += delta;
+        onDelta?.(delta);
+      } catch (error) {
+        if (error instanceof SyntaxError) continue;
+        throw error;
+      }
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffered += decoder.decode(value, { stream: true });
+    const events = buffered.split(/\r?\n\r?\n/);
+    buffered = events.pop() ?? '';
+    events.forEach(processEvent);
+  }
+
+  buffered += decoder.decode();
+  if (buffered.trim()) processEvent(buffered);
+  return output;
 }
 
 function writeStatusEvent(
@@ -455,143 +644,46 @@ function parseInsightsPayload(rawContent: string): unknown {
   }
 }
 
-// ─── Multi-backend helpers ────────────────────────────────────────────────────
-
-const OCA_CONNECT_TIMEOUT_MS = 10000;
-
-/**
- * Fetches a streaming POST from OCA with a connect timeout enforced independently
- * from the route-level timeouts.
- */
-async function fetchOcaInsightsStream(
-  messages: Array<{ role: string; content: string }>,
-  maxTokens: number,
-  upstreamAbort: AbortSignal
-): Promise<FetchResponse> {
-  const ocaBaseUrl = process.env.OCA_BASE_URL;
-  const ocaToken = process.env.OCA_TOKEN;
-
-  if (!ocaBaseUrl || !ocaToken) {
-    throw new Error('OCA is not configured (missing OCA_BASE_URL or OCA_TOKEN)');
-  }
-
-  const connectController = new AbortController();
-  const connectTimer = setTimeout(
-    () => connectController.abort(new Error(`OCA connect timeout after ${OCA_CONNECT_TIMEOUT_MS}ms`)),
-    OCA_CONNECT_TIMEOUT_MS
-  );
-
-  // Mirror upstream aborts into the connect-timeout controller.
-  const onUpstreamAbort = () => connectController.abort(upstreamAbort.reason);
-  upstreamAbort.addEventListener('abort', onUpstreamAbort, { once: true });
-
-  try {
-    return await fetch(`${ocaBaseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${ocaToken}`,
-      },
-      body: JSON.stringify({
-        model: process.env.OCA_MODEL || 'oca/gpt5',
-        messages,
-        stream: true,
-        temperature: 0.15,
-        max_tokens: maxTokens,
-      }),
-      signal: connectController.signal,
-    });
-  } finally {
-    clearTimeout(connectTimer);
-    upstreamAbort.removeEventListener('abort', onUpstreamAbort);
-  }
+function detectedProductsPayload(detectedProducts: DetectedOracleProduct[]) {
+  return detectedProducts.map(p => ({
+    product: p.product,
+    shortName: p.shortName,
+    components: p.components,
+    matchedUrls: p.matchedUrls,
+  }));
 }
 
-// POST /api/ai/chat - proxy to OCA, stream response back
-router.post('/chat', async (req: Request, res: ExpressResponse) => {
-  const { messages, systemPrompt } = req.body;
+function buildDeterministicFallbackResponse(
+  context: string,
+  sourceType: InsightsSourceType,
+  detectedProducts: DetectedOracleProduct[],
+  fallbackReason: string,
+): InsightsGenerationResponse {
+  const deterministicSections = buildDeterministicInsights(context, sourceType);
+  const result: InsightsResult = {
+    overallHealth: deterministicSections.length > 0
+      ? deriveOverallHealth(deterministicSections)
+      : 'warning',
+    summary: fallbackSummary(deterministicSections, sourceType),
+    sections: deterministicSections,
+    detectedProducts: detectedProductsPayload(detectedProducts),
+  };
 
-  if (!messages || !Array.isArray(messages)) {
-    return res.status(400).json({ error: 'messages array required' });
-  }
+  return {
+    result,
+    ai: {
+      source: 'deterministic_fallback',
+      fallbackReason,
+    },
+  };
+}
 
-  // ── Oracle product detection ─────────────────────────────────────────────
-  // Scan the system prompt (which contains the full file context) and the latest
-  // user message for Oracle product URL patterns. Inject the same product KB
-  // that the /insights endpoint uses — closing the gap between the two pipelines.
-  const latestUserContent = [...messages].reverse().find(
-    (m: { role: string; content: string }) => m.role === 'user'
-  )?.content ?? '';
-  const detectionSource = `${systemPrompt ?? ''}\n${latestUserContent}`;
-  const chatDetectedProducts = detectOracleProductsFromContext(detectionSource);
-  const chatOracleKb = chatDetectedProducts.length > 0
-    ? buildOracleKbPrompt(chatDetectedProducts)
-    : '';
-
-  // Append Oracle KB and the analysis-order rule to whatever system prompt the
-  // frontend already built (analyst persona + file context). This keeps the
-  // frontend in control of the persona while the backend enriches it.
-  let enrichedSystemPrompt = systemPrompt ?? '';
-  if (chatOracleKb) {
-    enrichedSystemPrompt += `\n\n${chatOracleKb}`;
-    enrichedSystemPrompt += `\nOracle specificity rule: always name the detected Oracle product and component in every finding.`;
-  }
-  enrichedSystemPrompt += `\n\nAnalysis priority rule: exhaust 5xx server errors before 4xx, 4xx before 3xx, 3xx before 2xx performance. Never report a lower-tier finding first.`;
-
-  const allMessages = enrichedSystemPrompt
-    ? [{ role: 'system', content: enrichedSystemPrompt }, ...messages]
-    : messages;
-
-  try {
-    const ocaResponse = await fetch(
-      `${process.env.OCA_BASE_URL}/chat/completions`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${process.env.OCA_TOKEN}`,
-        },
-        body: JSON.stringify({
-          model: process.env.OCA_MODEL || 'oca/gpt-5.4',
-          messages: allMessages,
-          stream: true,
-        }),
-      }
-    );
-
-    if (!ocaResponse.ok) {
-      const err = await ocaResponse.text();
-      return res.status(ocaResponse.status).json({ error: err });
-    }
-
-    setSseHeaders(res);
-
-    const reader = ocaResponse.body?.getReader();
-    const decoder = new TextDecoder();
-
-    if (!reader) return res.status(500).json({ error: 'No response body' });
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      res.write(decoder.decode(value, { stream: true }));
-    }
-
-    res.end();
-  } catch (err) {
-    console.error('OCA proxy error:', err);
-    res.status(500).json({ error: 'Failed to reach OCA API' });
-  }
-});
-
-router.post('/insights', async (req: Request, res: ExpressResponse) => {
-  const { context, sourceType: rawSourceType } = req.body ?? {};
-
-  if (!context || typeof context !== 'string' || !context.trim()) {
-    return res.status(400).json({ error: 'context is required' });
-  }
-
-  const requestId = randomUUID();
+export async function generateInsightsForContext(
+  context: string,
+  rawSourceType: unknown = 'har',
+  options: GenerateInsightsOptions = {},
+): Promise<InsightsGenerationResponse> {
+  const requestId = options.requestId ?? randomUUID();
   const sourceType = normalizeInsightsSourceType(rawSourceType);
   const detectedProducts = detectOracleProductsFromContext(context);
   const oracleContext = buildOracleKbPrompt(detectedProducts);
@@ -606,6 +698,10 @@ router.post('/insights', async (req: Request, res: ExpressResponse) => {
   }${oracleSpecificityInstruction}`;
 
   const log = (msg: string) => console.info(`[ai-insights:${requestId}] ${msg}`);
+  const fallback = (reason: string) => {
+    log(`fallback | ${reason}`);
+    return buildDeterministicFallbackResponse(context, sourceType, detectedProducts, reason);
+  };
 
   log(
     `request accepted | products_detected=${detectedProducts.length} (${
@@ -613,7 +709,7 @@ router.post('/insights', async (req: Request, res: ExpressResponse) => {
     }) | source=${sourceType} | context_chars=${context.length}`
   );
 
-  const chatMessages = [
+  const chatMessages: AiMessage[] = [
     { role: 'system', content: insightsSystemPrompt },
     {
       role: 'user',
@@ -621,93 +717,56 @@ router.post('/insights', async (req: Request, res: ExpressResponse) => {
     },
   ];
 
+  const openAiConfigurationError = getOpenAiConfigurationError();
+  if (openAiConfigurationError) {
+    const reason = openAiConfigurationError;
+    if (options.allowDeterministicFallback) return fallback(reason);
+    throw new Error(reason);
+  }
+  const openAiConfig = getOpenAiConfig();
+  if (!openAiConfig) {
+    const reason = 'OpenAI configuration could not be loaded.';
+    if (options.allowDeterministicFallback) return fallback(reason);
+    throw new Error(reason);
+  }
+
   try {
-    const ocaBaseUrl = process.env.OCA_BASE_URL;
-    if (!ocaBaseUrl || !process.env.OCA_TOKEN) {
-      log('ERROR: OCA config missing');
-      return res.status(503).json({ error: 'OCA is not configured.' });
-    }
+    log(`-> OpenAI Responses fetch start | model=${openAiConfig.model}`);
 
-    log(`-> OCA fetch start | model=${process.env.OCA_MODEL || 'oca/gpt-5.4'}`);
-
-    // OCA fetch (streaming from OCA, accumulated server-side)
-    const upstream = await fetch(`${ocaBaseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.OCA_TOKEN}`,
-      },
-      body: JSON.stringify({
-        model: process.env.OCA_MODEL || 'oca/gpt-5.4',
-        messages: chatMessages,
-        stream: true, // OCA requires stream=true; server accumulates chunks
-        temperature: 0.15,
-        max_tokens: 3500,
-      }),
+    const upstream = await fetchOpenAiResponses(chatMessages, {
+      stream: true,
+      maxOutputTokens: 3500,
     });
 
-    log(`<- OCA responded | status=${upstream.status}`);
+    log(`<- OpenAI responded | status=${upstream.status}`);
 
     if (!upstream.ok) {
-      const errText = await upstream.text();
-      log(`OCA error | ${upstream.status} | ${errText.slice(0, 200)}`);
-      return res.status(502).json({
-        error: `OCA request failed (${upstream.status}). Verify VPN and token.`,
-      });
+      await upstream.body?.cancel();
+      const reason = `OpenAI request failed (${upstream.status}). Verify the approved model and API key.`;
+      log(`OpenAI error | status=${upstream.status}`);
+      if (options.allowDeterministicFallback) return fallback(reason);
+      throw new Error(reason);
     }
 
-    // Accumulate the full streamed response into one string
-    const reader = upstream.body?.getReader();
-    if (!reader) {
-      return res.status(502).json({ error: 'OCA returned no response body.' });
-    }
+    const accumulatedContent = await readOpenAiResponseStream(upstream);
 
-    const decoder = new TextDecoder();
-    let buf = '';
-    let accumulatedContent = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buf += decoder.decode(value, { stream: true });
-      const lines = buf.split('\n');
-      buf = lines.pop() ?? '';
-
-      for (const line of lines) {
-        if (!line.startsWith('data:')) continue;
-        const data = line.slice(5).trim();
-        if (!data || data === '[DONE]') continue;
-
-        try {
-          const parsed = JSON.parse(data);
-          const delta   = parsed?.choices?.[0]?.delta?.content;
-          const message = parsed?.choices?.[0]?.message?.content;
-          const content = typeof delta === 'string' ? delta
-                        : typeof message === 'string' ? message
-                        : '';
-          if (content) accumulatedContent += content;
-        } catch {
-          // skip malformed chunk
-        }
-      }
-    }
-
-    log(`OCA stream complete | chars=${accumulatedContent.length}`);
+    log(`OpenAI stream complete | chars=${accumulatedContent.length}`);
 
     const rawContent = accumulatedContent;
     if (!rawContent.trim()) {
-      return res.status(502).json({ error: 'OCA returned empty content.' });
+      const reason = 'OpenAI returned empty content.';
+      if (options.allowDeterministicFallback) return fallback(reason);
+      throw new Error(reason);
     }
 
-    // Parse the JSON the model returned
     let parsed: unknown;
     try {
       parsed = parseInsightsPayload(rawContent);
     } catch (parseErr) {
-      log(`JSON parse failed | ${String(parseErr)}`);
-      log(`raw dump: ${rawContent.slice(0, 500)}`);
-      return res.status(502).json({ error: 'Failed to parse model JSON response.' });
+      const reason = 'Failed to parse OpenAI JSON response.';
+      log(`JSON parse failed | ${parseErr instanceof Error ? parseErr.name : 'invalid payload'}`);
+      if (options.allowDeterministicFallback) return fallback(reason);
+      throw new Error(reason);
     }
 
     const normalized = normalizeInsights(
@@ -729,6 +788,7 @@ router.post('/insights', async (req: Request, res: ExpressResponse) => {
       summary: deterministicSections.length > 0
         ? fallbackSummary(mergedSections, sourceType)
         : normalized.summary,
+      detectedProducts: detectedProductsPayload(detectedProducts),
     };
 
     log(
@@ -737,89 +797,152 @@ router.post('/insights', async (req: Request, res: ExpressResponse) => {
       )} deterministic_sections=${deterministicSections.length} health=${result.overallHealth}`
     );
 
-    // Return detected products in the response too
-    const responsePayload = {
-      ...result,
-      detectedProducts: detectedProducts.map(p => ({
-        product: p.product,
-        shortName: p.shortName,
-        components: p.components,
-        matchedUrls: p.matchedUrls,
-      })),
+    return {
+      result,
+      ai: { source: 'openai' },
     };
-
-    return res.json({ result: responsePayload });
-
   } catch (err) {
+    const reason = `Insights failed: ${(err as Error)?.message ?? String(err)}`;
     log(`ERROR: ${String(err)}`);
-    return res.status(500).json({
-      error: `Insights failed: ${(err as Error)?.message ?? String(err)}`,
+    if (options.allowDeterministicFallback) return fallback(reason);
+    throw err;
+  }
+}
+
+// ─── Multi-backend helpers ────────────────────────────────────────────────────
+
+// POST /api/ai/chat - backend-owned OpenAI proxy, stream response back
+router.post('/chat', async (req: Request, res: ExpressResponse) => {
+  const { messages, systemPrompt } = req.body ?? {};
+  const validationError = validateAiChatPayload(messages, systemPrompt);
+  if (validationError) {
+    return res.status(validationError.status).json({ error: validationError.error });
+  }
+
+  const validatedMessages = messages as AiMessage[];
+  const validatedSystemPrompt = systemPrompt as string | undefined;
+
+  // ── Oracle product detection ─────────────────────────────────────────────
+  // Scan the system prompt (which contains the full file context) and the latest
+  // user message for Oracle product URL patterns. Inject the same product KB
+  // that the /insights endpoint uses — closing the gap between the two pipelines.
+  const latestUserContent = [...validatedMessages].reverse().find(
+    (m: { role: string; content: string }) => m.role === 'user'
+  )?.content ?? '';
+  const detectionSource = `${validatedSystemPrompt ?? ''}\n${latestUserContent}`;
+  const chatDetectedProducts = detectOracleProductsFromContext(detectionSource);
+  const chatOracleKb = chatDetectedProducts.length > 0
+    ? buildOracleKbPrompt(chatDetectedProducts)
+    : '';
+
+  // Append Oracle KB and the analysis-order rule to whatever system prompt the
+  // frontend already built (analyst persona + file context). This keeps the
+  // frontend in control of the persona while the backend enriches it.
+  let enrichedSystemPrompt = validatedSystemPrompt ?? '';
+  if (chatOracleKb) {
+    enrichedSystemPrompt += `\n\n${chatOracleKb}`;
+    enrichedSystemPrompt += `\nOracle specificity rule: always name the detected Oracle product and component in every finding.`;
+  }
+  enrichedSystemPrompt += `\n\nAnalysis priority rule: exhaust 5xx server errors before 4xx, 4xx before 3xx, 3xx before 2xx performance. Never report a lower-tier finding first.`;
+
+  const allMessages = enrichedSystemPrompt
+    ? [{ role: 'system' as const, content: enrichedSystemPrompt }, ...validatedMessages]
+    : validatedMessages;
+
+  const openAiConfigurationError = getOpenAiConfigurationError();
+  if (openAiConfigurationError) {
+    return res.status(503).json({ error: openAiConfigurationError });
+  }
+
+  try {
+    const openAiResponse = await fetchOpenAiResponses(allMessages, {
+      stream: true,
+      maxOutputTokens: 1200,
     });
+
+    if (!openAiResponse.ok) {
+      await openAiResponse.body?.cancel();
+      return res.status(openAiResponse.status).json({
+        error: `OpenAI request failed (${openAiResponse.status}).`,
+      });
+    }
+
+    // Keep our own SSE contract stable so the frontend is independent of provider event formats.
+    setSseHeaders(res);
+    await readOpenAiResponseStream(openAiResponse, (delta) => {
+      writeSseEvent(res, { choices: [{ delta: { content: delta } }] });
+    });
+    writeSseDone(res);
+    res.end();
+  } catch (err) {
+    console.error('OpenAI proxy error:', err);
+    if (res.headersSent) {
+      writeSseEvent(res, { error: 'OpenAI streaming request failed.' });
+      writeSseDone(res);
+      return res.end();
+    }
+    res.status(502).json({ error: 'Failed to reach OpenAI API.' });
+  }
+});
+
+router.post('/insights', async (req: Request, res: ExpressResponse) => {
+  const { context, sourceType: rawSourceType } = req.body ?? {};
+
+  if (!context || typeof context !== 'string' || !context.trim()) {
+    return res.status(400).json({ error: 'context is required' });
+  }
+  if (context.length > MAX_AI_CONTEXT_CHARS) {
+    return res.status(413).json({ error: 'AI insights context is too large.' });
+  }
+
+  try {
+    const responsePayload = await generateInsightsForContext(
+      context,
+      rawSourceType,
+      { allowDeterministicFallback: true },
+    );
+    return res.json(responsePayload);
+  } catch (err) {
+    console.error('OpenAI insights error:', err);
+    return res.status(500).json({ error: 'Failed to generate insights.' });
   }
 });
 
 
 // GET /api/ai/status - health check for frontend
 router.get('/status', async (_req: Request, res: ExpressResponse) => {
-  const ocaBaseUrl = process.env.OCA_BASE_URL;
-  const ocaToken = process.env.OCA_TOKEN;
-  const model = process.env.OCA_MODEL || 'oca/gpt-5.4';
-
-  if (!ocaBaseUrl || !ocaToken) {
-    return res.json({ connected: false, model: null });
+  const openAiConfigurationError = getOpenAiConfigurationError();
+  if (openAiConfigurationError) {
+    return res.json({ configured: false, connected: false, model: null });
+  }
+  const openAiConfig = getOpenAiConfig();
+  if (!openAiConfig) {
+    return res.json({ configured: false, connected: false, model: null });
   }
 
-  const fetchWithTimeout = async (
-    url: string,
-    init: RequestInit,
-    timeoutMs = 8000
-  ): Promise<FetchResponse> => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      return await fetch(url, { ...init, signal: controller.signal });
-    } finally {
-      clearTimeout(timer);
-    }
-  };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
 
   try {
-    const modelsResponse = await fetchWithTimeout(`${ocaBaseUrl}/models`, {
-      method: 'GET',
-      headers: { Authorization: `Bearer ${ocaToken}` },
-    });
-
-    if (modelsResponse.ok) {
-      return res.json({ connected: true, model });
-    }
-
-    // Fallback probe: some OCA deployments don't expose /models, but /chat/completions works.
-    const chatProbeResponse = await fetchWithTimeout(
-      `${ocaBaseUrl}/chat/completions`,
+    const response = await fetchOpenAiResponses(
+      [{ role: 'user', content: 'Reply with OK.' }],
       {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${ocaToken}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: 'user', content: 'health-check' }],
-          stream: true,
-          max_tokens: 1,
-          temperature: 0,
-        }),
-      }
+        stream: false,
+        maxOutputTokens: 16,
+        signal: controller.signal,
+      },
     );
 
-    if (chatProbeResponse.ok) {
-      await chatProbeResponse.body?.cancel();
-      return res.json({ connected: true, model });
-    }
-
-    return res.json({ connected: false, model: null });
+    await response.body?.cancel();
+    return res.json({
+      configured: true,
+      connected: response.ok,
+      model: openAiConfig.model,
+    });
   } catch {
-    return res.json({ connected: false, model: null });
+    return res.json({ configured: true, connected: false, model: openAiConfig.model });
+  } finally {
+    clearTimeout(timer);
   }
 });
 

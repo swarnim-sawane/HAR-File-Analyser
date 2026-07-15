@@ -715,9 +715,13 @@ Formatting rules:
       if (!reader) throw new Error('No response body');
 
       let buffer = '';
-      for (;;) {
+      let streamComplete = false;
+      while (!streamComplete) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          streamComplete = true;
+          continue;
+        }
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop() ?? '';
@@ -1176,7 +1180,7 @@ Formatting rules:
               <div className="cmp-view-header cmp-view-header--ai">
                 <div>
                   <span className="cmp-view-kicker">AI assistance</span>
-                  <h3>OCA support analysis</h3>
+                  <h3>AI support analysis</h3>
                   <p>Oracle-aware AI compares both HAR captures, surfaces broken services, and gives you actionable troubleshooting steps for the customer's environment.</p>
                 </div>
                 <button

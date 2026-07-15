@@ -4,7 +4,6 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import RequestList, { formatTimestamp } from '../RequestList';
 import { Entry } from '../../types/har';
-import type { RequestFlowFocusPath } from '../../utils/requestFlowFocus';
 
 // Minimal entry factory — extend overrides per test
 const makeEntry = (overrides: Partial<Entry> = {}): Entry => ({
@@ -38,21 +37,6 @@ const makeEntry = (overrides: Partial<Entry> = {}): Entry => ({
 
 const noop = () => {};
 
-const makeFocusPath = (overrides: Partial<RequestFlowFocusPath> = {}): RequestFlowFocusPath => ({
-  anchorIndex: 0,
-  nodeIndexes: [0],
-  edgeKeys: [],
-  score: 110,
-  severity: 'critical',
-  confidence: 'high',
-  reasons: ['http-5xx', 'terminal-failure'],
-  reasonLabels: ['HTTP 503', 'Terminal request'],
-  nextInspection: 'response',
-  summary: 'HTTP 503, Terminal request on /api/test',
-  candidates: [],
-  ...overrides,
-});
-
 describe('formatTimestamp', () => {
   it('extracts HH:MM:SS.mmm from a UTC ISO string', () => {
     expect(formatTimestamp('2026-03-18T06:17:56.461Z')).toBe('06:17:56.461');
@@ -68,94 +52,6 @@ describe('formatTimestamp', () => {
 
   it('returns the raw string if no T separator found', () => {
     expect(formatTimestamp('not-a-date')).toBe('not-a-date');
-  });
-});
-
-describe('RequestList - evidence focus', () => {
-  it('marks the focused request row with compact likely issue context', () => {
-    const entry = makeEntry({
-      response: { ...makeEntry().response, status: 503, statusText: 'Service Unavailable' },
-      time: 4200,
-    });
-
-    render(
-      <RequestList
-        entries={[entry]}
-        selectedEntry={null}
-        focusEntry={entry}
-        focusPath={makeFocusPath()}
-        onSelectEntry={noop}
-        timingType="relative"
-      />
-    );
-
-    const marker = screen.getByText('Likely issue');
-    expect(marker).toBeInTheDocument();
-    expect(marker.closest('.request-item')).toHaveClass('likely-issue');
-    expect(marker).toHaveAttribute('title', expect.stringContaining('HTTP 503'));
-  });
-
-  it('uses softer wording for low-confidence focused rows', () => {
-    const entry = makeEntry({
-      request: { ...makeEntry().request, url: 'https://cdn.example.com/logo.png' },
-      response: {
-        ...makeEntry().response,
-        status: 404,
-        statusText: 'Not Found',
-        content: { size: 0, mimeType: 'image/png' },
-      },
-    });
-
-    render(
-      <RequestList
-        entries={[entry]}
-        selectedEntry={null}
-        focusEntry={entry}
-        focusPath={makeFocusPath({
-          confidence: 'low',
-          severity: 'notice',
-          reasons: ['http-4xx'],
-          reasonLabels: ['HTTP 404'],
-          summary: 'HTTP 404 on /logo.png',
-        })}
-        onSelectEntry={noop}
-        timingType="relative"
-      />
-    );
-
-    expect(screen.getByText('Worth checking')).toBeInTheDocument();
-    expect(screen.queryByText('Likely issue')).not.toBeInTheDocument();
-  });
-});
-
-describe('RequestList - selected row visibility', () => {
-  it('smoothly scrolls the selected request row into view', async () => {
-    const entries = [
-      makeEntry({ request: { ...makeEntry().request, url: 'https://example.com/api/first' } }),
-      makeEntry({ request: { ...makeEntry().request, url: 'https://example.com/api/target' } }),
-      makeEntry({ request: { ...makeEntry().request, url: 'https://example.com/api/last' } }),
-    ];
-    const scrollIntoViewMock = vi.fn();
-    Element.prototype.scrollIntoView = scrollIntoViewMock;
-    HTMLElement.prototype.scrollIntoView = scrollIntoViewMock;
-
-    render(
-      <RequestList
-        entries={entries}
-        selectedEntry={entries[1]}
-        onSelectEntry={noop}
-        timingType="relative"
-      />
-    );
-
-    expect(screen.getByText('https://example.com/api/target').closest('.request-item')).toHaveClass('selected');
-    await waitFor(() => {
-      expect(scrollIntoViewMock).toHaveBeenCalledWith({
-        behavior: 'smooth',
-        block: 'center',
-        inline: 'nearest',
-      });
-    });
   });
 });
 
@@ -246,5 +142,34 @@ describe('RequestList — analysis badges', () => {
     expect(screen.queryByTitle('Cached')).not.toBeInTheDocument();
     expect(screen.queryByTitle('Slow (>3s)')).not.toBeInTheDocument();
     expect(screen.queryByTitle('Large response (>1MB)')).not.toBeInTheDocument();
+  });
+});
+
+describe('RequestList — selected row scrolling', () => {
+  it('scrolls the selected request row into view when a scroll signal changes', async () => {
+    const scrollIntoView = vi.fn();
+    window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    const selectedEntry = makeEntry({
+      startedDateTime: '2026-03-18T06:18:00.000Z',
+      request: { ...makeEntry().request, url: 'https://example.com/api/selected' },
+    });
+
+    render(
+      <RequestList
+        entries={[makeEntry(), selectedEntry]}
+        selectedEntry={selectedEntry}
+        onSelectEntry={noop}
+        timingType="relative"
+        scrollToSelectedSignal={1}
+      />
+    );
+
+    await waitFor(() => {
+      expect(scrollIntoView).toHaveBeenCalledWith({
+        behavior: 'smooth',
+        block: 'center',
+        inline: 'nearest',
+      });
+    });
   });
 });

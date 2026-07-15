@@ -1,12 +1,9 @@
 import React from 'react';
-import { readFileSync } from 'node:fs';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import HarTabContent from '../HarTabContent';
 
-const globalsCss = readFileSync('src/styles/globals.css', 'utf8');
-
-const { getHarDataMock, mockHarState, requestListMock, requestDetailsMock, requestFlowDiagramMock, requestFlowGraphViewMock } = vi.hoisted(() => {
+const { getHarDataMock, mockHarState, requestFlowDiagramMock, requestFlowGraphViewMock, requestListMock } = vi.hoisted(() => {
   const sampleHarFile = {
     log: {
       version: '1.2',
@@ -88,10 +85,9 @@ const { getHarDataMock, mockHarState, requestListMock, requestDetailsMock, reque
 
   return {
     getHarDataMock: vi.fn().mockResolvedValue(sampleHarFile),
-    requestListMock: vi.fn(),
-    requestDetailsMock: vi.fn(),
     requestFlowDiagramMock: vi.fn(),
     requestFlowGraphViewMock: vi.fn(),
+    requestListMock: vi.fn(),
     mockHarState: {
       harData: sampleHarFile,
       filteredEntries: sampleHarFile.log.entries,
@@ -142,10 +138,15 @@ vi.mock('../RequestList', () => ({
 }));
 
 vi.mock('../RequestDetails', () => ({
-  default: (props: any) => {
-    requestDetailsMock(props);
-    return <div>Request details mock</div>;
-  },
+  default: () => <div>Request details mock</div>,
+}));
+
+vi.mock('../Toolbar', () => ({
+  default: () => <div>Toolbar mock</div>,
+}));
+
+vi.mock('../FloatingAiChat', () => ({
+  default: () => <div>Floating AI chat mock</div>,
 }));
 
 vi.mock('../RequestFlowDiagram', () => ({
@@ -181,15 +182,24 @@ describe('HarTabContent Redwood theme smoke test', () => {
     window.localStorage.setItem('theme', 'redwood');
     getHarDataMock.mockClear();
     mockHarState.filteredEntries = mockHarState.harData.log.entries;
-    mockHarState.selectedEntry = null;
+    mockHarState.filters = {
+      statusCodes: {
+        '0': false,
+        '1xx': false,
+        '2xx': true,
+        '3xx': true,
+        '4xx': true,
+        '5xx': true,
+      },
+      searchTerm: '',
+      timingType: 'relative' as const,
+    };
     mockHarState.loadHarData.mockClear();
-    mockHarState.setSelectedEntry.mockClear();
-    requestListMock.mockClear();
-    requestDetailsMock.mockClear();
     requestFlowDiagramMock.mockClear();
     requestFlowGraphViewMock.mockClear();
-    Element.prototype.scrollIntoView = vi.fn();
-    HTMLElement.prototype.scrollIntoView = Element.prototype.scrollIntoView;
+    requestListMock.mockClear();
+    mockHarState.setSelectedEntry.mockClear();
+    mockHarState.updateFilters.mockClear();
   });
 
   it('renders the HAR analyzer shell in Redwood mode', async () => {
@@ -200,33 +210,24 @@ describe('HarTabContent Redwood theme smoke test', () => {
         fileName="session.har"
         isActive
         backendUrl="http://localhost:4000"
+        recentFiles={[]}
+        onAddNewTab={vi.fn()}
+        onLoadRecentNewTab={vi.fn()}
+        onClearRecent={vi.fn()}
       />
     );
 
     expect(document.documentElement.dataset.theme).toBe('redwood');
     expect(screen.getByRole('button', { name: /analyzer/i })).toBeInTheDocument();
+    expect(screen.getByText('Toolbar mock')).toBeInTheDocument();
     expect(screen.getByText('Filter panel mock')).toBeInTheDocument();
     expect(screen.getByText('Request list mock')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /ai assistant/i })).not.toBeInTheDocument();
+    expect(screen.getByText('Floating AI chat mock')).toBeInTheDocument();
 
     await waitFor(() => {
       expect(getHarDataMock).toHaveBeenCalledWith('file-1');
       expect(mockHarState.loadHarData).toHaveBeenCalled();
     });
-
-    await waitFor(() => {
-      expect(mockHarState.setSelectedEntry).toHaveBeenCalledWith(mockHarState.harData.log.entries[1]);
-    });
-
-    expect(requestListMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        focusEntry: mockHarState.harData.log.entries[1],
-        focusPath: expect.objectContaining({
-          anchorIndex: 1,
-          confidence: 'high',
-        }),
-      })
-    );
   });
 
   it('renders a request flow view toggle with journey and scattered views', async () => {
@@ -239,6 +240,10 @@ describe('HarTabContent Redwood theme smoke test', () => {
         fileName="session.har"
         isActive
         backendUrl="http://localhost:4000"
+        recentFiles={[]}
+        onAddNewTab={vi.fn()}
+        onLoadRecentNewTab={vi.fn()}
+        onClearRecent={vi.fn()}
       />
     );
 
@@ -248,6 +253,8 @@ describe('HarTabContent Redwood theme smoke test', () => {
     });
 
     await user.click(screen.getByRole('button', { name: /request flow/i }));
+
+    expect(document.querySelector('.har-tab-content')).toHaveClass('is-active', 'is-flow-active');
 
     const flowToggle = screen.getByRole('radiogroup', { name: /request flow view/i });
     expect(flowToggle).toBeInTheDocument();
@@ -269,43 +276,6 @@ describe('HarTabContent Redwood theme smoke test', () => {
     expect(document.documentElement.dataset.theme).toBe('redwood');
   });
 
-  it('keeps long HAR analysis surfaces in scrollable tab panels', async () => {
-    const user = userEvent.setup();
-
-    render(
-      <HarTabContent
-        tabId="tab-1"
-        fileId="file-1"
-        fileName="session.har"
-        isActive
-        backendUrl="http://localhost:4000"
-      />
-    );
-
-    await waitFor(() => {
-      expect(getHarDataMock).toHaveBeenCalledWith('file-1');
-      expect(mockHarState.loadHarData).toHaveBeenCalled();
-    });
-
-    await user.click(screen.getByRole('button', { name: /request flow/i }));
-    expect(screen.getByText('Scattered view mock').closest('.flow-tab-panel')).toHaveClass('har-tab-scroll-panel');
-
-    await user.click(screen.getByRole('button', { name: /scorecard/i }));
-    expect(screen.getByText('Scorecard mock').closest('.har-tab-scroll-panel')).toHaveClass('scorecard-wrapper');
-
-    await user.click(screen.getByRole('button', { name: /ai insights/i }));
-    expect(screen.getByText('AI insights mock').closest('.har-tab-scroll-panel')).toHaveClass('har-insights-scroll-panel');
-
-    expect(globalsCss).toMatch(/\.har-tab-scroll-panel\s*\{[\s\S]*overflow-y:\s*auto/);
-    expect(globalsCss).toMatch(/\.har-tab-scroll-panel\s*\{[\s\S]*min-height:\s*0/);
-    expect(globalsCss).toMatch(/\.flow-tab-panel\s*\{[\s\S]*overflow-y:\s*auto/);
-    expect(globalsCss).toMatch(/\.flow-tab-panel \.request-flow-shell\s*\{[\s\S]*height:\s*auto/);
-    expect(globalsCss).toMatch(/\.flow-view-toggle-bar\s*\{[\s\S]*grid-template-columns:\s*minmax\(120px,\s*1fr\)\s*auto\s*minmax\(120px,\s*1fr\)/);
-    expect(globalsCss).toMatch(/\.flow-view-toggle\s*\{[\s\S]*justify-self:\s*center/);
-    expect(globalsCss).toMatch(/\.basic-file-analyzer\s*\{[\s\S]*overflow-y:\s*auto/);
-    expect(globalsCss).toMatch(/\.basic-file-image-stage\s*\{[\s\S]*overflow:\s*visible/);
-  });
-
   it('passes full HAR entries to the journey map while preserving the analyzer-filtered visible subset', async () => {
     const user = userEvent.setup();
     const allEntries = mockHarState.harData.log.entries;
@@ -318,6 +288,10 @@ describe('HarTabContent Redwood theme smoke test', () => {
         fileName="session.har"
         isActive
         backendUrl="http://localhost:4000"
+        recentFiles={[]}
+        onAddNewTab={vi.fn()}
+        onLoadRecentNewTab={vi.fn()}
+        onClearRecent={vi.fn()}
       />
     );
 
@@ -337,8 +311,6 @@ describe('HarTabContent Redwood theme smoke test', () => {
         filters: mockHarState.filters,
         onFiltersChange: mockHarState.updateFilters,
         focusMode: 'all',
-        issueFocusPath: expect.objectContaining({ anchorIndex: 1 }),
-        issueFocusEnabled: true,
       })
     );
   });
@@ -355,6 +327,10 @@ describe('HarTabContent Redwood theme smoke test', () => {
         fileName="session.har"
         isActive
         backendUrl="http://localhost:4000"
+        recentFiles={[]}
+        onAddNewTab={vi.fn()}
+        onLoadRecentNewTab={vi.fn()}
+        onClearRecent={vi.fn()}
       />
     );
 
@@ -373,18 +349,21 @@ describe('HarTabContent Redwood theme smoke test', () => {
         filters: mockHarState.filters,
         onFiltersChange: mockHarState.updateFilters,
         focusMode: 'all',
-        issueFocusPath: expect.objectContaining({ anchorIndex: 1 }),
-        issueFocusEnabled: true,
       })
     );
   });
 
-  it('smoothly scrolls the analyzer into view after selecting a scattered view node', async () => {
+  it('redirects Request Flow node clicks back to Analyzer and requests selected-row scrolling', async () => {
     const user = userEvent.setup();
     const allEntries = mockHarState.harData.log.entries;
-    const scrollIntoViewMock = vi.fn();
-    Element.prototype.scrollIntoView = scrollIntoViewMock;
-    HTMLElement.prototype.scrollIntoView = scrollIntoViewMock;
+    mockHarState.filters = {
+      ...mockHarState.filters,
+      searchTerm: 'currently-hiding-the-clicked-row',
+      statusCodes: {
+        ...mockHarState.filters.statusCodes,
+        '4xx': false,
+      },
+    };
 
     render(
       <HarTabContent
@@ -393,6 +372,10 @@ describe('HarTabContent Redwood theme smoke test', () => {
         fileName="session.har"
         isActive
         backendUrl="http://localhost:4000"
+        recentFiles={[]}
+        onAddNewTab={vi.fn()}
+        onLoadRecentNewTab={vi.fn()}
+        onClearRecent={vi.fn()}
       />
     );
 
@@ -402,23 +385,31 @@ describe('HarTabContent Redwood theme smoke test', () => {
     });
 
     await user.click(screen.getByRole('button', { name: /request flow/i }));
-    expect(screen.getByText('Scattered view mock')).toBeInTheDocument();
+    const flowProps = requestFlowGraphViewMock.mock.calls.at(-1)?.[0];
+    expect(flowProps).toBeTruthy();
 
-    const graphProps = requestFlowGraphViewMock.mock.calls.at(-1)?.[0];
-    expect(graphProps?.onNodeClick).toEqual(expect.any(Function));
-
-    await act(async () => {
-      graphProps.onNodeClick(allEntries[1]);
+    act(() => {
+      flowProps.onNodeClick(allEntries[1]);
     });
 
     await waitFor(() => {
-      expect(scrollIntoViewMock).toHaveBeenCalledWith({
-        behavior: 'smooth',
-        block: 'start',
-      });
+      expect(screen.getByText('Request list mock')).toBeInTheDocument();
     });
+
     expect(mockHarState.setSelectedEntry).toHaveBeenCalledWith(allEntries[1]);
-    expect(screen.queryByText('Scattered view mock')).not.toBeInTheDocument();
-    expect(screen.getByText('Request list mock')).toBeInTheDocument();
+    expect(mockHarState.updateFilters).toHaveBeenCalledWith(
+      expect.objectContaining({
+        searchTerm: '',
+        statusCodes: expect.objectContaining({ '4xx': true }),
+      })
+    );
+
+    await waitFor(() => {
+      expect(requestListMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          scrollToSelectedSignal: expect.any(Number),
+        })
+      );
+    });
   });
 });

@@ -72,6 +72,7 @@ interface RequestListProps {
   timingType: 'relative' | 'independent';
   focusEntry?: Entry | null;
   focusPath?: RequestFlowFocusPath | null;
+  scrollToSelectedSignal?: number;
 }
 
 type SortField = 'status' | 'method' | 'url' | 'size' | 'time' | 'timestamp';
@@ -84,10 +85,12 @@ const RequestList: React.FC<RequestListProps> = ({
   timingType,
   focusEntry = null,
   focusPath = null,
+  scrollToSelectedSignal = 0,
 }) => {
   const [sortField, setSortField] = useState<SortField>('timestamp');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const selectedRowRef = useRef<HTMLDivElement | null>(null);
+  const handledScrollSignalRef = useRef(0);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -136,14 +139,17 @@ const RequestList: React.FC<RequestListProps> = ({
   }, [entries]);
 
   useEffect(() => {
-    if (!selectedEntry || !selectedRowRef.current) return;
+    if (!selectedEntry || scrollToSelectedSignal <= 0) return;
+    if (handledScrollSignalRef.current === scrollToSelectedSignal) return;
+    if (!selectedRowRef.current) return;
 
     selectedRowRef.current.scrollIntoView({
       behavior: 'smooth',
       block: 'center',
       inline: 'nearest',
     });
-  }, [selectedEntry, sortedEntries]);
+    handledScrollSignalRef.current = scrollToSelectedSignal;
+  }, [scrollToSelectedSignal, selectedEntry, sortedEntries]);
 
   const getStatusClass = (status: number): string => {
     if (status >= 200 && status < 300) return 'status-2xx';
@@ -171,7 +177,7 @@ const RequestList: React.FC<RequestListProps> = ({
     return (
       <div
         key={index}
-        ref={isSelected ? selectedRowRef : undefined}
+        ref={isSelected ? selectedRowRef : null}
         className={`request-item ${isSelected ? 'selected' : ''} ${isFocusEntry ? 'likely-issue' : ''} ${isFocusEntry && focusPath?.confidence === 'low' ? 'focus-low' : ''}`}
         onClick={() => onSelectEntry(entry)}
       >
@@ -247,37 +253,43 @@ const RequestList: React.FC<RequestListProps> = ({
           className="header-cell sortable"
           onClick={() => handleSort('timestamp')}
         >
-          Timestamp {renderSortIcon('timestamp')}
+          <span className="header-label">Timestamp</span>
+          {renderSortIcon('timestamp')}
         </button>
         <button
           className="header-cell sortable"
           onClick={() => handleSort('status')}
         >
-          Status {renderSortIcon('status')}
+          <span className="header-label">Status</span>
+          {renderSortIcon('status')}
         </button>
-        <button 
-          className="header-cell sortable" 
+        <button
+          className="header-cell sortable"
           onClick={() => handleSort('method')}
         >
-          Method {renderSortIcon('method')}
+          <span className="header-label">Method</span>
+          {renderSortIcon('method')}
         </button>
-        <button 
-          className="header-cell sortable" 
+        <button
+          className="header-cell sortable"
           onClick={() => handleSort('url')}
         >
-          URL {renderSortIcon('url')}
+          <span className="header-label">URL</span>
+          {renderSortIcon('url')}
         </button>
-        <button 
-          className="header-cell sortable" 
+        <button
+          className="header-cell sortable"
           onClick={() => handleSort('size')}
         >
-          Size {renderSortIcon('size')}
+          <span className="header-label">Size</span>
+          {renderSortIcon('size')}
         </button>
-        <button 
-          className="header-cell sortable" 
+        <button
+          className="header-cell sortable"
           onClick={() => handleSort('time')}
         >
-          Time {renderSortIcon('time')}
+          <span className="header-label">Time</span>
+          {renderSortIcon('time')}
         </button>
         <span className="header-cell">Timeline</span>
       </div>

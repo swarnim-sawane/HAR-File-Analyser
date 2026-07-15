@@ -1,12 +1,33 @@
 import express, { Request, Response } from 'express';
-import { promises as fs } from 'fs';
 import { createReadStream } from 'fs';
 import { createGzip } from 'zlib';
 import path from 'path';
 import { getMongoDb } from '../config/database';
 import { getRedis } from '../config/database';
+import { getArtifactStore } from '../services/artifactStore';
 
 const router = express.Router();
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function parsePositiveInt(value: unknown, fallback: number, max?: number): number {
+  const parsed = typeof value === 'string' && /^\d+$/.test(value)
+    ? Number.parseInt(value, 10)
+    : Number.NaN;
+  const safe = Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+  return max ? Math.min(safe, max) : safe;
+}
+
+function parseNonNegativeInt(value: unknown): number | null {
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
 
 /**
  * Get full HAR payload for frontend analyzer
@@ -27,28 +48,31 @@ router.get('/:fileId', async (req: Request, res: Response) => {
       process.env.PROCESSED_DIR || path.join(process.cwd(), 'processed')
     );
 
+    let artifactKey: string | null = typeof fileDoc?.artifactKey === 'string'
+      ? fileDoc.artifactKey
+      : null;
     let filePath: string | null = null;
 
-    if (fileDoc?.filePath) {
+    if (!artifactKey && fileDoc?.filePath) {
       filePath = fileDoc.filePath as string;
-    } else {
+    } else if (!artifactKey) {
       const metadataRaw = await redis.get(`file:${fileId}:metadata`);
       if (!metadataRaw) {
         return res.status(404).json({ error: 'File not found' });
       }
 
-      const metadata = JSON.parse(metadataRaw) as { fileName?: string };
+      const metadata = JSON.parse(metadataRaw) as { fileName?: string; artifactKey?: string };
+      if (metadata.artifactKey) {
+        artifactKey = metadata.artifactKey;
+      }
       if (!metadata.fileName) {
         return res.status(404).json({ error: 'File metadata not found' });
       }
 
-      const safeFileName = path.basename(metadata.fileName);
-      filePath = path.join(processedDir, `${fileId}_${safeFileName}`);
-    }
-
-    const resolvedFilePath = path.resolve(filePath);
-    if (!resolvedFilePath.startsWith(processedDir)) {
-      return res.status(400).json({ error: 'Invalid file path' });
+      if (!artifactKey) {
+        const safeFileName = path.basename(metadata.fileName);
+        filePath = path.join(processedDir, `${fileId}_${safeFileName}`);
+      }
     }
 
     const acceptEncoding = req.headers['accept-encoding'] || '';
@@ -60,7 +84,18 @@ router.get('/:fileId', async (req: Request, res: Response) => {
       res.setHeader('Vary', 'Accept-Encoding');
     }
 
-    const fileStream = createReadStream(resolvedFilePath);
+    let fileStream: NodeJS.ReadableStream;
+    if (artifactKey) {
+      fileStream = (await getArtifactStore().open(artifactKey)).body;
+    } else {
+      if (!filePath) return res.status(404).json({ error: 'File artifact not found' });
+      const resolvedFilePath = path.resolve(filePath);
+      if (resolvedFilePath !== processedDir && !resolvedFilePath.startsWith(`${processedDir}${path.sep}`)) {
+        return res.status(400).json({ error: 'Invalid file path' });
+      }
+      fileStream = createReadStream(resolvedFilePath);
+    }
+
     fileStream.on('error', (streamErr: NodeJS.ErrnoException) => {
       if (!res.headersSent) {
         if (streamErr.code === 'ENOENT') {
@@ -91,8 +126,8 @@ router.get('/:fileId', async (req: Request, res: Response) => {
 router.get('/:fileId/entries', async (req: Request, res: Response) => {
   try {
     const { fileId } = req.params;
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 100;
+    const page = parsePositiveInt(req.query.page, 1);
+    const limit = parsePositiveInt(req.query.limit, 100, 1000);
     const skip = (page - 1) * limit;
 
     const db = getMongoDb();
@@ -101,6 +136,7 @@ router.get('/:fileId/entries', async (req: Request, res: Response) => {
     // Get paginated entries
     const entries = await entriesCollection
       .find({ fileId })
+      .sort({ index: 1 })
       .skip(skip)
       .limit(limit)
       .toArray();
@@ -132,22 +168,21 @@ router.get('/:fileId/entries', async (req: Request, res: Response) => {
 router.get('/:fileId/entries/:index', async (req: Request, res: Response) => {
   try {
     const { fileId, index } = req.params;
-    const entryIndex = parseInt(index);
+    const entryIndex = parseNonNegativeInt(index);
+    if (entryIndex === null) {
+      return res.status(400).json({ error: 'Invalid entry index' });
+    }
 
     const db = getMongoDb();
     const entriesCollection = db.collection('har_entries');
 
-    const entry = await entriesCollection
-      .find({ fileId })
-      .skip(entryIndex)
-      .limit(1)
-      .toArray();
+    const entry = await entriesCollection.findOne({ fileId, index: entryIndex });
 
-    if (entry.length === 0) {
+    if (!entry) {
       return res.status(404).json({ error: 'Entry not found' });
     }
 
-    res.json(entry[0]);
+    res.json(entry);
   } catch (error) {
     console.error('Failed to fetch HAR entry:', error);
     res.status(500).json({ error: 'Failed to fetch entry' });
@@ -227,8 +262,8 @@ router.get('/:fileId/search', async (req: Request, res: Response) => {
   try {
     const { fileId } = req.params;
     const { method, status, domain, contentType } = req.query;
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 100;
+    const page = parsePositiveInt(req.query.page, 1);
+    const limit = parsePositiveInt(req.query.limit, 100, 1000);
     const skip = (page - 1) * limit;
 
     const db = getMongoDb();
@@ -241,18 +276,23 @@ router.get('/:fileId/search', async (req: Request, res: Response) => {
       filter['request.method'] = method;
     }
     if (status) {
-      filter['response.status'] = parseInt(status as string);
+      const parsedStatus = parseNonNegativeInt(String(status));
+      if (parsedStatus === null) {
+        return res.status(400).json({ error: 'Invalid status' });
+      }
+      filter['response.status'] = parsedStatus;
     }
     if (domain) {
-      filter['request.url'] = { $regex: domain, $options: 'i' };
+      filter['request.url'] = { $regex: escapeRegExp(String(domain)), $options: 'i' };
     }
     if (contentType) {
-      filter['response.content.mimeType'] = { $regex: contentType, $options: 'i' };
+      filter['response.content.mimeType'] = { $regex: escapeRegExp(String(contentType)), $options: 'i' };
     }
 
     // Get filtered entries
     const entries = await entriesCollection
       .find(filter)
+      .sort({ index: 1 })
       .skip(skip)
       .limit(limit)
       .toArray();

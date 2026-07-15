@@ -99,6 +99,35 @@ describe('deterministic analyzer evidence insight rules', () => {
   });
 });
 
+describe('deterministic HAR insight rules', () => {
+  it('builds fallback findings for 5xx and authentication-focused 4xx HAR evidence', () => {
+    const context = [
+      'HAR SUMMARY: requests:12 errors:3 5xx:1 4xx:2 statuses:200:9 401:1 404:1 503:1',
+      '5XX SERVER ERRORS (1 total - analyse first, highest severity):',
+      'GET ords.example.com/ords/hr/employees status:503 totalms:1800ms wait:1500ms',
+      '4XX CLIENT ERRORS (2 total):',
+      'POST idcs.example.com/oauth2/v1/token status:401 totalms:240ms wait:210ms',
+      'GET vb.example.com/missing/module status:404 totalms:120ms wait:80ms',
+      'TOP SLOW:',
+      'GET ords.example.com/ords/hr/employees status:503 totalms:1800ms wait:1500ms',
+    ].join('\n');
+
+    const sections = buildDeterministicInsights(context, 'har');
+    const findings = sections.flatMap((section) => section.findings);
+
+    expect(findings[0]).toMatchObject({
+      severity: 'high',
+      title: 'HTTP 5xx failure detected in HAR',
+    });
+    expect(findings[0].evidence).toContain('status:503');
+    expect(findings[1]).toMatchObject({
+      severity: 'high',
+      title: 'Authentication or authorization failure detected in HAR',
+    });
+    expect(findings[1].evidence).toContain('status:401');
+  });
+});
+
 describe('empty insight summaries', () => {
   it('uses console-specific wording when no findings pass validation', () => {
     const summary = getEmptyInsightsSummary('console');

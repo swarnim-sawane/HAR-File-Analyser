@@ -125,7 +125,10 @@ function scoreEntry(
     reasons.add('http-4xx');
   }
 
-  if ([401, 403, 407, 419, 440].includes(status) || /oauth|sso|idcs|login|auth|token/i.test(entry.request.url)) {
+  if (
+    !isNoisyResource(resourceType) &&
+    ([401, 403, 407, 419, 440].includes(status) || /oauth|sso|idcs|login|auth|token/i.test(entry.request.url))
+  ) {
     if (status >= 400) {
       score += 24;
       reasons.add('auth-failure');
@@ -147,7 +150,7 @@ function scoreEntry(
     reasons.add('slow-absolute');
   }
 
-  if (repeatedPaths.has(normalizeEndpoint(entry.request.url)) && status >= 400) {
+  if (!isNoisyResource(resourceType) && repeatedPaths.has(normalizeEndpoint(entry.request.url)) && status >= 400) {
     score += 18;
     reasons.add('repeated-endpoint');
   }
@@ -375,13 +378,27 @@ function getResourceType(entry: Entry): string {
 
   const mime = entry.response.content.mimeType?.toLowerCase() || '';
   const url = entry.request.url.toLowerCase();
+  const path = getUrlPath(url);
+
+  if (/\.(png|jpe?g|gif|svg|webp|ico)$/i.test(path)) return 'image';
+  if (/\.(woff2?|ttf|eot|otf)$/i.test(path)) return 'font';
+  if (/\.css$/i.test(path)) return 'stylesheet';
+  if (/\.m?js$/i.test(path)) return 'script';
   if (mime.includes('html')) return 'document';
   if (mime.includes('json') || mime.includes('xml') || /\/api\/|\/ords\//i.test(url)) return 'xhr';
-  if (mime.includes('javascript') || url.endsWith('.js')) return 'script';
-  if (mime.includes('css') || url.endsWith('.css')) return 'stylesheet';
-  if (mime.includes('image') || /\.(png|jpe?g|gif|svg|webp|ico)$/i.test(url)) return 'image';
-  if (mime.includes('font') || /\.(woff2?|ttf|eot|otf)$/i.test(url)) return 'font';
+  if (mime.includes('javascript')) return 'script';
+  if (mime.includes('css')) return 'stylesheet';
+  if (mime.includes('image')) return 'image';
+  if (mime.includes('font')) return 'font';
   return 'other';
+}
+
+function getUrlPath(url: string): string {
+  try {
+    return new URL(url).pathname.toLowerCase();
+  } catch {
+    return url.split('?')[0].toLowerCase();
+  }
 }
 
 function isNoisyResource(resourceType: string): boolean {

@@ -325,7 +325,7 @@ export function usePagedConsoleLogData({
     }
 
     void loadPage(1, requestVersionRef.current);
-  }, [bootstrapping, fileId, isActive, loadPage, queryKey]);
+  }, [bootstrapping, fileId, fileStatus?.totalEntries, isActive, loadPage, queryKey]);
 
   const updateFilters = useCallback((incoming: Partial<ConsoleFilterOptions>) => {
     setFilters((previous) => ({

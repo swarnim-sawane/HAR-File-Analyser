@@ -33,12 +33,13 @@ FROM ${NODE_IMAGE} AS runtime
 ENV NODE_ENV=production \
     HOSTED_DEPLOYMENT=true \
     HOST=0.0.0.0 \
-    PORT=8080 \
     STATIC_DIR=/app/public \
     HOME=/tmp \
     TMPDIR=/tmp \
     UPLOAD_DIR=/tmp/har-analyzer/uploads \
-    PROCESSED_DIR=/tmp/har-analyzer/processed
+    PROCESSED_DIR=/tmp/har-analyzer/processed \
+    ARTIFACT_SCRATCH_DIR=/tmp/har-analyzer/assembled \
+    SANITIZE_SCRATCH_DIR=/tmp/har-analyzer/sanitize
 
 WORKDIR /app
 COPY backend/package.json backend/package-lock.json ./

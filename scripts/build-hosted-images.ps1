@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
 if ([string]::IsNullOrWhiteSpace($NodeImage)) {
-  throw "NodeImage is required. Supply an approved Oracle Artifactory, OCIR, or Oracle Container Registry Node base image."
+  throw "NodeImage is required. Supply an approved Oracle Artifactory, OCIR, or Oracle Container Registry Node base image; public Docker Hub images are not permitted."
 }
 
 $registryHost = ($NodeImage -split '/', 2)[0].ToLowerInvariant()
@@ -18,7 +18,7 @@ $approvedRegistry =
   $registryHost -match '\.artifactory\.oci\.oraclecorp\.com$'
 
 if (-not $approvedRegistry) {
-  throw "Unapproved base-image registry '$registryHost'. Public Docker Hub images are not permitted."
+  throw "Unapproved base-image registry '$registryHost'. Use Oracle Artifactory, OCIR, or Oracle Container Registry; public Docker Hub images are not permitted."
 }
 
 function Invoke-HostedImageBuild {
@@ -56,6 +56,24 @@ foreach ($image in @($AppImage, $WorkerImage)) {
   }
   if ($architecture -ne 'amd64') {
     throw "$image was built for $architecture instead of amd64."
+  }
+
+  $imageUser = docker image inspect $image --format '{{.Config.User}}'
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($imageUser) -or $imageUser -in @('0', 'root')) {
+    throw "$image must run as a non-root user."
+  }
+
+  $exposedPorts = docker image inspect $image --format '{{json .Config.ExposedPorts}}'
+  if ($LASTEXITCODE -ne 0 -or $exposedPorts -notmatch '8080/tcp') {
+    throw "$image must expose port 8080."
+  }
+
+  $configuredEnvironment = docker image inspect $image --format '{{range .Config.Env}}{{println .}}{{end}}'
+  $reservedEnvironment = $configuredEnvironment | Where-Object {
+    $_ -match '^(PORT|K_SERVICE|K_CONFIGURATION|K_REVISION|OCI_RESOURCE_PRINCIPAL_VERSION|OCI_RESOURCE_PRINCIPAL_PRIVATE_PEM|OCI_RESOURCE_PRINCIPAL_RPST|KUBERNETES_[^=]*)='
+  }
+  if ($reservedEnvironment) {
+    throw "$image declares Hosted Deployment reserved environment variables: $($reservedEnvironment -join ', ')"
   }
 }
 

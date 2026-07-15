@@ -6,37 +6,61 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import FilterPanel from './FilterPanel';
 import RequestList from './RequestList';
 import RequestDetails from './RequestDetails';
+import Toolbar from './Toolbar';
 import { useHarData } from '../hooks/useHarData';
+import FloatingAiChat from './FloatingAiChat';
 import RequestFlowDiagram from './RequestFlowDiagram';
 import RequestFlowGraphView from './RequestFlowGraphView';
 import RequestFlowTraceView from './RequestFlowTraceView';
 import PerformanceScorecard from './PerformanceScorecard';
 import AiInsights from './AiInsights';
 import { apiClient } from '../services/apiClient';
-import { formatBytes } from '../utils/formatters';
 import { analyzeRequestFlowFocus } from '../utils/requestFlowFocus';
-import { NetworkIcon, RouteIcon, ServerIcon } from './Icons';
+import { AlertIcon, ChevronDownIcon, ClockIcon, CloseIcon, FileIcon, NetworkIcon, RouteIcon, ServerIcon, TrashIcon, UploadIcon } from './Icons';
+import type { Entry, FilterOptions } from '../types/har';
 import type { RequestFlowFocusMode } from '../types/requestFlow';
 
 type HarTab = 'analyzer' | 'flow' | 'scorecard' | 'insights';
 type FlowViewMode = 'diagram' | 'nodes' | 'trace';
+type StatusBucket = keyof FilterOptions['statusCodes'];
+
+function getStatusBucket(status: number): StatusBucket {
+  if (status === 0) return '0';
+  if (status >= 100 && status < 200) return '1xx';
+  if (status >= 200 && status < 300) return '2xx';
+  if (status >= 300 && status < 400) return '3xx';
+  if (status >= 400 && status < 500) return '4xx';
+  return '5xx';
+}
+
+interface RecentFile {
+  name: string;
+  timestamp: number;
+  data: File;
+}
 
 export interface HarTabContentProps {
   tabId: string;
   fileId: string;
   fileName: string;
-  fileSize?: number;
   isActive: boolean;
   backendUrl: string;
+  recentFiles: RecentFile[];
+  onAddNewTab: () => void;          // "Upload new" in toolbar -> create new tab
+  onLoadRecentNewTab: (file: File) => void;
+  onClearRecent: () => void;
 }
 
 const HarTabContent: React.FC<HarTabContentProps> = ({
   tabId,
   fileId,
   fileName,
-  fileSize,
   isActive,
   backendUrl,
+  recentFiles,
+  onAddNewTab,
+  onLoadRecentNewTab,
+  onClearRecent,
 }) => {
   const harState = useHarData();
   const [activeTab, setActiveTab] = useState<HarTab>('analyzer');
@@ -45,12 +69,15 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
   const [issueFocusEnabled, setIssueFocusEnabled] = useState(true);
   const [detailsWidth, setDetailsWidth] = useState(450);
   const [isLoadingFile, setIsLoadingFile] = useState(true);
-  const [pendingAnalyzerScroll, setPendingAnalyzerScroll] = useState(false);
-  const analyzerScrollAnchorRef = useRef<HTMLDivElement | null>(null);
+  const [showStickyRecent, setShowStickyRecent] = useState(false);
+  const [selectedEntryScrollSignal, setSelectedEntryScrollSignal] = useState(0);
   const flowViewRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const autoSelectedFocusKeyRef = useRef<string | null>(null);
   const manualSelectionSuppressedRef = useRef(false);
-  const flowSessionEntries = harState.harData?.log.entries ?? [];
+  const flowSessionEntries = useMemo(
+    () => harState.harData?.log.entries ?? [],
+    [harState.harData],
+  );
   const requestFlowIssueFocus = useMemo(
     () => analyzeRequestFlowFocus(flowSessionEntries),
     [flowSessionEntries]
@@ -118,41 +145,81 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
     window.addEventListener('mouseup', onUp);
   };
 
+  const formatRecentDate = (timestamp: number) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+
+    const diffDays = Math.floor(diffHours / 24);
+    return `${diffDays}d ago`;
+  };
+
   const focusFlowView = (index: number) => {
     flowViewRefs.current[index]?.focus();
   };
 
+  const requestSelectedEntryScroll = () => {
+    setSelectedEntryScrollSignal((signal) => signal + 1);
+  };
+
+  const selectedEntry = harState.selectedEntry;
+  const setSelectedEntry = harState.setSelectedEntry;
+
+  const revealEntryInAnalyzerFilters = (entry: Entry) => {
+    const statusBucket = getStatusBucket(entry.response.status);
+    const nextStatusCodes = harState.filters.statusCodes[statusBucket]
+      ? harState.filters.statusCodes
+      : {
+          ...harState.filters.statusCodes,
+          [statusBucket]: true,
+        };
+    const hasBlockingSearch = harState.filters.searchTerm.trim().length > 0;
+
+    if (nextStatusCodes !== harState.filters.statusCodes || hasBlockingSearch) {
+      harState.updateFilters({
+        statusCodes: nextStatusCodes,
+        searchTerm: hasBlockingSearch ? '' : harState.filters.searchTerm,
+      });
+    }
+  };
+
   useEffect(() => {
     if (!issueFocusEnabled || !requestFlowIssueFocus || !focusEntry) return;
-    if (harState.selectedEntry || manualSelectionSuppressedRef.current) return;
+    if (selectedEntry || manualSelectionSuppressedRef.current) return;
 
     const focusKey = `${fileId}:${requestFlowIssueFocus.anchorIndex}:${Math.round(requestFlowIssueFocus.score)}`;
     if (autoSelectedFocusKeyRef.current === focusKey) return;
 
     autoSelectedFocusKeyRef.current = focusKey;
-    harState.setSelectedEntry(focusEntry);
-  }, [fileId, focusEntry, harState, issueFocusEnabled, requestFlowIssueFocus]);
+    setSelectedEntry(focusEntry);
+    requestSelectedEntryScroll();
+  }, [
+    fileId,
+    focusEntry,
+    selectedEntry,
+    setSelectedEntry,
+    issueFocusEnabled,
+    requestFlowIssueFocus,
+  ]);
 
-  const selectEntryManually = (entry: any) => {
+  const selectEntryManually = (entry: Entry) => {
     manualSelectionSuppressedRef.current = true;
     harState.setSelectedEntry(entry);
   };
 
-  const openEntryFromFlow = (entry: any) => {
+  const openEntryFromFlow = (entry: Entry) => {
+    revealEntryInAnalyzerFilters(entry);
     selectEntryManually(entry);
-    setPendingAnalyzerScroll(true);
+    requestSelectedEntryScroll();
     setActiveTab('analyzer');
   };
-
-  useEffect(() => {
-    if (activeTab !== 'analyzer' || !pendingAnalyzerScroll) return;
-
-    analyzerScrollAnchorRef.current?.scrollIntoView({
-      behavior: 'smooth',
-      block: 'start',
-    });
-    setPendingAnalyzerScroll(false);
-  }, [activeTab, pendingAnalyzerScroll]);
 
   const moveFlowView = (index: number) => {
     const nextOption = flowViewOptions[index];
@@ -190,7 +257,10 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
 
   return (
     // Keep mounted but hidden — preserves hook state (filters, selected entry, etc.)
-    <div className="har-tab-content" style={{ display: isActive ? undefined : 'none' }}>
+    <div
+      className={`har-tab-content ${isActive ? 'is-active' : ''} ${activeTab === 'flow' ? 'is-flow-active' : ''}`}
+      style={{ display: isActive ? undefined : 'none' }}
+    >
 
       {/* Sub-tabs: only show once data is loaded */}
       {harState.harData && (
@@ -209,6 +279,64 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
               </button>
             ))}
           </div>
+          <div className="har-sticky-actions">
+            <button className="btn-toolbar btn-upload har-sticky-upload" onClick={onAddNewTab}>
+              <UploadIcon />
+              <span>Upload New</span>
+            </button>
+            {recentFiles.length > 0 && (
+              <div className={`recent-files-dropdown ${showStickyRecent ? 'active' : ''}`}>
+                <button
+                  className="btn-toolbar btn-recent har-sticky-recent"
+                  onClick={() => setShowStickyRecent(!showStickyRecent)}
+                >
+                  <ClockIcon />
+                  <span>Recent Files</span>
+                  <ChevronDownIcon />
+                </button>
+
+                {showStickyRecent && (
+                  <div className="dropdown-menu">
+                    <div className="dropdown-header">
+                      <span>Recent Files</span>
+                      <button
+                        className="btn-clear-recent"
+                        onClick={() => {
+                          onClearRecent();
+                          setShowStickyRecent(false);
+                        }}
+                      >
+                        <TrashIcon />
+                        <span>Clear All</span>
+                      </button>
+                    </div>
+                    <div className="dropdown-content">
+                      {recentFiles.map((file, index) => (
+                        <button
+                          key={index}
+                          className="recent-file-item"
+                          onClick={() => {
+                            const fileToPass =
+                              file.data instanceof File
+                                ? file.data
+                                : new File([], file.name);
+                            onLoadRecentNewTab(fileToPass);
+                            setShowStickyRecent(false);
+                          }}
+                        >
+                          <div className="recent-file-info">
+                            <FileIcon />
+                            <span className="recent-file-name">{file.name}</span>
+                          </div>
+                          <span className="recent-file-time">{formatRecentDate(file.timestamp)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -221,18 +349,27 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
 
       {harState.error && (
         <div className="error-banner">
-          <span className="error-icon">!</span>
+          <span className="error-icon" aria-hidden="true"><AlertIcon /></span>
           <span>{harState.error}</span>
-          <button onClick={harState.clearData} className="btn-dismiss">x</button>
+          <button onClick={harState.clearData} className="btn-dismiss" aria-label="Dismiss error"><CloseIcon /></button>
         </div>
       )}
 
       {harState.harData && (
         <>
-          <div ref={analyzerScrollAnchorRef} className="analyzer-scroll-anchor" />
-
           {activeTab === 'analyzer' && (
             <>
+              <Toolbar
+                onUploadNew={onAddNewTab}
+                onLoadRecent={onLoadRecentNewTab}
+                recentFiles={recentFiles}
+                onClearRecent={onClearRecent}
+                showUploadButton={false}
+                showRecentButton={false}
+                currentFileName={fileName}
+                harEntries={harState.filteredEntries}
+                totalHarEntries={harState.harData.log.entries.length}
+              />
               <div
                 className={`analyzer-layout ${harState.selectedEntry ? 'with-details' : ''}`}
                 style={harState.selectedEntry ? ({ ['--details-width' as any]: `${detailsWidth}px` }) : undefined}
@@ -241,10 +378,6 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
                   <FilterPanel
                     filters={harState.filters}
                     onFilterChange={harState.updateFilters}
-                    fileSummary={{
-                      name: fileName,
-                      meta: `HAR - ${formatBytes(fileSize ?? 0, 0)} - ${harState.harData.log.entries.length} request${harState.harData.log.entries.length === 1 ? '' : 's'}`,
-                    }}
                   />
                 </aside>
                 <div className="content-area">
@@ -255,6 +388,7 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
                     timingType={harState.filters.timingType}
                     focusEntry={focusEntry}
                     focusPath={requestFlowIssueFocus}
+                    scrollToSelectedSignal={selectedEntryScrollSignal}
                   />
                 </div>
                 {harState.selectedEntry && (
@@ -303,7 +437,7 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
                 </div>
               </div>
 
-              <div className="flow-tab-panel har-tab-scroll-panel">
+              <div className="flow-tab-panel">
                 {flowViewMode === 'diagram' ? (
                   <RequestFlowDiagram
                     entries={flowSessionEntries}
@@ -340,26 +474,21 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
           )}
 
           {activeTab === 'scorecard' && (
-            <div className="scorecard-wrapper har-tab-scroll-panel">
-              <PerformanceScorecard
-                harData={harState.harData}
-                onSelectRequest={openEntryFromFlow}
-              />
+            <div className="scorecard-wrapper">
+              <PerformanceScorecard harData={harState.harData} onSelectRequest={openEntryFromFlow} />
             </div>
           )}
 
           {/* Always mounted so useInsights auto-fires as soon as HAR data loads,
               generating results in the background before the user visits the tab. */}
-          <div
-            className="har-tab-scroll-panel har-insights-scroll-panel"
-            style={{ display: activeTab === 'insights' ? undefined : 'none' }}
-          >
+          <div style={{ display: activeTab === 'insights' ? undefined : 'none' }}>
             <AiInsights
               harData={harState.harData}
               backendUrl={backendUrl}
             />
           </div>
 
+          <FloatingAiChat harData={harState.harData} />
         </>
       )}
     </div>

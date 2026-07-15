@@ -31,6 +31,21 @@ describe('streamParseHar', () => {
     expect(collected).toHaveLength(3);
   });
 
+  it('accepts HAR files with a UTF-8 byte order mark', async () => {
+    const path = join(tmpdir(), `har-test-bom-${Date.now()}-${Math.random().toString(36).slice(2)}.har`);
+    writeFileSync(path, Buffer.concat([
+      Buffer.from([0xef, 0xbb, 0xbf]),
+      Buffer.from(makeHarJsonString(1), 'utf8'),
+    ]));
+    tempFiles.push(path);
+
+    const collected: any[] = [];
+    await streamParseHar(path, async (entry) => { collected.push(entry); });
+
+    expect(collected).toHaveLength(1);
+    expect(collected[0].response.status).toBe(200);
+  });
+
   it('assigns sequential index starting from 0', async () => {
     const path = writeTempFile(makeHarJsonString(4));
     const indices: number[] = [];
@@ -228,6 +243,26 @@ describe('streamParseConsoleLog', () => {
     expect(collected).toHaveLength(2);
     expect(collected[0].issueTags).toContain('http-5xx');
     expect(collected[1].issueTags).toContain('http-4xx');
+  });
+
+  it('parses ISO timestamped console lines with explicit log levels', async () => {
+    const path = writeTempFile(
+      '2026-05-26T10:00:00.000Z ERROR ORDS preflight failed: Access-Control-Allow-Origin header is missing from ORDS',
+      '.log',
+    );
+    const collected: any[] = [];
+
+    await streamParseConsoleLog(path, async (entry) => { collected.push(entry); });
+
+    expect(collected).toHaveLength(1);
+    expect(collected[0]).toMatchObject({
+      timestamp: '2026-05-26T10:00:00.000Z',
+      level: 'error',
+      parseStatus: 'parsed',
+      parseFormat: 'generic-level',
+    });
+    expect(collected[0].message).toContain('ORDS preflight failed');
+    expect(collected[0].issueTags).toContain('cors');
   });
 
   it('does not classify access-log response sizes as HTTP 5xx statuses', async () => {

@@ -894,41 +894,43 @@ const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData, onSelectReque
         </header>
         <div className="scorecard-section-divider" />
 
-        <div className="scorecard-slow-request-table" role="list" aria-label="Top slow requests">
-          <div className="scorecard-slow-request-header" aria-hidden="true">
-            <span>Request</span>
-            <span>STATUS</span>
-            <span>TTFB</span>
-            <span>TRANSFER</span>
-            <span>Time</span>
-          </div>
+        <div className="scorecard-panel-list">
           {slowTop.map((entry) => {
             const time = entry.time ?? 0;
+            const badgeLabel = entry.response.status >= 400 ? 'Error' : entry.response.status >= 300 ? 'Redirect' : 'Observed';
             const badgeTone = entry.response.status >= 400 ? 'danger' : 'info';
             const barWidth = `${Math.max(10, Math.round((time / maxTime) * 100))}%`;
             const requestKey = `${entry.request.method}-${entry.request.url}-${entry.startedDateTime}`;
-            const requestRowContent = (
+            const requestCardContent = (
               <>
-                <span className="scorecard-slow-request-main">
+                <div className="scorecard-traffic-head">
                   <strong title={entry.request.url}>{getPathLabel(entry.request.url)}</strong>
-                  <span>{entry.request.method} · {fhost(entry.request.url)}</span>
-                  <span className="scorecard-traffic-bar" aria-hidden="true">
-                    <span
-                      className={`scorecard-traffic-bar-fill tone-${time > 1400 ? 'warning' : 'info'}`}
-                      style={{ width: barWidth } as React.CSSProperties}
-                    />
-                  </span>
-                </span>
-                <span className={`scorecard-inline-pill tone-${badgeTone}`}>HTTP {entry.response.status || 0}</span>
-                <span className="scorecard-slow-request-metric">
-                  <small>TTFB</small>
-                  <strong>{fmtT(entry.timings.wait ?? 0)}</strong>
-                </span>
-                <span className="scorecard-slow-request-metric">
-                  <small>Transfer</small>
-                  <strong>{fmtB(getTransferSize(entry))}</strong>
-                </span>
-                <span className="scorecard-traffic-time">{fmtT(time)}</span>
+                  <div className="scorecard-traffic-metrics">
+                    <span className="scorecard-traffic-time">{fmtT(time)}</span>
+                    <span className={`scorecard-inline-pill tone-${badgeTone}`}>{badgeLabel}</span>
+                  </div>
+                </div>
+                <span className="scorecard-traffic-subtitle">{fhost(entry.request.url)}</span>
+                <div className="scorecard-traffic-bar">
+                  <div
+                    className={`scorecard-traffic-bar-fill tone-${time > 1400 ? 'warning' : 'info'}`}
+                    style={{ width: barWidth } as React.CSSProperties}
+                  />
+                </div>
+                <div className="scorecard-domain-grid scorecard-traffic-grid">
+                  <div>
+                    <span>STATUS</span>
+                    <strong>HTTP {entry.response.status || 0}</strong>
+                  </div>
+                  <div>
+                    <span>TTFB</span>
+                    <strong>{fmtT(entry.timings.wait ?? 0)}</strong>
+                  </div>
+                  <div>
+                    <span>TRANSFER</span>
+                    <strong>{fmtB(getTransferSize(entry))}</strong>
+                  </div>
+                </div>
               </>
             );
 
@@ -937,18 +939,18 @@ const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData, onSelectReque
                 <button
                   key={requestKey}
                   type="button"
-                  className="scorecard-slow-request-row is-clickable"
+                  className="scorecard-traffic-card is-clickable"
                   onClick={() => onSelectRequest(entry)}
                   aria-label={`Open request details for ${entry.request.method} ${entry.request.url}`}
                 >
-                  {requestRowContent}
+                  {requestCardContent}
                 </button>
               );
             }
 
             return (
-              <article key={requestKey} className="scorecard-slow-request-row">
-                {requestRowContent}
+              <article key={requestKey} className="scorecard-traffic-card">
+                {requestCardContent}
               </article>
             );
           })}
@@ -1001,7 +1003,7 @@ const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData, onSelectReque
   );
 
   return (
-    <section className="scorecard-dashboard is-compact">
+    <section className="scorecard-dashboard">
       <div className="scorecard-hero-card">
         <div className="scorecard-hero-grid">
           <div className="scorecard-hero-copy">
@@ -1009,7 +1011,7 @@ const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData, onSelectReque
               <SparklesIcon />
               <span>Performance Scorecard</span>
             </span>
-            <h2>HAR session scorecard</h2>
+            <h2>Executive snapshot for this HAR session</h2>
             <p>{scoreHeadline(score)}</p>
             <div className="scorecard-hero-tags">
               <span className="scorecard-pill">{data.total} requests</span>
@@ -1066,7 +1068,7 @@ const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData, onSelectReque
               </div>
             </div>
             <p className="scorecard-score-description">
-              Penalty-based across latency, reliability, caching, compression, and security.
+              Score is penalty-based across latency, reliability, caching, compression, and security indicators.
             </p>
             <div
               ref={explainerRegionRef}
@@ -1099,7 +1101,7 @@ const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData, onSelectReque
                 }}
               >
                 <InfoIcon />
-                <span>Score rules</span>
+                <span>How this score is calculated</span>
               </button>
 
               {showExplainer && (

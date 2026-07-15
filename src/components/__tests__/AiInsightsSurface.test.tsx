@@ -106,7 +106,7 @@ describe('AiInsightsSurface icon clarity', () => {
     );
 
     expect(screen.getAllByText('AI HAR Review')).toHaveLength(2);
-    expect(screen.getByText(/using oca gpt-5\.4/i)).toBeInTheDocument();
+    expect(screen.getByText(/ai-assisted review/i)).toBeInTheDocument();
 
     const railKicker = container.querySelector('.ai-insights-rail-kicker');
     const heroKicker = container.querySelector('.ai-insights-kicker');
@@ -160,7 +160,7 @@ describe('AiInsightsSurface icon clarity', () => {
 
     expect(stateIcon).not.toBeNull();
     expect(screen.getByText('AI HAR Review')).toBeInTheDocument();
-    expect(screen.getByText(/using oca gpt-5\.4/i)).toBeInTheDocument();
+    expect(screen.getByText(/ai-assisted review/i)).toBeInTheDocument();
     expect(within(stateIcon as HTMLElement).getByTestId('NetworkIcon')).toBeInTheDocument();
     expect(generateButton.querySelector('svg')).toBeNull();
     expect(screen.queryByTestId('SparklesIcon')).not.toBeInTheDocument();

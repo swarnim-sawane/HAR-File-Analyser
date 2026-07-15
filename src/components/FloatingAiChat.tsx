@@ -61,7 +61,8 @@ const FloatingAiChat: React.FC<FloatingAiChatProps> = ({ harData, logData }) => 
   const [messages, setMessages]       = useState<Message[]>(snapshot?.messages   ?? []);
   const [input, setInput]             = useState('');
   const [isLoading, setIsLoading]     = useState(false);
-  const [ocaConnected, setOcaConnected] = useState<boolean>(true);
+  const [aiConfigured, setAiConfigured] = useState<boolean | null>(null);
+  const [aiConnected, setAiConnected]   = useState<boolean>(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef    = useRef<HTMLTextAreaElement>(null);
 
@@ -80,7 +81,7 @@ const FloatingAiChat: React.FC<FloatingAiChatProps> = ({ harData, logData }) => 
 
     // Convert "#N -" style markers into proper numbered markdown items.
     normalized = normalized.replace(
-      /^[ \t]*(?:[\u2022\u25CF\u25AA\u25B8\u25B9]\s*)?#(\d+)\s*[\u2014\u2013\u2012\u2015-]\s+/gm,
+      /^[ \t]*(?:[\u2022\u25CF\u25AA\u25B8\u25B9]\s*)?#(\d+)\s*[-\u2014\u2013\u2012\u2015]\s+/gm,
       '$1. '
     );
 
@@ -106,7 +107,11 @@ const FloatingAiChat: React.FC<FloatingAiChatProps> = ({ harData, logData }) => 
   };
 
   useEffect(() => {
-    if (isOpen) checkOca();
+    void checkAiService();
+  }, []);
+
+  useEffect(() => {
+    if (isOpen) void checkAiService();
   }, [isOpen]);
 
   useEffect(() => {
@@ -118,18 +123,22 @@ const FloatingAiChat: React.FC<FloatingAiChatProps> = ({ harData, logData }) => 
   };
 
   // Use backend status endpoint for connectivity checks.
-  const checkOca = async () => {
+  const checkAiService = async () => {
     try {
       const res = await fetch(`${BACKEND_AI_URL}/status`);
       if (!res.ok) {
-        setOcaConnected(false);
+        setAiConfigured(true);
+        setAiConnected(false);
         return;
       }
 
-      const data = (await res.json()) as { connected?: boolean };
-      setOcaConnected(Boolean(data.connected));
+      const data = (await res.json()) as { configured?: boolean; connected?: boolean };
+      setAiConfigured(data.configured ?? Boolean(data.connected));
+      setAiConnected(Boolean(data.connected));
     } catch {
-      setOcaConnected(false);
+      // Keep the assistant discoverable for transient API/network failures.
+      setAiConfigured(true);
+      setAiConnected(false);
     }
   };
 
@@ -215,19 +224,29 @@ ${fileContext}`;
       setMessages(prev => [...prev, assistantMessage]);
 
       if (reader) {
-        for (;;) {
+        let streamComplete = false;
+        let buffer = '';
+        while (!streamComplete) {
           const { done, value } = await reader.read();
-          if (done) break;
+          if (done) {
+            streamComplete = true;
+            continue;
+          }
 
-          const chunk = decoder.decode(value, { stream: true });
-          const lines = chunk.split('\n').filter(l => l.startsWith('data: '));
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
 
           for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
             const data = line.slice(6).trim(); // strip "data: "
-            if (data === '[DONE]') break;
+            if (data === '[DONE]') {
+              streamComplete = true;
+              break;
+            }
             try {
               const json = JSON.parse(data);
-              // OpenAI SSE format, not Ollama's json.response format.
+              // OpenAI Responses API streaming delta format.
               const content = json.choices?.[0]?.delta?.content;
               if (content) {
                 assistantMessage.content += content;
@@ -245,7 +264,7 @@ ${fileContext}`;
       setMessages(prev => [...prev, {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: 'Failed to get response. Make sure the backend is running and the OCA token is valid.',
+        content: 'Failed to get response. Make sure the backend is running and the OpenAI API configuration is valid.',
         timestamp: new Date(),
       }]);
     } finally {
@@ -279,6 +298,8 @@ ${fileContext}`;
     ? logData?.entries.length || 0
     : harData?.log.entries.length || 0;
 
+  if (aiConfigured !== true) return null;
+
   if (!isOpen) {
     return (
       <button className="ai-chat-floating-button" onClick={() => setIsOpen(true)}>
@@ -306,10 +327,10 @@ ${fileContext}`;
           </div>
           <div>
             <h3>AI Assistant</h3>
-            {ocaConnected ? (
+            {aiConnected ? (
               <span className="ai-chat-status">
                 <span className="ai-chat-status-indicator"></span>
-                Online - OCA gpt-5.4
+                Online - AI service connected
               </span>
             ) : (
               <span className="ai-chat-status ai-chat-status-offline">
@@ -339,10 +360,10 @@ ${fileContext}`;
 
       {!isMinimized && (
         <>
-          {!ocaConnected && (
+          {!aiConnected && (
             <div className="ai-chat-connection-warning">
               <span>AI connectivity check failed. You can still send a message.</span>
-              <button className="ai-chat-retry-btn" onClick={checkOca}>
+              <button className="ai-chat-retry-btn" onClick={checkAiService}>
                 Retry
               </button>
             </div>

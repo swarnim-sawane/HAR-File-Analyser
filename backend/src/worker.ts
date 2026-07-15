@@ -4,6 +4,7 @@ import { closeDatabases, connectDatabases, getRedis } from './config/database';
 import { HAR_QUEUE_NAME, LOG_QUEUE_NAME } from './config/queueNames';
 import { processHarFile } from './workers/harProcessor';
 import { processConsoleLog } from './workers/logProcessor';
+import { logError, logInfo, measureDurationMs } from './config/observability';
 import { startWorkerHealthServer } from './workerHealthServer';
 
 dotenv.config();
@@ -12,9 +13,10 @@ let harWorker: Worker | null = null;
 let logWorker: Worker | null = null;
 let shuttingDown = false;
 let ready = false;
+let startupFailed = false;
 const healthServer = startWorkerHealthServer({
   isReady: () => ready,
-  isShuttingDown: () => shuttingDown,
+  isShuttingDown: () => shuttingDown || startupFailed,
 });
 
 async function shutdown(signal: string): Promise<void> {
@@ -27,12 +29,13 @@ async function shutdown(signal: string): Promise<void> {
   await Promise.allSettled([
     harWorker?.close(),
     logWorker?.close(),
-    new Promise<void>((resolve) => healthServer.close(() => resolve())),
   ]);
 
   await closeDatabases().catch((error) => {
     console.error('❌ Failed to close worker database connections:', error);
   });
+
+  await new Promise<void>((resolve) => healthServer.close(() => resolve()));
 
   process.exit(0);
 }
@@ -44,17 +47,39 @@ async function startWorker() {
     await connectDatabases();
     const connection = getRedis();
     const concurrency = parseInt(process.env.WORKER_CONCURRENCY || '2', 10);
+    logInfo('worker.starting', { concurrency });
 
     harWorker = new Worker(
       HAR_QUEUE_NAME,
       async (job) => {
+        const startedAt = Date.now();
         console.log(`\n[Worker] Processing HAR file job ${job.id}`);
+        logInfo('worker.job.started', {
+          queue: HAR_QUEUE_NAME,
+          jobId: job.id,
+          fileId: job.data.fileId,
+          fileType: job.data.fileType,
+          fileSize: job.data.fileSize,
+        });
 
         try {
           await processHarFile(job.data);
+          logInfo('worker.job.completed', {
+            queue: HAR_QUEUE_NAME,
+            jobId: job.id,
+            fileId: job.data.fileId,
+            durationMs: measureDurationMs(startedAt),
+          });
           return { success: true, fileId: job.data.fileId };
         } catch (error) {
           console.error('[Worker] Failed to process HAR file:', error);
+          logError('worker.job.failed', {
+            queue: HAR_QUEUE_NAME,
+            jobId: job.id,
+            fileId: job.data.fileId,
+            error,
+            durationMs: measureDurationMs(startedAt),
+          });
           throw error;
         }
       },
@@ -71,13 +96,34 @@ async function startWorker() {
     logWorker = new Worker(
       LOG_QUEUE_NAME,
       async (job) => {
+        const startedAt = Date.now();
         console.log(`\n[Worker] Processing console log job ${job.id}`);
+        logInfo('worker.job.started', {
+          queue: LOG_QUEUE_NAME,
+          jobId: job.id,
+          fileId: job.data.fileId,
+          fileType: job.data.fileType,
+          fileSize: job.data.fileSize,
+        });
 
         try {
           await processConsoleLog(job.data);
+          logInfo('worker.job.completed', {
+            queue: LOG_QUEUE_NAME,
+            jobId: job.id,
+            fileId: job.data.fileId,
+            durationMs: measureDurationMs(startedAt),
+          });
           return { success: true, fileId: job.data.fileId };
         } catch (error) {
           console.error('[Worker] Failed to process console log:', error);
+          logError('worker.job.failed', {
+            queue: LOG_QUEUE_NAME,
+            jobId: job.id,
+            fileId: job.data.fileId,
+            error,
+            durationMs: measureDurationMs(startedAt),
+          });
           throw error;
         }
       },
@@ -114,10 +160,13 @@ async function startWorker() {
     console.log(`📊 Concurrency per process: ${concurrency}`);
     console.log('📡 WebSocket delivery: Redis pub/sub via backend');
     console.log('=================================\n');
+    logInfo('worker.started', { concurrency });
   } catch (error) {
     ready = false;
+    startupFailed = true;
     console.error('❌ Failed to start worker:', error);
-    process.exit(1);
+    logError('worker.start.failed', { error });
+    process.exitCode = 1;
   }
 }
 

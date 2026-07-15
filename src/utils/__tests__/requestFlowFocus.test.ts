@@ -95,6 +95,69 @@ describe('analyzeRequestFlowFocus', () => {
     expect(focus?.reasons).toEqual(expect.arrayContaining(['http-4xx', 'auth-failure']));
   });
 
+  it('prefers failed app logout flow over repeated identity favicon auth noise', () => {
+    const entries = [
+      makeEntry({
+        request: { ...makeEntry().request, method: 'POST', url: 'https://app.example.com/cloudgate/v1/oauth2/callback' },
+        response: {
+          ...makeEntry().response,
+          status: 302,
+          statusText: 'Found',
+          redirectURL: 'https://app.example.com/ic/builder',
+          content: { size: 0, mimeType: 'text/html' },
+        },
+      }),
+      makeEntry({
+        startedDateTime: '2026-05-25T10:00:01.000Z',
+        request: { ...makeEntry().request, url: 'https://idcs.example.com/favicon.ico' },
+        response: {
+          ...makeEntry().response,
+          status: 401,
+          statusText: 'Unauthorized',
+          content: { size: 546, mimeType: 'text/html' },
+          bodySize: 546,
+        },
+      }),
+      makeEntry({
+        startedDateTime: '2026-05-25T10:00:10.000Z',
+        request: {
+          ...makeEntry().request,
+          url: 'https://app.example.com/cloudgate/v1/oauth2/logout?X-HOST-IDENTIFIER-NAME=app.example.com',
+        },
+        response: {
+          ...makeEntry().response,
+          status: 404,
+          statusText: 'Not Found',
+          content: { size: 520, mimeType: 'text/html' },
+          bodySize: 168,
+        },
+      }),
+      makeEntry({
+        startedDateTime: '2026-05-25T10:00:10.030Z',
+        request: { ...makeEntry().request, method: 'POST', url: 'https://app.example.com/cloudgate/v1/oauth2/logout' },
+        response: { ...makeEntry().response, status: 200, statusText: 'OK', content: { size: 0, mimeType: 'text/html' } },
+      }),
+      makeEntry({
+        startedDateTime: '2026-05-25T10:00:10.080Z',
+        request: { ...makeEntry().request, url: 'https://idcs.example.com/favicon.ico' },
+        response: {
+          ...makeEntry().response,
+          status: 401,
+          statusText: 'Unauthorized',
+          content: { size: 546, mimeType: 'text/html' },
+          bodySize: 546,
+        },
+      }),
+    ];
+
+    const focus = analyzeRequestFlowFocus(entries);
+
+    expect(focus?.anchorIndex).toBe(2);
+    expect(focus?.summary).toContain('/cloudgate/v1/oauth2/logout');
+    expect(focus?.reasonLabels).toEqual(expect.arrayContaining(['HTTP 404']));
+    expect(focus?.candidates[0]).toMatchObject({ index: 2 });
+  });
+
   it('detects blocked or CORS-like network evidence', () => {
     const entries = [
       makeEntry({

@@ -9,9 +9,7 @@ export function getRuntimeBinding(
   explicitPortVariable = 'PORT',
 ): RuntimeBinding {
   const hosted = env.HOSTED_DEPLOYMENT === 'true';
-  const explicitPort = env[explicitPortVariable];
-  const platformPort = hosted || explicitPortVariable === 'PORT' ? env.PORT : undefined;
-  const rawPort = explicitPort || platformPort || String(hosted ? 8080 : localDefaultPort);
+  const rawPort = env[explicitPortVariable] || env.PORT || String(hosted ? 8080 : localDefaultPort);
   const port = Number.parseInt(rawPort, 10);
 
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {

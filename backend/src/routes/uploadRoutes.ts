@@ -4,6 +4,7 @@ import { promises as fs } from 'fs';
 import { createGunzip } from 'zlib';
 import path from 'path';
 import crypto from 'crypto';
+import { once } from 'events';
 import { getRedis } from '../config/database';
 import { Queue } from 'bullmq';
 import { HAR_QUEUE_NAME, LOG_QUEUE_NAME } from '../config/queueNames';
@@ -13,16 +14,33 @@ import {
   buildChunkTooLargeResponse,
   isMulterFileTooLargeError,
 } from '../config/uploadLimits';
+import {
+  isSafeUploadFileId,
+  isSupportedUploadFileType,
+  parseUploadChunkIndex,
+  parseUploadTotalChunks,
+} from '../utils/uploadValidation';
+import { logError, logInfo, logWarn, measureDurationMs } from '../config/observability';
+import {
+  getArtifactStore,
+  sourceArtifactKey,
+  uploadChunkKey,
+} from '../services/artifactStore';
 
 const router = express.Router();
 const redis = getRedis();
+const artifactStore = getArtifactStore();
 
-// Use absolute paths
+// Hosted Deployment only guarantees write access under /tmp. These paths are
+// scratch space; durable artifacts are owned by ArtifactStore.
 const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads'));
-const PROCESSED_DIR = path.resolve(process.env.PROCESSED_DIR || path.join(process.cwd(), 'processed'));
+const ASSEMBLY_DIR = path.resolve(
+  process.env.ARTIFACT_SCRATCH_DIR || path.join(UPLOAD_DIR, 'assembled'),
+);
 
-console.log('📁 Upload directory:', UPLOAD_DIR);
-console.log('📁 Processed directory:', PROCESSED_DIR);
+console.log('Upload scratch directory:', UPLOAD_DIR);
+console.log('Assembly scratch directory:', ASSEMBLY_DIR);
+console.log('Artifact store:', artifactStore.kind);
 
 // Ensure directories exist SYNCHRONOUSLY before multer setup
 const fsSync = require('fs');
@@ -30,9 +48,9 @@ if (!fsSync.existsSync(UPLOAD_DIR)) {
   fsSync.mkdirSync(UPLOAD_DIR, { recursive: true });
   console.log('✅ Created upload directory');
 }
-if (!fsSync.existsSync(PROCESSED_DIR)) {
-  fsSync.mkdirSync(PROCESSED_DIR, { recursive: true });
-  console.log('✅ Created processed directory');
+if (!fsSync.existsSync(ASSEMBLY_DIR)) {
+  fsSync.mkdirSync(ASSEMBLY_DIR, { recursive: true });
+  console.log('Created assembly scratch directory');
 }
 
 // Create queues
@@ -60,7 +78,48 @@ const upload = multer({
 
 const uploadChunk = upload.single('chunk');
 
+async function assembleChunkStreams(
+  fileId: string,
+  totalChunks: number,
+  outputPath: string,
+): Promise<number> {
+  const fsNative = require('fs') as typeof import('fs');
+  const writeStream = fsNative.createWriteStream(outputPath, { flags: 'w' });
+  let assembledSize = 0;
+
+  try {
+    for (let index = 0; index < totalChunks; index++) {
+      const opened = await artifactStore.open(uploadChunkKey(fileId, index));
+      for await (const chunk of opened.body) {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        assembledSize += buffer.length;
+        if (!writeStream.write(buffer)) await once(writeStream, 'drain');
+      }
+      console.log(
+        `Appended chunk ${index} (running total: ${(assembledSize / 1024 / 1024).toFixed(1)} MB)`,
+      );
+    }
+
+    writeStream.end();
+    await once(writeStream, 'finish');
+    return assembledSize;
+  } catch (error) {
+    writeStream.destroy();
+    throw error;
+  }
+}
+
+async function hashFile(filePath: string): Promise<string> {
+  const hasher = crypto.createHash('sha256');
+  const fsNative = require('fs') as typeof import('fs');
+  for await (const chunk of fsNative.createReadStream(filePath)) {
+    hasher.update(chunk as Buffer);
+  }
+  return hasher.digest('hex');
+}
+
 const handleChunkUpload = async (req: Request, res: Response) => {
+  const startedAt = Date.now();
   try {
     const { fileId, chunkIndex, totalChunks } = req.body;
 
@@ -69,45 +128,50 @@ const handleChunkUpload = async (req: Request, res: Response) => {
       if (req.file) {
         await fs.unlink(req.file.path).catch(() => {});
       }
+      logWarn('upload.chunk.invalid_request', { reason: 'missing_parameters' });
       return res.status(400).json({ error: 'Missing parameters' });
     }
 
     // Check if file was actually uploaded
     if (!req.file) {
       console.error('❌ No file in request!');
+      logWarn('upload.chunk.invalid_request', { fileId, reason: 'missing_file' });
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
     // Prevent path traversal: fileId is used directly in a path.join below.
     // Only allow alphanumeric chars, underscores, and hyphens.
-    if (!/^[a-zA-Z0-9_-]+$/.test(fileId)) {
+    if (!isSafeUploadFileId(fileId)) {
       await fs.unlink(req.file.path).catch(() => {});
+      logWarn('upload.chunk.invalid_request', { reason: 'invalid_file_id' });
       return res.status(400).json({ error: 'Invalid fileId' });
     }
 
-    // FIXED: Rename temp file to proper chunk name
-    const chunkPath = path.join(UPLOAD_DIR, `${fileId}_chunk_${chunkIndex}`);
-    await fs.rename(req.file.path, chunkPath);
+    const parsedTotalChunks = parseUploadTotalChunks(totalChunks);
+    const parsedChunkIndex = parsedTotalChunks === null
+      ? null
+      : parseUploadChunkIndex(chunkIndex, parsedTotalChunks);
 
-    console.log(`✓ Chunk ${chunkIndex}/${totalChunks} received for file ${fileId}`);
-    console.log(`  Saved to: ${chunkPath}`);
-    console.log(`  Size: ${req.file.size} bytes`);
-
-    // Verify file exists
-    try {
-      await fs.access(chunkPath);
-      console.log(`  ✓ Verified chunk exists`);
-    } catch (err) {
-      console.error(`  ❌ Chunk not found after rename: ${chunkPath}`);
-      return res.status(500).json({ error: 'Chunk upload failed - file not saved' });
+    if (parsedTotalChunks === null || parsedChunkIndex === null) {
+      await fs.unlink(req.file.path).catch(() => {});
+      logWarn('upload.chunk.invalid_request', { fileId, reason: 'invalid_chunk_parameters' });
+      return res.status(400).json({ error: 'Invalid chunk parameters' });
     }
 
+    const chunkKey = uploadChunkKey(fileId, parsedChunkIndex);
+    await artifactStore.put(chunkKey, { filePath: req.file.path });
+    await fs.rm(req.file.path, { force: true });
+
+    console.log(`✓ Chunk ${parsedChunkIndex}/${parsedTotalChunks} received for file ${fileId}`);
+    console.log(`  Saved as artifact: ${chunkKey}`);
+    console.log(`  Size: ${req.file.size} bytes`);
+
     // Track received chunks in Redis
-    await redis.sadd(`upload:${fileId}:chunks`, chunkIndex);
+    await redis.sadd(`upload:${fileId}:chunks`, parsedChunkIndex.toString());
     const receivedChunks = await redis.scard(`upload:${fileId}:chunks`);
 
     // Update progress
-    const progress = (receivedChunks / parseInt(totalChunks)) * 100;
+    const progress = (receivedChunks / parsedTotalChunks) * 100;
     await redis.set(`upload:${fileId}:progress`, progress.toString());
     await redis.expire(`upload:${fileId}:progress`, 3600);
 
@@ -115,20 +179,35 @@ const handleChunkUpload = async (req: Request, res: Response) => {
       fileId,
       progress: Math.round(progress),
       receivedChunks,
-      totalChunks: parseInt(totalChunks)
+      totalChunks: parsedTotalChunks
+    });
+
+    logInfo('upload.chunk.received', {
+      fileId,
+      chunkIndex: parsedChunkIndex,
+      totalChunks: parsedTotalChunks,
+      receivedChunks,
+      chunkSize: req.file.size,
+      durationMs: measureDurationMs(startedAt),
     });
 
     res.json({
       success: true,
       fileId,
-      chunkIndex: parseInt(chunkIndex),
+      chunkIndex: parsedChunkIndex,
       receivedChunks,
-      totalChunks: parseInt(totalChunks),
+      totalChunks: parsedTotalChunks,
       progress: Math.round(progress)
     });
 
   } catch (error) {
     console.error('Chunk upload error:', error);
+    logError('upload.chunk.failed', {
+      fileId: req.body?.fileId,
+      chunkIndex: req.body?.chunkIndex,
+      error,
+      durationMs: measureDurationMs(startedAt),
+    });
     // Clean up temp file on error
     if (req.file) {
       await fs.unlink(req.file.path).catch(() => {});
@@ -161,97 +240,64 @@ router.post('/chunk', (req: Request, res: Response, next: NextFunction) => {
 
 // Complete upload (assemble chunks)
 router.post('/complete', async (req: Request, res: Response) => {
+  const startedAt = Date.now();
+  const localScratchPaths = new Set<string>();
   try {
     const { fileId, totalChunks, fileName, fileType, compressed } = req.body;
 
     if (!fileId || !totalChunks || !fileName || !fileType) {
+      logWarn('upload.complete.invalid_request', { reason: 'missing_parameters' });
       return res.status(400).json({ error: 'Missing parameters' });
     }
 
-    console.log(`📦 Assembling file: ${fileName} (${totalChunks} chunks)`);
+    if (!isSafeUploadFileId(fileId)) {
+      logWarn('upload.complete.invalid_request', { reason: 'invalid_file_id' });
+      return res.status(400).json({ error: 'Invalid fileId' });
+    }
+
+    if (!isSupportedUploadFileType(fileType)) {
+      logWarn('upload.complete.invalid_request', { fileId, reason: 'invalid_file_type', fileType });
+      return res.status(400).json({ error: 'Invalid fileType' });
+    }
+
+    const parsedTotalChunks = parseUploadTotalChunks(totalChunks);
+    if (parsedTotalChunks === null) {
+      logWarn('upload.complete.invalid_request', { fileId, reason: 'invalid_total_chunks' });
+      return res.status(400).json({ error: 'Invalid totalChunks' });
+    }
+
+    console.log(`📦 Assembling file: ${fileName} (${parsedTotalChunks} chunks)`);
 
     // Verify all chunks received
     const receivedChunks = await redis.scard(`upload:${fileId}:chunks`);
-    if (receivedChunks !== totalChunks) {
-      console.error(`❌ Missing chunks: received ${receivedChunks}, expected ${totalChunks}`);
+    if (receivedChunks !== parsedTotalChunks) {
+      console.error(`❌ Missing chunks: received ${receivedChunks}, expected ${parsedTotalChunks}`);
+      logWarn('upload.complete.missing_chunks', {
+        fileId,
+        receivedChunks,
+        expectedChunks: parsedTotalChunks,
+      });
       return res.status(400).json({
         error: 'Missing chunks',
         received: receivedChunks,
-        expected: totalChunks
+        expected: parsedTotalChunks
       });
     }
 
-    // List files in upload directory for debugging
-    const uploadFiles = await fs.readdir(UPLOAD_DIR);
-    console.log('📁 Chunk files:', uploadFiles.filter(f => f.includes(fileId)));
-
-    // ✅ FIXED: Stream-assemble chunks — never loads full file into RAM.
-    // Each chunk is piped directly to the output file. Hash computed incrementally.
-    // Memory usage = one chunk at a time (~10MB max) regardless of total file size.
-
-    // Prevent path traversal: strip any directory components from the user-supplied
-    // fileName before joining it into the output path.
+    // Assemble from provider-neutral chunk objects. In OCI mode, each request may
+    // be handled by a different API replica without relying on a shared volume.
     const safeFileName = path.basename(fileName);
-    const outputPath = path.join(PROCESSED_DIR, `${fileId}_${safeFileName}`);
-    const fsNative = require('fs') as typeof import('fs');
-    const hasher = crypto.createHash('sha256');
-    let assembledSize = 0;
-
-    // Open output file once, append each chunk sequentially
-    const writeStream = fsNative.createWriteStream(outputPath, { flags: 'w' });
-
-    await new Promise<void>((resolve, reject) => {
-      writeStream.on('error', reject);
-
-      (async () => {
-        try {
-          for (let i = 0; i < totalChunks; i++) {
-            const chunkPath = path.join(UPLOAD_DIR, `${fileId}_chunk_${i}`);
-            try {
-              await fs.access(chunkPath);
-            } catch {
-              throw new Error(`Missing chunk ${i}`);
-            }
-
-            // Stream this chunk into both: the output file and the hasher
-            await new Promise<void>((res2, rej2) => {
-              const readStream = fsNative.createReadStream(chunkPath);
-              readStream.on('error', rej2);
-              readStream.on('data', (data: string | Buffer) => {
-                const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
-                hasher.update(buf);
-                assembledSize += buf.length;
-              });
-              readStream.on('end', () => {
-                console.log(`✓ Appended chunk ${i} (running total: ${(assembledSize / 1024 / 1024).toFixed(1)} MB)`);
-                res2();
-              });
-              // Write to output without closing it between chunks
-              readStream.pipe(writeStream, { end: false });
-            });
-          }
-
-          // All chunks written — close the write stream
-          writeStream.end(() => resolve());
-        } catch (err) {
-          writeStream.destroy();
-          reject(err);
-        }
-      })();
-    });
+    const outputPath = path.join(ASSEMBLY_DIR, `${fileId}_${safeFileName}`);
+    localScratchPaths.add(outputPath);
+    const assembledSize = await assembleChunkStreams(fileId, parsedTotalChunks, outputPath);
 
     console.log(`✓ File assembled (streaming): ${outputPath} (${(assembledSize / 1024 / 1024).toFixed(1)} MB)`);
-
-    // Delete chunks
-    for (let i = 0; i < totalChunks; i++) {
-      const chunkPath = path.join(UPLOAD_DIR, `${fileId}_chunk_${i}`);
-      await fs.unlink(chunkPath).catch(() => {});
-    }
 
     // If client compressed the upload, decompress now so all downstream code
     // (sanitize, worker, HAR route) sees plain JSON — no changes needed elsewhere.
     if (compressed === 'gzip') {
       const compressedPath = outputPath + '.gz.tmp';
+      localScratchPaths.add(compressedPath);
       await fs.rename(outputPath, compressedPath);
       const fsNative2 = require('fs') as typeof import('fs');
       await new Promise<void>((resolve, reject) => {
@@ -262,6 +308,7 @@ router.post('/complete', async (req: Request, res: Response) => {
           .on('error', reject);
       });
       await fs.unlink(compressedPath).catch(() => {});
+      localScratchPaths.delete(compressedPath);
       console.log(`✓ Decompressed gzip → plain JSON: ${outputPath}`);
     }
 
@@ -293,23 +340,42 @@ router.post('/complete', async (req: Request, res: Response) => {
       }
     }
 
-    // Hash was computed incrementally — no need to read file again
-    const hash = hasher.digest('hex');
-
-    // Get file size
+    // Hash the canonical, decompressed artifact rather than the transport bytes.
+    const hash = await hashFile(outputPath);
     const stats = await fs.stat(outputPath);
+    const artifactKey = sourceArtifactKey(fileId);
+    await artifactStore.put(
+      artifactKey,
+      { filePath: outputPath },
+      fileType === 'har' ? 'application/json' : 'text/plain',
+    );
 
-    // Create processing job
-    const queue = fileType === 'har' ? harQueue : logQueue;
-    const job = await queue.add('process_file', {
-      fileId,
-      fileName,
-      filePath: outputPath,
+    const uploadedAt = new Date().toISOString();
+    const metadata = {
+      fileName: safeFileName,
       fileSize: stats.size,
       fileType,
       hash,
-      uploadedAt: new Date().toISOString(),
+      artifactKey,
+      uploadedAt,
+      status: 'processing',
+      jobId: null as string | null,
+    };
+
+    // Publish metadata before making the job visible to workers.
+    await redis.setex(`file:${fileId}:metadata`, 86400, JSON.stringify(metadata));
+
+    const queue = fileType === 'har' ? harQueue : logQueue;
+    const job = await queue.add('process_file', {
+      fileId,
+      fileName: safeFileName,
+      artifactKey,
+      fileSize: stats.size,
+      fileType,
+      hash,
+      uploadedAt,
     }, {
+      jobId: fileId,
       attempts: 3,
       backoff: {
         type: 'exponential',
@@ -317,32 +383,34 @@ router.post('/complete', async (req: Request, res: Response) => {
       }
     });
 
-    // Clean up Redis keys
+    metadata.jobId = String(job.id);
+    await redis.setex(`file:${fileId}:metadata`, 86400, JSON.stringify(metadata));
+
+    // The durable artifact and queue job now exist, so transport chunks and
+    // replica-local assembly files can be removed.
+    for (let index = 0; index < parsedTotalChunks; index++) {
+      await artifactStore.delete(uploadChunkKey(fileId, index)).catch(() => false);
+    }
+    await fs.rm(outputPath, { force: true });
+    localScratchPaths.delete(outputPath);
     await redis.del(`upload:${fileId}:chunks`);
     await redis.del(`upload:${fileId}:progress`);
 
-    // Store file metadata
-    await redis.setex(
-      `file:${fileId}:metadata`,
-      86400,
-      JSON.stringify({
-        fileName,
-        fileSize: stats.size,
-        fileType,
-        hash,
-        uploadedAt: new Date().toISOString(),
-        status: 'processing',
-        jobId: job.id
-      })
-    );
-
-    console.log(`✅ File uploaded successfully: ${fileName} (Job: ${job.id})`);
+    console.log(`✅ File uploaded successfully: ${safeFileName} (Job: ${job.id})`);
+    logInfo('upload.complete.enqueued', {
+      fileId,
+      fileType,
+      fileSize: stats.size,
+      totalChunks: parsedTotalChunks,
+      jobId: job.id,
+      durationMs: measureDurationMs(startedAt),
+    });
 
     res.json({
       success: true,
       fileId,
       jobId: job.id,
-      fileName,
+      fileName: safeFileName,
       fileSize: stats.size,
       hash,
       message: 'File uploaded successfully, processing started'
@@ -350,10 +418,20 @@ router.post('/complete', async (req: Request, res: Response) => {
 
   } catch (error) {
     console.error('Complete upload error:', error);
-    res.status(500).json({ 
-      error: 'Failed to complete upload',
-      details: error instanceof Error ? error.message : 'Unknown error'
+    logError('upload.complete.failed', {
+      fileId: req.body?.fileId,
+      fileType: req.body?.fileType,
+      error,
+      durationMs: measureDurationMs(startedAt),
     });
+    res.status(500).json({
+      error: 'Failed to complete upload',
+      details: 'The upload could not be finalized. Retry the upload or contact support with the request ID.'
+    });
+  } finally {
+    await Promise.all(Array.from(localScratchPaths).map((filePath) =>
+      fs.rm(filePath, { force: true }).catch(() => undefined),
+    ));
   }
 });
 
