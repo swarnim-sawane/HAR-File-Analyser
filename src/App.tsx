@@ -642,6 +642,11 @@ const App: React.FC = () => {
             <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
             <line x1="12" y1="22.08" x2="12" y2="12"></line>
           </svg>
+          <img
+            className="header-oracle-logo"
+            src="/themes/redwood/oracle.svg"
+            alt="Oracle"
+          />
           <div className="header-title-group">
             <h1>{headerTitle}</h1>
           </div>

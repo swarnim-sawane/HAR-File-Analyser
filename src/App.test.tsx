@@ -118,6 +118,10 @@ describe('App theme behavior', () => {
 
     render(<App />);
 
+    expect(screen.getByRole('img', { name: 'Oracle' })).toHaveAttribute(
+      'src',
+      '/themes/redwood/oracle.svg'
+    );
     expect(document.documentElement.dataset.theme).toBe(savedTheme);
     expect(document.documentElement.style.colorScheme).toBe(savedTheme === 'dark' ? 'dark' : 'light');
     expect(screen.getByRole('radio', { name: new RegExp(`${savedTheme} theme`, 'i') })).toHaveAttribute(

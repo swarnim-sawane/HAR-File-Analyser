@@ -37,3 +37,23 @@
     url('/themes/redwood/OracleSans_W_Bd.woff2') format('woff2'),
     url('/themes/redwood/OracleSans_W_Bd.woff') format('woff');
 }
+
+@font-face {
+  font-family: 'Oracle Sans';
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src:
+    local('Oracle Sans ExtraBold'),
+    url('/themes/redwood/OracleSans_XBd.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'Georgia Redwood';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src:
+    local('Georgia'),
+    url('/themes/redwood/Georgia.ttf') format('truetype');
+}
