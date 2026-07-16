@@ -1,9 +1,11 @@
 import { createReadStream } from 'fs';
 import { createInterface } from 'readline';
 import { createGunzip } from 'zlib';
-import * as JSONStream from 'jsonstream';
 import { Transform } from 'stream';
 import { pipeline } from 'stream/promises';
+
+// npm installs this package with uppercase casing, which Linux resolves exactly.
+const JSONStream: typeof import('jsonstream') = require('JSONStream');
 
 export interface ParsedHarEntry {
   index: number;
