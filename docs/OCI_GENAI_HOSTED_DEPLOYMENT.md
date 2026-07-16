@@ -13,8 +13,8 @@ This document defines the deployment contract for running HAR Analyzer in the OC
 | MongoDB | Supported and required | Approved reachable MongoDB connection string |
 | Redis | Supports `REDIS_URL`, TLS, username, and password | OCI Cache Redis connection URI |
 | File storage | OCI Object Storage adapter implemented | Namespace, bucket, resource-principal IAM policy, and lifecycle policy |
-| AI | Optional: OpenAI Responses API implemented; deterministic fallback retained | None for initial deployment; GCGA-approved key, model, and egress can be added later |
-| Image build | Reproducible Dockerfiles and Rancher Desktop build script included; application builds pass | Approved Oracle Artifactory, OCIR, or Oracle Container Registry Node base image and OCIR destination |
+| AI | OpenAI Responses API and persistent token/cost accounting implemented; deterministic fallback retained | GCGA-approved key injected as a secret and outbound HTTPS access |
+| Image build | Reproducible Dockerfiles, OCI DevOps build spec, and Rancher Desktop scripts included; application builds pass | OCI DevOps Managed Build and destination OCIR repositories |
 
 ## Relationship to the OCI Container Instance POC
 
@@ -34,18 +34,18 @@ Do not copy the old five-container configuration into Hosted Deployment. In part
 
 ## Repository Validation
 
-Validated on 2026-07-15 from branch `codex/genai-hosted-readiness`:
+Validated on 2026-07-16 from release-candidate branch `codex/ai-usage-accounting`:
 
-- Backend: 23 test files and 115 tests passed.
+- Backend: 25 test files and 131 tests passed.
 - Frontend: 36 test files and 285 tests passed.
 - Frontend ESLint passed without warnings or errors.
 - Backend TypeScript build passed.
 - Frontend TypeScript and Vite production build passed.
-- Root and backend production dependency audits both reported 0 vulnerabilities.
 - Legacy OCA, browser-side AI, local-model, and unused vector retrieval runtime paths were removed.
+- OpenAI token accounting, model/operation breakdowns, and estimated-cost reporting are persisted in MongoDB without prompts, responses, HAR content, or API keys.
 - Git whitespace validation passed.
 
-The local Hosted Deployment image rehearsal reached Oracle Linux base-image resolution and then stopped because the corporate VPN refused HTTPS connections to both `container-registry.oracle.com` and `container-registry-bom.oracle.com`. No application image was pushed. Use the OCI DevOps managed-build fallback below or provide an approved internal mirror before creating a Hosted Deployment artifact.
+The local Hosted Deployment image rehearsal was repeated on 2026-07-16. Rancher Desktop is healthy, but the corporate network refused HTTPS connections to both `container-registry.oracle.com` and `container-registry-bom.oracle.com` while resolving Oracle Linux 9 slim. No release image was built or pushed. Use the OCI DevOps Managed Build path below or provide an approved internal mirror before creating a Hosted Deployment artifact.
 
 Public Docker Hub images are prohibited. The Dockerfiles have no public-registry default, and the build script rejects Docker Hub references. The repository includes `deploy/hosted/Dockerfile.node-base` to build Node.js 22 on the Oracle Linux 9 slim image from Oracle Container Registry. Publish that base to the project OCIR repository, use its immutable tag through `-NodeImage`, then complete the validation steps in this document before pushing an application image to OCIR.
 
@@ -146,6 +146,10 @@ Do not set `REDIS_HOST`, `REDIS_PORT`, `REDIS_USERNAME`, `REDIS_PASSWORD`, or `R
 | `OPENAI_API_KEY` | GCGA-managed secret | Required only for AI |
 | `OPENAI_MODEL` | Exact model approved for the governed key | Required only for AI |
 | `OPENAI_BASE_URL` | Omit for `https://api.openai.com/v1`, or use the approved HTTPS gateway | Optional |
+| `AI_USAGE_TRACKING_ENABLED` | `true` | Recommended when AI is enabled |
+| `OPENAI_INPUT_USD_PER_1M_TOKENS` | `2.50` for `gpt-5.6-terra` standard processing | Required for cost estimates |
+| `OPENAI_CACHED_INPUT_USD_PER_1M_TOKENS` | `0.25` for `gpt-5.6-terra` standard processing | Required for cached-input cost estimates |
+| `OPENAI_OUTPUT_USD_PER_1M_TOKENS` | `15.00` for `gpt-5.6-terra` standard processing | Required for cost estimates |
 | `CORS_ORIGIN` | Final Hosted Application origin if cross-origin access is needed | Environment-specific |
 | `JSON_BODY_LIMIT` | `10mb`; HAR/log uploads use bounded multipart chunks instead | Recommended |
 | `PUBLIC_API_URL` | Final public Hosted Application URL | Recommended |
@@ -154,6 +158,8 @@ Do not set `REDIS_HOST`, `REDIS_PORT`, `REDIS_USERNAME`, `REDIS_PASSWORD`, or `R
 | `RETENTION_CLEANUP_DRY_RUN` | `true` for initial validation, then `false` | Production decision |
 
 The OpenAI key is used only by the backend. It must not be injected into frontend build arguments or exposed through any `VITE_*` variable. API requests use the Responses API with `store: false`; deterministic analyzer evidence remains available when AI is not configured or fails.
+
+The listed rates are the public standard-processing rates for the currently approved `gpt-5.6-terra` model as of 2026-07-16. Reconfirm them before each release and whenever the model or processing tier changes. The application reports cost as an estimate; the provider invoice remains authoritative.
 
 ### Initial deployment without OpenAI
 
@@ -224,9 +230,9 @@ powershell -ExecutionPolicy Bypass -File scripts/build-hosted-node-base.ps1 `
 
 If both Oracle endpoints are blocked, mirror `container-registry.oracle.com/os/oraclelinux:9-slim` into the approved internal Artifactory or OCIR from an OCI DevOps build runner and pass that mirror URI through `-OracleLinuxImage`.
 
-### OCI DevOps managed-build fallback
+### OCI DevOps Managed Build (current required path)
 
-Use `deploy/hosted/build_spec.yaml` when the corporate VPN blocks Oracle Container Registry or package downloads from Rancher Desktop. Configure an OCI DevOps **Managed Build** stage with this file as its build-spec path. Use the Oracle Linux 8 runner so the included Podman commands are available.
+Use `deploy/hosted/build_spec.yaml` because the corporate network currently blocks Oracle Container Registry access from Rancher Desktop. Configure an OCI DevOps **Managed Build** stage with this file as its build-spec path. Use the Oracle Linux 8 runner so the included Podman commands are available.
 
 The managed build produces three named Docker image artifacts:
 
@@ -267,6 +273,8 @@ Record these values in the team-owned secret/configuration system, not in Git:
 
 Do not assume the Mumbai region used by the Container Instance POC supports Hosted Deployment. Select a region shown as supported in the target tenancy and confirm it with the platform team before building region-qualified OCIR tags.
 
+Before triggering the pipeline, merge the reviewed release-candidate commits into `main` or explicitly configure the build stage to use `codex/ai-usage-accounting`. At the time of this validation, `main` does not contain the final Redwood and AI usage-accounting commits. Record the exact source commit in the release ticket and use the same commit for both application and worker images.
+
 ### 2. Create OCIR repositories and storage
 
 Create private repositories for:
@@ -295,7 +303,7 @@ Also grant Vulnerability Scanning Service permission to read the OCIR repositori
 
 ### 4. Build, scan, and push immutable images
 
-Use the Rancher Desktop commands in **Build with Rancher Desktop**. Push the Node base, application, and worker images, verify all three manifests resolve from OCIR, and confirm the application and worker scans contain no Critical findings before creating deployments.
+Run the OCI DevOps Managed Build stage using `deploy/hosted/build_spec.yaml`. Deliver the Node base, application, and worker image artifacts to their private OCIR repositories with one immutable release tag. Verify all three manifests resolve from OCIR and confirm the application and worker scans contain no Critical findings before creating deployments.
 
 ### 5. Create `har-analyzer-app`
 
@@ -312,7 +320,7 @@ Create the first Hosted Application with these settings:
 | Container | `har-analyzer/har-app:<immutable-tag>` |
 | Command override | None |
 
-Add the shared and application environment variables from **Required Configuration**. Omit OpenAI variables for the initial deployment. Do not add `PORT` or any other reserved variable.
+Add the shared and application environment variables from **Required Configuration**. Inject `OPENAI_API_KEY` through the approved secret mechanism and configure the model and usage-accounting rates separately as non-secret variables. Do not add `PORT` or any other reserved variable.
 
 After the application endpoint exists, set `CORS_ORIGIN` to its browser origin (scheme and host only). Use the final invoke/base URL for `PUBLIC_API_URL` and `OPENAPI_SERVER_URL` only after confirming the platform route shape; same-origin frontend API calls do not require either variable.
 
@@ -347,8 +355,9 @@ Create one deployment for each Hosted Application, select the corresponding immu
 6. Confirm progress events arrive, the worker completes processing, and analyzer data loads.
 7. Confirm Object Storage contains the final `artifacts/{fileId}/source` objects and no completed upload chunks remain.
 8. Confirm AI returns an OpenAI-backed response when configured and deterministic fallback when the key is absent.
-9. Restart the application and worker independently and repeat an upload to verify there is no shared-filesystem dependency.
-10. Review `/api/ops/status`, application logs, worker logs, queue depth, and retention behavior.
+9. Call `/api/ops/ai-usage` after an AI request and confirm the request, model, token totals, and estimated cost are present without prompts or generated content.
+10. Restart the application and worker independently and repeat an upload to verify there is no shared-filesystem dependency.
+11. Review `/api/ops/status`, application logs, worker logs, queue depth, and retention behavior.
 
 The browser path has an additional platform gate because HAR Analyzer is a full SPA and uses Socket.IO, while the Hosted Deployment examples focus on JSON/SSE APIs:
 
