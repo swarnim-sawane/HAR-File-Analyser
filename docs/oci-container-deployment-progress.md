@@ -12,6 +12,45 @@ The OCI Container Instance proof of concept established that the HAR Analyzer fr
 
 That topology must not be copied to GenAI Hosted Deployment because the hosted runtime requires port 8080, provides a read-only filesystem except `/tmp`, does not support shared volumes, and manages each application image as a separate deployment.
 
+## coefmw OpenAI Pilot
+
+The current MongoDB/Redis release was packaged and published to the existing private `coefmw` OCIR repositories on 2026-07-16:
+
+- `bom.ocir.io/coefmw/har-analyzer/har-web:openai-pilot-20260716-de2bd81`
+- `bom.ocir.io/coefmw/har-analyzer/har-backend:openai-pilot-20260716-de2bd81`
+
+Rancher Desktop acceptance checks passed before publication:
+
+- Web, API, worker, MongoDB, and Redis remained healthy in the five-container topology.
+- A 1.5 MB HAR upload completed and the Linux worker parsed all 10 requests, including three HTTP 500 responses.
+- The HAR contents were not sent to OpenAI. A synthetic diagnostic fixture was used for the external AI validation.
+- The OpenAI status probe and synthetic insights request completed successfully with `gpt-5.6-terra`.
+- The synthetic test completed in approximately six seconds and recorded 1,702 tokens with an estimated cost of USD 0.0092675.
+- Usage accounting reported two completed requests, no failed or unpriced requests, and confirmed that prompts, responses, and API keys were not stored.
+
+The Linux trial exposed and fixed an exact-case `JSONStream` module import that Windows development did not detect. The backend test suite passed with 25 files and 131 tests after the fix.
+
+The remaining `coefmw` step is to create or replace the trial Container Instance with the published tags. Keep the existing approved MongoDB and Redis images or services, mount the same ephemeral `/workspace` path into the API and worker, and configure:
+
+| Container | Required trial configuration |
+| --- | --- |
+| `har-web` | Published web image; default command; expose port 80 |
+| `har-api` | Published backend image; default command; MongoDB/Redis connection values; shared `/workspace`; public URL/CORS values; OpenAI key and model; usage rates |
+| `har-worker` | Published backend image; command `npm run worker`; MongoDB/Redis connection values; shared `/workspace`; `WORKER_CONCURRENCY=2`; no OpenAI key |
+
+Use these non-secret AI values on `har-api` only:
+
+```text
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-5.6-terra
+AI_USAGE_TRACKING_ENABLED=true
+OPENAI_INPUT_USD_PER_1M_TOKENS=2.50
+OPENAI_CACHED_INPUT_USD_PER_1M_TOKENS=0.25
+OPENAI_OUTPUT_USD_PER_1M_TOKENS=15.00
+```
+
+Inject `OPENAI_API_KEY` through the approved secret path. Do not copy it into this document, an image, source control, or the worker container.
+
 ## Hosted Deployment Readiness
 
 | Area | Status |
