@@ -255,6 +255,27 @@ docker push bom.ocir.io/<namespace>/har-analyzer/har-worker:<tag>
 
 Use immutable release tags. Do not deploy `latest`.
 
+## Production Tenancy Ownership
+
+The `har-analyzer` compartment is owned by the production tenancy team. The HAR Analyzer developer is not assumed to have tenancy-administrator, IAM-policy, OCIR-repository, networking, identity-domain, or secret-management privileges.
+
+The production tenancy team must provide one of these image-publishing paths:
+
+1. **Team-owned OCI DevOps Managed Build (recommended):** the team creates or grants access to the DevOps project, source connection, build pipeline, OCIR repositories, and Deliver Artifacts stages. The developer supplies the source branch, build specification, image contract, and runtime variables. Local `docker login` is not required.
+2. **Delegated OCIR push:** the team creates the private repositories and grants the developer's approved group narrowly scoped permission to push images. The team supplies the region registry, tenancy namespace, repository compartment, repository names, and approved authentication process. Tenancy-administrator access is not required.
+
+Do not use the old `coefmw` OCIR namespace for this production deployment unless the production tenancy team explicitly approves that repository and configures the Hosted Application resource principal to read it. The onboarding guide permits an image repository in another tenancy, but the owning teams must configure and approve the required cross-tenancy access.
+
+| Developer provides | Production tenancy team provides |
+| --- | --- |
+| Tested source on `main` and exact commit | Compartment and supported Hosted Deployment region |
+| `deploy/hosted/build_spec.yaml` | OCI DevOps project/pipeline or delegated OCIR push access |
+| Application and worker image definitions | Private OCIR repositories and image-pull policies |
+| Runtime environment-variable catalogue | MongoDB, OCI Cache Redis, Object Storage, VCN/subnet, and secret references |
+| Health, upload, AI, and usage validation procedure | Hosted Application/Deployment, OAuth or IAM authentication, DNS, logging, and vulnerability scanning |
+
+Before starting the build, obtain written confirmation of the chosen image-publishing path. A compartment OCID by itself is not sufficient to publish or deploy the application.
+
 ## Deployment Order in the `har-analyzer` Compartment
 
 ### 1. Confirm platform inputs
@@ -275,9 +296,9 @@ Do not assume the Mumbai region used by the Container Instance POC supports Host
 
 Configure the build stage to use `main`. Record the exact source commit in the release ticket and use the same commit for both application and worker images.
 
-### 2. Create OCIR repositories and storage
+### 2. Production team creates OCIR repositories and storage
 
-Create private repositories for:
+The production tenancy team creates private repositories for:
 
 ```text
 har-analyzer/node-base
@@ -285,11 +306,11 @@ har-analyzer/har-app
 har-analyzer/har-worker
 ```
 
-Create a private Object Storage bucket in `har-analyzer`, add a lifecycle rule for stale objects under `har-analyzer/tmp/`, and retain the namespace and bucket name for environment configuration.
+The production tenancy team creates a private Object Storage bucket in `har-analyzer`, adds a lifecycle rule for stale objects under `har-analyzer/tmp/`, and supplies the namespace and bucket name for environment configuration.
 
-### 3. Apply IAM
+### 3. Production team applies IAM
 
-Create a dynamic group whose rules include Hosted Application, IAM Hosted Application when used, and Hosted Deployment resource principals in the `har-analyzer` compartment:
+The production tenancy team creates a dynamic group whose rules include Hosted Application, IAM Hosted Application when used, and Hosted Deployment resource principals in the `har-analyzer` compartment:
 
 ```text
 Any {resource.type='generativeaihostedapplication', resource.compartment.id='<har-analyzer-compartment-ocid>'}

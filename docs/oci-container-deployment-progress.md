@@ -24,6 +24,7 @@ That topology must not be copied to GenAI Hosted Deployment because the hosted r
 | AI | OpenAI Responses API, governed-key configuration, and persistent token/cost accounting are ready; inject the key as a secret |
 | Docker Hub | Prohibited; Oracle Linux/OCIR/Oracle Artifactory paths only |
 | Release source | Reviewed release candidate promoted to `main` on 2026-07-16 |
+| Production access | Developer has compartment details only; tenancy team must provide Managed Build or delegated OCIR push/deploy access |
 | Frontend tests | 36 files and 285 tests passed on 2026-07-16 |
 | Backend tests | 25 files and 131 tests passed on 2026-07-16 |
 | Production builds | Frontend, backend, and frontend lint passed on 2026-07-16 |
@@ -32,11 +33,11 @@ That topology must not be copied to GenAI Hosted Deployment because the hosted r
 
 ## Immediate Next Action
 
-1. Confirm the Hosted Deployment region and operator access for `har-analyzer`.
-2. Create or identify the three private OCIR repositories and Object Storage bucket.
-3. Configure the IAM dynamic group and policies listed in the active runbook.
-4. Run the OCI DevOps Managed Build from `main` using `deploy/hosted/build_spec.yaml`.
+1. Ask the production tenancy team to select either team-owned Managed Build or delegated OCIR push access.
+2. Obtain the target region, OCIR namespace/repositories, repository compartment, and operator group or pipeline owner.
+3. Have the production team create the Object Storage bucket, IAM dynamic group, image-pull policies, and Hosted Deployment access.
+4. Run the OCI DevOps Managed Build from `main` using `deploy/hosted/build_spec.yaml`, or use the explicitly delegated OCIR repository.
 5. Deliver the three build artifacts to immutable OCIR tags.
-6. Create `har-analyzer-app` and `har-analyzer-worker`, then run the end-to-end validation gate.
+6. Have the authorized operator create `har-analyzer-app` and `har-analyzer-worker`, then run the end-to-end validation gate with the developer.
 
 Do not place MongoDB, Redis, OAuth, OCIR, or OpenAI secrets in this document or in Git.
