@@ -6,7 +6,7 @@ import { Server as SocketIOServer } from 'socket.io';
 import dotenv from 'dotenv';
 import { connectDatabases, closeDatabases, getMongoDb, getRedis } from './config/database';
 import { configureOutboundProxy } from './config/outboundProxy';
-import { buildAllowedOrigins } from './config/corsOrigins';
+import { buildAllowedOrigins, isOriginAllowed } from './config/corsOrigins';
 import { setSocketIOInstance } from './utils/socketHelper';
 import { buildOpenApiDocument, renderOpenApiDocsHtml } from './openapiSpec';
 import {
@@ -34,9 +34,7 @@ let retentionCleanupTimer: NodeJS.Timeout | null = null;
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
-
-    if (ALLOWED_ORIGINS.includes(origin)) {
+    if (isOriginAllowed(origin, ALLOWED_ORIGINS)) {
       callback(null, true);
     } else {
       console.warn(`❌ CORS blocked origin: ${origin}`);
@@ -52,7 +50,13 @@ app.use(express.urlencoded({ extended: true, limit: JSON_BODY_LIMIT }));
 
 const io = new SocketIOServer(server, {
   cors: {
-    origin: ALLOWED_ORIGINS,
+    origin: (origin, callback) => {
+      if (isOriginAllowed(origin, ALLOWED_ORIGINS)) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     methods: ['GET', 'POST'],
     credentials: true
   }

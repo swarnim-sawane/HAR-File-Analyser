@@ -23,3 +23,10 @@ export function buildAllowedOrigins(corsOrigin = process.env.CORS_ORIGIN || ''):
     ...parseConfiguredOrigins(corsOrigin),
   ]));
 }
+
+export function isOriginAllowed(
+  origin: string | undefined,
+  allowedOrigins: readonly string[] = buildAllowedOrigins()
+): boolean {
+  return !origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin);
+}
