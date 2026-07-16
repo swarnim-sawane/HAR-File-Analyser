@@ -17,7 +17,7 @@ That topology must not be copied to GenAI Hosted Deployment because the hosted r
 The current MongoDB/Redis release was packaged and published to the existing private `coefmw` OCIR repositories on 2026-07-16:
 
 - `bom.ocir.io/coefmw/har-analyzer/har-web:openai-pilot-20260716-de2bd81`
-- `bom.ocir.io/coefmw/har-analyzer/har-backend:openai-pilot-20260716-de2bd81`
+- `bom.ocir.io/coefmw/har-analyzer/har-backend:openai-pilot-20260716-8ff8721`
 
 The tenancy did not permit creating separate dependency repositories. To avoid runtime pulls from Docker Hub, the tested Linux/AMD64 MongoDB and Redis images were published as clearly named pilot-only tags in the existing private backend repository:
 
@@ -35,9 +35,9 @@ Rancher Desktop acceptance checks passed before publication:
 - The synthetic test completed in approximately six seconds and recorded 1,702 tokens with an estimated cost of USD 0.0092675.
 - Usage accounting reported two completed requests, no failed or unpriced requests, and confirmed that prompts, responses, and API keys were not stored.
 
-The Linux trial exposed and fixed an exact-case `JSONStream` module import that Windows development did not detect. The backend test suite passed with 25 files and 131 tests after the fix.
+The Linux trial exposed and fixed an exact-case `JSONStream` module import that Windows development did not detect. The first public-IP deployment also exposed a CORS regression: `CORS_ORIGIN=*` was being compared as a literal origin, causing upload preflight requests to return HTTP 500. Commit `8ff8721` restores explicit wildcard handling for Express and Socket.IO. A browser-origin preflight returned HTTP 204 and a multipart chunk upload returned HTTP 200 before the corrected backend image was published. The backend test suite passed with 25 files and 134 tests after the fix.
 
-The remaining `coefmw` step is to create or replace the trial Container Instance with the published tags. Keep the existing approved MongoDB and Redis images or services, mount the same ephemeral `/workspace` path into the API and worker, and configure:
+The current `coefmw` Container Instance must use the corrected backend tag for both `har-api` and `har-worker`. Keep the existing web, MongoDB, and Redis image tags, mount the same ephemeral `/workspace` path into the API and worker, and configure:
 
 | Container | Required trial configuration |
 | --- | --- |
@@ -72,7 +72,7 @@ Inject `OPENAI_API_KEY` through the approved secret path. Do not copy it into th
 | Release source | Reviewed release candidate promoted to `main` on 2026-07-16 |
 | Production access | Developer has compartment details only; tenancy team must provide Managed Build or delegated OCIR push/deploy access |
 | Frontend tests | 36 files and 285 tests passed on 2026-07-16 |
-| Backend tests | 25 files and 131 tests passed on 2026-07-16 |
+| Backend tests | 25 files and 134 tests passed on 2026-07-16 |
 | Production builds | Frontend, backend, and frontend lint passed on 2026-07-16 |
 | Local hosted image build | Reconfirmed blocked by network refusal to global and Mumbai Oracle Container Registry endpoints on 2026-07-16 |
 | OCI DevOps build | Build specification prepared at `deploy/hosted/build_spec.yaml`; not yet executed in the target tenancy |
