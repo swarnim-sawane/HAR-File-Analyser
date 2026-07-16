@@ -19,6 +19,13 @@ The current MongoDB/Redis release was packaged and published to the existing pri
 - `bom.ocir.io/coefmw/har-analyzer/har-web:openai-pilot-20260716-de2bd81`
 - `bom.ocir.io/coefmw/har-analyzer/har-backend:openai-pilot-20260716-de2bd81`
 
+The tenancy did not permit creating separate dependency repositories. To avoid runtime pulls from Docker Hub, the tested Linux/AMD64 MongoDB and Redis images were published as clearly named pilot-only tags in the existing private backend repository:
+
+- `bom.ocir.io/coefmw/har-analyzer/har-backend:dependency-mongo-7-pilot-20260716`
+- `bom.ocir.io/coefmw/har-analyzer/har-backend:dependency-redis-7-alpine-pilot-20260716`
+
+These dependency tags are for the short-lived `coefmw` pilot and still require the normal Oracle OSS and vulnerability review before production use.
+
 Rancher Desktop acceptance checks passed before publication:
 
 - Web, API, worker, MongoDB, and Redis remained healthy in the five-container topology.
