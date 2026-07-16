@@ -34,7 +34,7 @@ Do not copy the old five-container configuration into Hosted Deployment. In part
 
 ## Repository Validation
 
-Validated on 2026-07-16 from release-candidate branch `codex/ai-usage-accounting`:
+Validated on 2026-07-16 and promoted to `main` from release-candidate branch `codex/ai-usage-accounting`:
 
 - Backend: 25 test files and 131 tests passed.
 - Frontend: 36 test files and 285 tests passed.
@@ -273,7 +273,7 @@ Record these values in the team-owned secret/configuration system, not in Git:
 
 Do not assume the Mumbai region used by the Container Instance POC supports Hosted Deployment. Select a region shown as supported in the target tenancy and confirm it with the platform team before building region-qualified OCIR tags.
 
-Before triggering the pipeline, merge the reviewed release-candidate commits into `main` or explicitly configure the build stage to use `codex/ai-usage-accounting`. At the time of this validation, `main` does not contain the final Redwood and AI usage-accounting commits. Record the exact source commit in the release ticket and use the same commit for both application and worker images.
+Configure the build stage to use `main`. Record the exact source commit in the release ticket and use the same commit for both application and worker images.
 
 ### 2. Create OCIR repositories and storage
 

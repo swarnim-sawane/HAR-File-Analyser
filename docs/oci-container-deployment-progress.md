@@ -23,7 +23,7 @@ That topology must not be copied to GenAI Hosted Deployment because the hosted r
 | Cross-container files | Migrated to OCI Object Storage artifact keys; local work is confined to `/tmp` |
 | AI | OpenAI Responses API, governed-key configuration, and persistent token/cost accounting are ready; inject the key as a secret |
 | Docker Hub | Prohibited; Oracle Linux/OCIR/Oracle Artifactory paths only |
-| Release source | `codex/ai-usage-accounting`; four reviewed release commits are not yet on `main` |
+| Release source | Reviewed release candidate promoted to `main` on 2026-07-16 |
 | Frontend tests | 36 files and 285 tests passed on 2026-07-16 |
 | Backend tests | 25 files and 131 tests passed on 2026-07-16 |
 | Production builds | Frontend, backend, and frontend lint passed on 2026-07-16 |
@@ -32,12 +32,11 @@ That topology must not be copied to GenAI Hosted Deployment because the hosted r
 
 ## Immediate Next Action
 
-1. Merge the release-candidate commits into `main`, or explicitly select `codex/ai-usage-accounting` as the OCI DevOps build source.
-2. Confirm the Hosted Deployment region and operator access for `har-analyzer`.
-3. Create or identify the three private OCIR repositories and Object Storage bucket.
-4. Configure the IAM dynamic group and policies listed in the active runbook.
-5. Run the OCI DevOps Managed Build using `deploy/hosted/build_spec.yaml`.
-6. Deliver the three build artifacts to immutable OCIR tags.
-7. Create `har-analyzer-app` and `har-analyzer-worker`, then run the end-to-end validation gate.
+1. Confirm the Hosted Deployment region and operator access for `har-analyzer`.
+2. Create or identify the three private OCIR repositories and Object Storage bucket.
+3. Configure the IAM dynamic group and policies listed in the active runbook.
+4. Run the OCI DevOps Managed Build from `main` using `deploy/hosted/build_spec.yaml`.
+5. Deliver the three build artifacts to immutable OCIR tags.
+6. Create `har-analyzer-app` and `har-analyzer-worker`, then run the end-to-end validation gate.
 
 Do not place MongoDB, Redis, OAuth, OCIR, or OpenAI secrets in this document or in Git.
