@@ -14,7 +14,7 @@ This document defines the deployment contract for running HAR Analyzer in the OC
 | Redis | Supports `REDIS_URL`, TLS, username, password, and separate API/worker retry behavior | Non-sharded OCI Cache Redis 7 TLS connection URI |
 | File storage | OCI Object Storage adapter implemented | Namespace, bucket, resource-principal IAM policy, and lifecycle policy |
 | AI | OpenAI Responses API and persistent token/cost accounting implemented; deterministic fallback retained | GCGA-approved key injected as a secret and outbound HTTPS access |
-| Image build | Reproducible Dockerfiles, OCI DevOps build spec, and Rancher Desktop scripts included | Direct OCIR publication is approved until the team-owned DevOps pipeline is available |
+| Image build | Reproducible Dockerfiles, OCI DevOps build spec, Rancher Desktop scripts, and immutable Phoenix OCIR images are available | Team-owned DevOps pipeline remains a follow-up |
 
 ## Relationship to the OCI Container Instance POC
 
@@ -46,9 +46,19 @@ The last release baseline was validated on 2026-07-16. The PostgreSQL migration 
 - PostgreSQL migrations and repository behavior were exercised against a live PostgreSQL 15 instance, including HAR/console filtering, facets, and cascading cleanup.
 - Git whitespace validation passed.
 
-The local Hosted Deployment image rehearsal was repeated on 2026-07-16. Rancher Desktop is healthy, but the corporate network refused HTTPS connections to both `container-registry.oracle.com` and `container-registry-bom.oracle.com` while resolving Oracle Linux 9 slim. No release image was built or pushed. Use the OCI DevOps Managed Build path below or provide an approved internal mirror before creating a Hosted Deployment artifact.
+The Hosted Deployment images were built and published on 2026-07-17. Rancher Desktop's VM could not reach Oracle Container Registry or Phoenix OCIR directly on the available network, so the approved Oracle Linux base was transferred and the existing Dockerfiles were built through Ubuntu WSL using Skopeo/Buildah. This changed only the local build transport; the image sources, Dockerfiles, architecture, non-root user, port, commands, and health checks remained the documented release contract.
 
 Public Docker Hub images are prohibited. The Dockerfiles have no public-registry default, and the build script rejects Docker Hub references. The repository includes `deploy/hosted/Dockerfile.node-base` to build Node.js 22 on the Oracle Linux 9 slim image from Oracle Container Registry. Publish that base to the project OCIR repository, use its immutable tag through `-NodeImage`, then complete the validation steps in this document before pushing an application image to OCIR.
+
+## Current OCIR Release
+
+| Runtime | Image reference | Digest |
+| --- | --- | --- |
+| Node.js base | `phx.ocir.io/axfm33dl0mwg/har-analyzer/node-base:ol9-node22-postgres-hosted-20260717-a190a42` | `sha256:882db65119df1b8c9ba0df12f109148d80cf47fcbf0d4e6d8eef961b18b94fa6` |
+| Application | `phx.ocir.io/axfm33dl0mwg/har-analyzer/har-app:postgres-hosted-20260717-c294535` | `sha256:3c1a4382afb70131f0f284f26644e10147467422efa49a1d1d1040864208b0a8` |
+| Worker | `phx.ocir.io/axfm33dl0mwg/har-analyzer/har-worker:postgres-hosted-20260717-c294535` | `sha256:4adb08b229ca64cf65d78681bb5b32bc20189a73a825679ebaaa47487ae802b7` |
+
+Use `deploy/hosted/app.env.example` and `deploy/hosted/worker.env.example` as non-secret configuration checklists. Inject all values marked `secret:` through the approved Hosted Application secret mechanism.
 
 ## Target Architecture
 
@@ -207,10 +217,14 @@ Use **Custom (user-managed)** networking with a VCN and subnet that can resolve 
 
 The selected subnet and security rules must permit:
 
-- TLS from both runtimes to OCI PostgreSQL.
-- TLS from both runtimes to non-sharded OCI Cache Redis 7.
-- OCI service access to Object Storage through the approved service gateway or platform path.
-- Approved outbound HTTPS from the application runtime to `api.openai.com` when AI is enabled.
+- Platform ingress to the application runtime on container port `8080`; use a Public endpoint for the initial controlled test and change it to Private when directed.
+- TLS from both runtimes to the OCI PostgreSQL private endpoint on the provisioned database port (normally TCP `5432`).
+- TLS from both runtimes to the non-sharded OCI Cache Redis 7 private endpoint on its provisioned service port.
+- HTTPS (TCP `443`) and DNS access to OCI Object Storage through the approved service gateway or platform service path.
+- HTTPS (TCP `443`) from the application runtime to `api.openai.com` when AI is enabled; the worker does not require OpenAI egress.
+- DNS resolution for PostgreSQL, Redis, Object Storage, and the approved OpenAI endpoint from the selected subnet.
+
+The worker has no user-facing ingress requirement. Hosted Deployment still probes its `/health` and `/ready` endpoints on container port `8080`. No inbound access to PostgreSQL or Redis from the public internet is required.
 
 ## Build with Rancher Desktop
 

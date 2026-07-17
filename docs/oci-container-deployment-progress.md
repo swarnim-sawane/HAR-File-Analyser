@@ -75,8 +75,22 @@ Inject `OPENAI_API_KEY` through the approved secret path. Do not copy it into th
 | Backend tests | 26 files and 131 tests passed on 2026-07-17; the live PostgreSQL integration test passed separately |
 | End-to-end validation | Real HAR and console-log uploads completed through the API, Redis queue, worker, and PostgreSQL; the OpenAPI endpoint suite passed all 47 checks; a 32 MB Oracle HAR containing an embedded NUL byte completed with 123 entries after PostgreSQL-safe evidence encoding |
 | Production builds | Frontend, backend, and frontend lint passed on 2026-07-17 |
-| Local hosted image build | Reconfirmed blocked while resolving the approved global Oracle Linux base image on 2026-07-17; final images must be built after the Oracle registry or approved internal mirror is reachable |
+| Hosted image publication | Completed on 2026-07-17 through the approved BOAT/OCIR path; all release manifests resolve from Phoenix OCIR |
 | OCI DevOps build | Build specification prepared at `deploy/hosted/build_spec.yaml`; direct OCIR publication is the approved interim path |
+
+## Published Hosted Images
+
+The initial PostgreSQL/OCI Cache/Object Storage Hosted Deployment images were built from source commit `c294535` and published directly to the private `har-analyzer` repositories in Phoenix OCIR:
+
+| Image | Immutable tag | Registry digest |
+| --- | --- | --- |
+| Oracle Linux Node.js base | `phx.ocir.io/axfm33dl0mwg/har-analyzer/node-base:ol9-node22-postgres-hosted-20260717-a190a42` | `sha256:882db65119df1b8c9ba0df12f109148d80cf47fcbf0d4e6d8eef961b18b94fa6` |
+| Application | `phx.ocir.io/axfm33dl0mwg/har-analyzer/har-app:postgres-hosted-20260717-c294535` | `sha256:3c1a4382afb70131f0f284f26644e10147467422efa49a1d1d1040864208b0a8` |
+| Worker | `phx.ocir.io/axfm33dl0mwg/har-analyzer/har-worker:postgres-hosted-20260717-c294535` | `sha256:4adb08b229ca64cf65d78681bb5b32bc20189a73a825679ebaaa47487ae802b7` |
+
+Both runtime images are Linux/AMD64, run as `10001:10001`, expose port `8080`, and retain the `/health` image health check. The app command is `node dist/server.js`; the worker command is `node dist/worker.js`. Do not override these commands in Hosted Deployment.
+
+Share `deploy/hosted/app.env.example` and `deploy/hosted/worker.env.example` as configuration checklists. Never attach populated `.env` files or place credentials in Slack; database, Redis, CA, and OpenAI values must be injected through the approved secret configuration.
 
 ## Current Migration Work
 
@@ -94,7 +108,7 @@ The old `dependency-mongo-*` and `dependency-redis-*` pilot tags must not be cop
 1. Obtain/provision the OCI PostgreSQL database, non-sharded OCI Cache Redis 7 endpoint, Object Storage bucket, VCN/subnet path, TLS CA material, and secret references.
 2. Validate application and worker readiness against all three real OCI services.
 3. Merge the tested migration to `main` and record the exact commit.
-4. Build and push immutable `har-analyzer-app` and `har-analyzer-worker` images directly to the approved OCIR repositories.
-5. Scan the images, create the two Hosted Applications with Custom networking, and run the end-to-end validation gate.
+4. Scan the published images, create the two Hosted Applications with Custom networking, and inject the environment/secret configuration.
+5. Run upload, worker processing, OpenAI, token/cost accounting, retention dry-run, and readiness validation against the managed OCI services.
 
 Do not place PostgreSQL, Redis, OAuth, OCIR, or OpenAI secrets in this document or in Git.
