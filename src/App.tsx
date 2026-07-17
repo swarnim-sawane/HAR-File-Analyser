@@ -15,17 +15,15 @@ import { apiClient } from './services/apiClient';
 import { wsClient } from './services/websocketClient';
 import { storeRecentFile, restoreRecentFile, clearRecentFiles } from './services/recentFilesStore';
 import HarCompare from './components/HarCompare';
-import SanitizeModal from './components/SanitizeModal';
-import BatchSanitizeModal from './components/BatchSanitizeModal';
 import HarSanitizer from './components/HarSanitizer';
 import DocumentationPage from './components/DocumentationPage';
-import { ArrowLeftIcon, FileTextIcon } from './components/Icons';
+import { ArrowLeftIcon, CloseIcon, FileTextIcon, UploadIcon } from './components/Icons';
 import { applyTheme, resolveInitialTheme, ThemeMode } from './theme';
-import { HAR_FILE_INPUT_ACCEPT } from './utils/uploadFileTypes';
 import {
   createLocalConsoleLogUploadResult,
   shouldParseConsoleLogLocally,
 } from './utils/consoleLogProcessing';
+import type { UploadFileType } from './utils/uploadFileTypes';
 
 interface RecentFile {
   name: string;
@@ -72,12 +70,10 @@ const App: React.FC = () => {
   const [activeHarTabId, setActiveHarTabId] = useState<string | null>(null);
   const [harShowUploader, setHarShowUploader] = useState(true);
   const [harRecentFiles, setHarRecentFiles] = useState<RecentFile[]>([]);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   // Ref to hidden file-input used for the "+" add-tab button in the tab bar
-  const addTabInputRef = useRef<HTMLInputElement>(null);
   // Track which tab (if any) is currently generating insights — for the leave guard
   // Sanitize modal state for the "+" add-tab upload flow
-  const [addTabPendingResult, setAddTabPendingResult] = useState<UploadResult | null>(null);
-  const [addTabPendingBatch, setAddTabPendingBatch] = useState<UploadResult[] | null>(null);
 
   // ── Console Log multi-tab state ──────────────────────────────────────────────
   const [logTabs, setLogTabs] = useState<LogFileTab[]>([]);
@@ -87,7 +83,6 @@ const App: React.FC = () => {
   const [logLoadingMessage, setLogLoadingMessage] = useState('Loading console log file...');
   const [showLogLocalFallback, setShowLogLocalFallback] = useState(false);
   const logCancelRef = React.useRef<(() => void) | null>(null);
-  const addLogTabInputRef = useRef<HTMLInputElement>(null);
   const compareWrapperRef = useRef<HTMLDivElement | null>(null);
 
   const MAX_LOG_TABS = 8;
@@ -232,6 +227,17 @@ const App: React.FC = () => {
   /** Open a new HAR tab for the given upload result.
    *  Pass switchTool=true (default false) to also activate the HAR tool tab. */
   const openHarTab = useCallback((result: UploadResult, switchTool = false) => {
+    const normalizedName = result.fileName.trim().toLowerCase();
+    const existingTab = harTabs.find(
+      tab => tab.fileName.trim().toLowerCase() === normalizedName
+    );
+    if (existingTab) {
+      setActiveHarTabId(existingTab.id);
+      setHarShowUploader(false);
+      if (switchTool) setActiveTool('har');
+      return;
+    }
+
     if (harTabs.length >= MAX_HAR_TABS) {
       console.warn(`Max ${MAX_HAR_TABS} HAR tabs open — close one first`);
       return;
@@ -247,7 +253,7 @@ const App: React.FC = () => {
     if (switchTool) setActiveTool('har');
     registerRecentHarFile(result.fileName, new File([], result.fileName));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [harTabs.length]);
+  }, [harTabs]);
 
   const handleHarFileUpload = useCallback(async (result: UploadResult) => {
     openHarTab(result);
@@ -290,6 +296,36 @@ const App: React.FC = () => {
     }
   };
 
+  const handleOpenExistingRecentFile = useCallback((file: {
+    name: string;
+    fileType: UploadFileType;
+  }): boolean => {
+    const normalizedName = file.name.trim().toLowerCase();
+
+    if (file.fileType === 'har') {
+      const existingTab = harTabs.find(
+        tab => tab.fileName.trim().toLowerCase() === normalizedName
+      );
+      if (!existingTab) return false;
+
+      setActiveTool('har');
+      setActiveHarTabId(existingTab.id);
+      setHarShowUploader(false);
+      setIsUploadModalOpen(false);
+      return true;
+    }
+
+    const existingTab = logTabs.find(
+      tab => tab.fileName.trim().toLowerCase() === normalizedName
+    );
+    if (!existingTab) return false;
+
+    setActiveTool('console');
+    setActiveLogTabId(existingTab.id);
+    setIsUploadModalOpen(false);
+    return true;
+  }, [harTabs, logTabs]);
+
   /** Close a HAR file tab; activate the nearest remaining tab */
   const closeHarTab = (tabId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -306,37 +342,9 @@ const App: React.FC = () => {
     });
   };
 
-  /** Triggered by the "+" button in the tab bar — opens the hidden file input */
+  /** Triggered by an analyzer tab-bar plus button. */
   const handleAddTabClick = () => {
-    addTabInputRef.current?.click();
-  };
-
-  const handleAddTabFileInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    e.target.value = '';
-    if (files.length === 0) return;
-
-    const results: UploadResult[] = [];
-    for (const file of files) {
-      try {
-        const result = await chunkedUploader.uploadFile(file, 'har', () => {});
-        // Persist to IndexedDB for cross-session Recent Files restore
-        void storeRecentFile('har', file);
-        registerRecentHarFile(file.name, file);
-        results.push(result);
-      } catch (err) {
-        console.error('Failed to upload HAR file:', err);
-      }
-    }
-
-    if (results.length === 0) return;
-
-    // Route through the sanitize modal — same flow as FileUploader
-    if (results.length === 1) {
-      setAddTabPendingResult(results[0]);
-    } else {
-      setAddTabPendingBatch(results);
-    }
+    setIsUploadModalOpen(true);
   };
 
   // ── Console Log tab management ────────────────────────────────────────────────
@@ -345,6 +353,16 @@ const App: React.FC = () => {
     opts: { fileId: string | null; fileName: string; localData: ConsoleLogFile | null },
     switchTool = false
   ) => {
+    const normalizedName = opts.fileName.trim().toLowerCase();
+    const existingTab = logTabs.find(
+      tab => tab.fileName.trim().toLowerCase() === normalizedName
+    );
+    if (existingTab) {
+      setActiveLogTabId(existingTab.id);
+      if (switchTool) setActiveTool('console');
+      return;
+    }
+
     if (logTabs.length >= MAX_LOG_TABS) {
       console.warn(`Max ${MAX_LOG_TABS} console log tabs open — close one first`);
       return;
@@ -359,7 +377,7 @@ const App: React.FC = () => {
     setActiveLogTabId(newTab.id);
     if (switchTool) setActiveTool('console');
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [logTabs.length]);
+  }, [logTabs]);
 
   const closeLogTab = (tabId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -377,24 +395,6 @@ const App: React.FC = () => {
   const handleLogTabSwitch = (tabId: string) => {
     if (tabId === activeLogTabId) return;
     setActiveLogTabId(tabId);
-  };
-
-  const handleAddLogTabClick = () => {
-    addLogTabInputRef.current?.click();
-  };
-
-  const handleAddLogTabFileInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    try {
-      const result = shouldParseConsoleLogLocally(file.size)
-        ? createLocalConsoleLogUploadResult(file)
-        : await chunkedUploader.uploadFile(file, 'log', () => {});
-      await handleLogUploadComplete(result, file);
-    } catch (err) {
-      console.error('Failed to upload console log file:', err);
-    }
   };
 
   const registerRecentLogFile = (fileName: string, fileObj: File) => {
@@ -610,29 +610,63 @@ const App: React.FC = () => {
 
   return (
     <div className="app-container">
-      {/* ── Sanitize modals for the "+" add-tab upload flow ── */}
-      {addTabPendingResult && (
-        <SanitizeModal
-          uploadResult={addTabPendingResult}
-          onProceed={(fileId) => {
-            openHarTab({ ...addTabPendingResult, fileId });
-            setAddTabPendingResult(null);
+      {isUploadModalOpen && (
+        <div
+          className="sanitize-modal-overlay upload-workbench-modal-overlay"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setIsUploadModalOpen(false);
           }}
-          onCancel={() => setAddTabPendingResult(null)}
-        />
-      )}
-      {addTabPendingBatch && (
-        <BatchSanitizeModal
-          uploadResults={addTabPendingBatch}
-          onProceed={(finalResults) => {
-            for (const result of finalResults) {
-              wsClient.subscribeToFile(result.fileId);
-              openHarTab(result);
-            }
-            setAddTabPendingBatch(null);
-          }}
-          onCancel={() => setAddTabPendingBatch(null)}
-        />
+        >
+          <div
+            className="sanitize-modal upload-workbench-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="upload-workbench-modal-title"
+          >
+            <div className="sanitize-modal-header upload-workbench-modal-header">
+              <div className="sanitize-modal-icon" aria-hidden="true">
+                <UploadIcon />
+              </div>
+              <div>
+                <h2 id="upload-workbench-modal-title">Upload</h2>
+                <p>Add another HAR file or console log to the analyzer.</p>
+              </div>
+            </div>
+            <div className="upload-workbench-modal-body">
+              <UnifiedUploader
+                onHarFileUpload={async (result) => {
+                  await handleUnifiedHarUpload(result);
+                  setIsUploadModalOpen(false);
+                }}
+                harRecentFiles={harRecentFiles}
+                onClearHarRecent={() => {
+                  setHarRecentFiles([]);
+                  localStorage.removeItem(HAR_RECENT_FILES_KEY);
+                  void clearRecentFiles('har');
+                }}
+                onLogFileUpload={async (result, sourceFile) => {
+                  await handleUnifiedLogUpload(result, sourceFile);
+                  setIsUploadModalOpen(false);
+                }}
+                logRecentFiles={logRecentFiles}
+                onClearLogRecent={() => {
+                  setLogRecentFiles([]);
+                  localStorage.removeItem(LOG_RECENT_FILES_KEY);
+                  void clearRecentFiles('log');
+                }}
+                onOpenExistingRecentFile={handleOpenExistingRecentFile}
+              />
+            </div>
+            <button
+              className="sanitize-modal-close"
+              type="button"
+              onClick={() => setIsUploadModalOpen(false)}
+              aria-label="Close upload dialog"
+            >
+              <CloseIcon />
+            </button>
+          </div>
+        </div>
       )}
 
       <header className="app-header">
@@ -686,6 +720,7 @@ const App: React.FC = () => {
                 localStorage.removeItem(LOG_RECENT_FILES_KEY);
                 void clearRecentFiles('log');
               }}
+              onOpenExistingRecentFile={handleOpenExistingRecentFile}
             />
           </div>
         )}
@@ -745,7 +780,8 @@ const App: React.FC = () => {
             {/* ── HAR file tab bar ─────────────────────────────────────── */}
             {harTabs.length > 0 && (
               <div className="har-file-tabs">
-                {harTabs.map(tab => (
+                <div className="har-file-tabs-list">
+                  {harTabs.map(tab => (
                   <button
                     key={tab.id}
                     className={`har-file-tab ${tab.id === activeHarTabId ? 'active' : ''}`}
@@ -766,30 +802,26 @@ const App: React.FC = () => {
                       ×
                     </span>
                   </button>
-                ))}
+                  ))}
 
-                {/* Add new tab button */}
-                {harTabs.length < MAX_HAR_TABS && (
-                  <button
-                    className="har-file-tab-add"
-                    onClick={handleAddTabClick}
-                    title="Open another HAR file"
-                  >
-                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M8 3v10M3 8h10" strokeLinecap="round" />
-                    </svg>
-                  </button>
-                )}
+                  {harTabs.length < MAX_HAR_TABS && (
+                    <button
+                      className="har-file-tab-add"
+                      onClick={handleAddTabClick}
+                      title="Open another HAR file"
+                      aria-label="Open another analyzer file"
+                    >
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M8 3v10M3 8h10" strokeLinecap="round" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
 
-                {/* Hidden file input for the "+" button */}
-                <input
-                  ref={addTabInputRef}
-                  type="file"
-                  accept={HAR_FILE_INPUT_ACCEPT}
-                  multiple
-                  style={{ display: 'none' }}
-                  onChange={handleAddTabFileInput}
-                />
+                <button className="har-file-tabs-upload" onClick={handleAddTabClick}>
+                  <UploadIcon />
+                  <span>Upload New</span>
+                </button>
               </div>
             )}
 
@@ -859,7 +891,8 @@ const App: React.FC = () => {
             {/* ── Console file tab bar ─────────────────────────────────── */}
             {logTabs.length > 0 && (
               <div className="har-file-tabs">
-                {logTabs.map(tab => (
+                <div className="har-file-tabs-list">
+                  {logTabs.map(tab => (
                   <button
                     key={tab.id}
                     className={`har-file-tab ${tab.id === activeLogTabId ? 'active' : ''}`}
@@ -880,28 +913,26 @@ const App: React.FC = () => {
                       ×
                     </span>
                   </button>
-                ))}
+                  ))}
 
-                {logTabs.length < MAX_LOG_TABS && (
-                  <button
-                    className="har-file-tab-add"
-                    onClick={handleAddLogTabClick}
-                    title="Open another console log file"
-                  >
-                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M8 3v10M3 8h10" strokeLinecap="round" />
-                    </svg>
-                  </button>
-                )}
+                  {logTabs.length < MAX_LOG_TABS && (
+                    <button
+                      className="har-file-tab-add"
+                      onClick={handleAddTabClick}
+                      title="Open another console log file"
+                      aria-label="Open another analyzer file"
+                    >
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M8 3v10M3 8h10" strokeLinecap="round" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
 
-                {/* Hidden file input for the "+" button */}
-                <input
-                  ref={addLogTabInputRef}
-                  type="file"
-                  accept=".log,.txt,.json"
-                  style={{ display: 'none' }}
-                  onChange={handleAddLogTabFileInput}
-                />
+                <button className="har-file-tabs-upload" onClick={handleAddTabClick}>
+                  <UploadIcon />
+                  <span>Upload New</span>
+                </button>
               </div>
             )}
 
@@ -931,7 +962,7 @@ const App: React.FC = () => {
                 isActive={tab.id === activeLogTabId}
                 backendUrl={BACKEND_URL}
                 recentFiles={logRecentFiles}
-                onAddNewTab={handleAddLogTabClick}
+                onAddNewTab={handleAddTabClick}
                 onLoadRecentNewTab={handleRecentLogFile}
                 onClearRecent={() => {
                   setLogRecentFiles([]);

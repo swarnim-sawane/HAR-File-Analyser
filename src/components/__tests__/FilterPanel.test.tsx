@@ -14,7 +14,6 @@ const defaultFilters: FilterOptions = {
     '5xx': false,
   },
   searchTerm: '',
-  timingType: 'relative',
 };
 
 describe('FilterPanel', () => {
@@ -22,6 +21,21 @@ describe('FilterPanel', () => {
     const onFilterChange = vi.fn();
     render(<FilterPanel filters={defaultFilters} onFilterChange={onFilterChange} />);
     expect(screen.getByText('Filter by HTTP Status Codes')).toBeInTheDocument();
+  });
+
+  it('renders the active HAR file summary in the filter panel', () => {
+    const onFilterChange = vi.fn();
+    render(
+      <FilterPanel
+        filters={defaultFilters}
+        onFilterChange={onFilterChange}
+        fileSummary={{ name: 'session.har', meta: 'HAR - 10 requests' }}
+      />
+    );
+
+    expect(screen.getByLabelText('Active HAR file')).toHaveTextContent('session.har');
+    expect(screen.getByLabelText('Active HAR file')).toHaveTextContent('HAR - 10 requests');
+    expect(screen.getByTitle('session.har')).toBeInTheDocument();
   });
 
   it('renders a search input and triggers onFilterChange with new searchTerm on input', async () => {
@@ -36,6 +50,13 @@ describe('FilterPanel', () => {
     expect(onFilterChange).toHaveBeenCalledWith(expect.objectContaining({ searchTerm: 'a' }));
     // Called once per character typed
     expect(onFilterChange).toHaveBeenCalledTimes(3);
+  });
+
+  it('places request search before the HTTP status filters', () => {
+    render(<FilterPanel filters={defaultFilters} onFilterChange={vi.fn()} />);
+
+    const headings = screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent);
+    expect(headings.indexOf('Search Requests')).toBeLessThan(headings.indexOf('Filter by HTTP Status Codes'));
   });
 
   it('renders at least 5 of the 6 status code checkboxes', () => {

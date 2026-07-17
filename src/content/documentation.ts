@@ -66,7 +66,7 @@ The main workspace supports several investigation paths:
 - **Sanitization workflows** for reducing the risk of exposing tokens, cookies, and other sensitive fields
 - **AI insights and chat** when you want a guided summary or a targeted follow-up explanation
 
-You can also keep multiple analysis tabs open, reopen recent files, and export filtered results for sharing.
+You can also keep multiple analysis tabs open and reopen recent files from the upload workflow.
 `,
   },
   {
@@ -89,11 +89,25 @@ You can also keep multiple analysis tabs open, reopen recent files, and export f
 3. Open individual request details to inspect timings, metadata, and payload behavior
 4. Move into request-flow and scorecard views when you need a broader session-level picture
 
+### Find where a search term matched
+
+The request filter searches across URLs, methods, request and response bodies, headers, cookies, response metadata, and timings.
+
+After filtering:
+
+1. Select a request from the filtered list
+2. Request Details opens the first section containing the search term
+3. Highlighted text shows every visible occurrence in the active section
+4. Match badges on the detail tabs show which other sections contain results
+5. Use the previous and next controls to move through repeated matches; the correct detail tab opens automatically
+
+If the term is found only in HAR metadata that is not displayed in Request Details, the match navigator reports that explicitly instead of opening an unrelated section.
+
 ### Good habits while reviewing HAR data
 
 - Start with **5xx** responses, then **4xx**, then redirects, then slow successful requests
 - Check whether the biggest delays are in **wait / server time** or in connection setup
-- Use the filtered view before exporting so you only share the slice that matters
+- Keep the request list filtered while investigating so the selected evidence remains easy to compare
 `,
   },
   {

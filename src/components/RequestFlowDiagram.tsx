@@ -55,7 +55,6 @@ const DEFAULT_FILTERS: FilterOptions = {
     '5xx': true,
   },
   searchTerm: '',
-  timingType: 'relative',
 };
 
 const STATUS_FILTERS: Array<{ code: keyof FilterOptions['statusCodes']; label: string }> = [

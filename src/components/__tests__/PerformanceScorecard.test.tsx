@@ -1,5 +1,6 @@
 import React from 'react';
 import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import PerformanceScorecard from '../PerformanceScorecard';
 import type { Entry, HarFile } from '../../types/har';
 
@@ -191,5 +192,37 @@ describe('PerformanceScorecard scorecard finding URLs', () => {
 
     expect(link).toBeInTheDocument();
     expect(within(link.closest('li') as HTMLElement).getByText(/stylesheet/i)).toBeInTheDocument();
+  });
+
+  it('makes truncated finding evidence explicit and allows all matching requests to be shown', async () => {
+    const user = userEvent.setup();
+    const entries = Array.from({ length: 8 }, (_, index) =>
+      buildEntry({
+        request: {
+          ...buildEntry().request,
+          url: `http://insecure.example.com/resource-${index}.js`,
+        },
+      })
+    );
+
+    render(<PerformanceScorecard harData={buildHar(entries)} />);
+
+    const findingTitle = screen.getByText('8 insecure HTTP requests');
+    const findingCard = findingTitle.closest('article') as HTMLElement;
+
+    expect(within(findingCard).getAllByRole('link')).toHaveLength(3);
+
+    const showRemainingButton = within(findingCard).getByRole('button', {
+      name: /Show remaining 5/i,
+    });
+    expect(showRemainingButton).toHaveAttribute('aria-expanded', 'false');
+
+    await user.click(showRemainingButton);
+
+    expect(within(findingCard).getAllByRole('link')).toHaveLength(8);
+    expect(within(findingCard).getByRole('button', { name: /Show fewer/i })).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    );
   });
 });

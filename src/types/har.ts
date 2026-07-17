@@ -166,7 +166,6 @@ export interface FilterOptions {
     '5xx': boolean;
   };
   searchTerm: string;
-  timingType: 'relative' | 'independent';
 }
 
 export interface HarEntrySummary extends Entry {

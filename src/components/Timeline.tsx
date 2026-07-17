@@ -5,10 +5,9 @@ import { Entry } from '../types/har';
 interface TimelineProps {
   entries: Entry[];
   selectedEntry: Entry | null;
-  timingType: 'relative' | 'independent';
 }
 
-const Timeline: React.FC<TimelineProps> = ({ entries, selectedEntry, timingType }) => {
+const Timeline: React.FC<TimelineProps> = ({ entries, selectedEntry }) => {
   const timelineData = useMemo(() => {
     if (entries.length === 0) return null;
 

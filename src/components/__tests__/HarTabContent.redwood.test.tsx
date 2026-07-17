@@ -102,7 +102,6 @@ const { getHarDataMock, mockHarState, requestFlowDiagramMock, requestFlowGraphVi
           '5xx': true,
         },
         searchTerm: '',
-        timingType: 'relative' as const,
       },
       isLoading: false,
       error: null,
@@ -139,10 +138,6 @@ vi.mock('../RequestList', () => ({
 
 vi.mock('../RequestDetails', () => ({
   default: () => <div>Request details mock</div>,
-}));
-
-vi.mock('../Toolbar', () => ({
-  default: () => <div>Toolbar mock</div>,
 }));
 
 vi.mock('../FloatingAiChat', () => ({
@@ -192,7 +187,6 @@ describe('HarTabContent Redwood theme smoke test', () => {
         '5xx': true,
       },
       searchTerm: '',
-      timingType: 'relative' as const,
     };
     mockHarState.loadHarData.mockClear();
     requestFlowDiagramMock.mockClear();
@@ -219,7 +213,7 @@ describe('HarTabContent Redwood theme smoke test', () => {
 
     expect(document.documentElement.dataset.theme).toBe('redwood');
     expect(screen.getByRole('button', { name: /analyzer/i })).toBeInTheDocument();
-    expect(screen.getByText('Toolbar mock')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /export/i })).not.toBeInTheDocument();
     expect(screen.getByText('Filter panel mock')).toBeInTheDocument();
     expect(screen.getByText('Request list mock')).toBeInTheDocument();
     expect(screen.getByText('Floating AI chat mock')).toBeInTheDocument();

@@ -557,6 +557,7 @@ const RequestFlowGraphView: React.FC<RequestFlowGraphViewProps> = ({
           <Background gap={16} color="#e5e5e5" />
           <Controls />
           <MiniMap
+            position="top-right"
             nodeColor={minimapNodeColor}
             style={{
               background: 'var(--bg-primary)',

@@ -81,7 +81,9 @@ vi.mock('reactflow', async () => {
     },
     Background: () => <div data-testid="react-flow-background" />,
     Controls: () => <div data-testid="react-flow-controls" />,
-    MiniMap: () => <div data-testid="react-flow-minimap" />,
+    MiniMap: ({ position }: any) => (
+      <div data-testid="react-flow-minimap" data-position={position} />
+    ),
     Panel: ({ children, position }: any) => (
       <div data-testid={`react-flow-panel-${position}`}>{children}</div>
     ),
@@ -154,7 +156,6 @@ const defaultFilters: FilterOptions = {
     '5xx': true,
   },
   searchTerm: '',
-  timingType: 'relative',
 };
 
 const makeFocusPath = (overrides: Partial<RequestFlowFocusPath> = {}): RequestFlowFocusPath => ({
@@ -263,7 +264,7 @@ describe('RequestFlowGraphView', () => {
     expect(screen.getByTestId('react-flow-mock')).toHaveAttribute('data-has-on-nodes-change', 'true');
     expect(screen.getByTestId('react-flow-mock')).toHaveAttribute('data-has-on-edges-change', 'true');
     expect(screen.getByTestId('react-flow-controls')).toBeInTheDocument();
-    expect(screen.getByTestId('react-flow-minimap')).toBeInTheDocument();
+    expect(screen.getByTestId('react-flow-minimap')).toHaveAttribute('data-position', 'top-right');
     expect(screen.getByTestId('react-flow-panel-top-left')).toBeInTheDocument();
     expect(screen.queryByTestId('react-flow-panel-top-right')).not.toBeInTheDocument();
     expect(screen.getByLabelText(/scattered view diagnostic controls/i)).toBeInTheDocument();

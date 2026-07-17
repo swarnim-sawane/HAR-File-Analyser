@@ -34,7 +34,6 @@ export const useHarData = (): UseHarDataReturn => {
       '5xx': true,
     },
     searchTerm: '',
-    timingType: 'relative',
   });
 
   const parser = useMemo(() => new HarParser(), []);
@@ -85,7 +84,6 @@ export const useHarData = (): UseHarDataReturn => {
         '5xx': true,
       },
       searchTerm: '',
-      timingType: 'relative',
     });
   }, []);
 

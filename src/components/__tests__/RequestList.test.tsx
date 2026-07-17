@@ -63,7 +63,7 @@ describe('RequestList — timestamp sort', () => {
   ];
 
   it('renders entries in ascending timestamp order by default', () => {
-    render(<RequestList entries={entries} selectedEntry={null} onSelectEntry={noop} timingType="relative" />);
+    render(<RequestList entries={entries} selectedEntry={null} onSelectEntry={noop} />);
     const timestamps = screen.getAllByTestId('request-timestamp').map(el => el.textContent);
     expect(timestamps[0]).toBe('06:17:56.000');
     expect(timestamps[1]).toBe('06:17:57.000');
@@ -72,7 +72,7 @@ describe('RequestList — timestamp sort', () => {
 
   it('reverses order to descending when Timestamp header is clicked', async () => {
     const user = userEvent.setup();
-    render(<RequestList entries={entries} selectedEntry={null} onSelectEntry={noop} timingType="relative" />);
+    render(<RequestList entries={entries} selectedEntry={null} onSelectEntry={noop} />);
     await user.click(screen.getByRole('button', { name: /timestamp/i }));
     const timestamps = screen.getAllByTestId('request-timestamp').map(el => el.textContent);
     expect(timestamps[0]).toBe('06:17:58.000');
@@ -86,7 +86,7 @@ describe('RequestList — size cell', () => {
       request: { ...makeEntry().request, bodySize: 1024 },
       response: { ...makeEntry().response, bodySize: 2048 },
     });
-    render(<RequestList entries={[entry]} selectedEntry={null} onSelectEntry={noop} timingType="relative" />);
+    render(<RequestList entries={[entry]} selectedEntry={null} onSelectEntry={noop} />);
     expect(screen.getByTestId('size-upload')).toBeInTheDocument();
     expect(screen.getByTestId('size-download')).toBeInTheDocument();
     expect(screen.getByTestId('size-upload').textContent).toContain('1 KB');
@@ -98,7 +98,7 @@ describe('RequestList — size cell', () => {
       request: { ...makeEntry().request, bodySize: -1 },
       response: { ...makeEntry().response, bodySize: -1 },
     });
-    render(<RequestList entries={[entry]} selectedEntry={null} onSelectEntry={noop} timingType="relative" />);
+    render(<RequestList entries={[entry]} selectedEntry={null} onSelectEntry={noop} />);
     expect(screen.getByTestId('size-upload').textContent).toContain('—');
     expect(screen.getByTestId('size-download').textContent).toContain('—');
   });
@@ -107,37 +107,37 @@ describe('RequestList — size cell', () => {
 describe('RequestList — analysis badges', () => {
   it('shows redirect badge for 3xx status', () => {
     const entry = makeEntry({ response: { ...makeEntry().response, status: 302 } });
-    render(<RequestList entries={[entry]} selectedEntry={null} onSelectEntry={noop} timingType="relative" />);
+    render(<RequestList entries={[entry]} selectedEntry={null} onSelectEntry={noop} />);
     expect(screen.getByTitle('Redirect')).toBeInTheDocument();
   });
 
   it('shows cached badge for 304 status', () => {
     const entry = makeEntry({ response: { ...makeEntry().response, status: 304, bodySize: 0 } });
-    render(<RequestList entries={[entry]} selectedEntry={null} onSelectEntry={noop} timingType="relative" />);
+    render(<RequestList entries={[entry]} selectedEntry={null} onSelectEntry={noop} />);
     expect(screen.getByTitle('Cached')).toBeInTheDocument();
   });
 
   it('shows cached badge for 200 with 0 bodySize', () => {
     const entry = makeEntry({ response: { ...makeEntry().response, status: 200, bodySize: 0 } });
-    render(<RequestList entries={[entry]} selectedEntry={null} onSelectEntry={noop} timingType="relative" />);
+    render(<RequestList entries={[entry]} selectedEntry={null} onSelectEntry={noop} />);
     expect(screen.getByTitle('Cached')).toBeInTheDocument();
   });
 
   it('shows slow badge when time > 3000ms', () => {
     const entry = makeEntry({ time: 3500 });
-    render(<RequestList entries={[entry]} selectedEntry={null} onSelectEntry={noop} timingType="relative" />);
+    render(<RequestList entries={[entry]} selectedEntry={null} onSelectEntry={noop} />);
     expect(screen.getByTitle('Slow (>3s)')).toBeInTheDocument();
   });
 
   it('shows large badge when response bodySize > 1MB', () => {
     const entry = makeEntry({ response: { ...makeEntry().response, bodySize: 1_100_000 } });
-    render(<RequestList entries={[entry]} selectedEntry={null} onSelectEntry={noop} timingType="relative" />);
+    render(<RequestList entries={[entry]} selectedEntry={null} onSelectEntry={noop} />);
     expect(screen.getByTitle('Large response (>1MB)')).toBeInTheDocument();
   });
 
   it('shows no badges for a normal 200 response', () => {
     const entry = makeEntry(); // 200, 2048 bytes, 300ms
-    render(<RequestList entries={[entry]} selectedEntry={null} onSelectEntry={noop} timingType="relative" />);
+    render(<RequestList entries={[entry]} selectedEntry={null} onSelectEntry={noop} />);
     expect(screen.queryByTitle('Redirect')).not.toBeInTheDocument();
     expect(screen.queryByTitle('Cached')).not.toBeInTheDocument();
     expect(screen.queryByTitle('Slow (>3s)')).not.toBeInTheDocument();
@@ -159,7 +159,6 @@ describe('RequestList — selected row scrolling', () => {
         entries={[makeEntry(), selectedEntry]}
         selectedEntry={selectedEntry}
         onSelectEntry={noop}
-        timingType="relative"
         scrollToSelectedSignal={1}
       />
     );

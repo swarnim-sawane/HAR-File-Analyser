@@ -54,7 +54,6 @@ const defaultFilters: FilterOptions = {
     '5xx': true,
   },
   searchTerm: '',
-  timingType: 'relative',
 };
 
 const makeFocusPath = (overrides: Partial<RequestFlowFocusPath> = {}): RequestFlowFocusPath => ({

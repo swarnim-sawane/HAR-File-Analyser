@@ -5,9 +5,13 @@ import { FilterOptions } from '../types/har';
 interface FilterPanelProps {
   filters: FilterOptions;
   onFilterChange: (filters: Partial<FilterOptions>) => void;
+  fileSummary?: {
+    name: string;
+    meta: string;
+  };
 }
 
-const FilterPanel: React.FC<FilterPanelProps> = ({ filters, onFilterChange }) => {
+const FilterPanel: React.FC<FilterPanelProps> = ({ filters, onFilterChange, fileSummary }) => {
   const handleStatusCodeChange = (code: keyof FilterOptions['statusCodes']) => {
     onFilterChange({
       statusCodes: {
@@ -17,16 +21,31 @@ const FilterPanel: React.FC<FilterPanelProps> = ({ filters, onFilterChange }) =>
     });
   };
 
-  const handleTimingTypeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    onFilterChange({ timingType: e.target.value as 'relative' | 'independent' });
-  };
-
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onFilterChange({ searchTerm: e.target.value });
   };
 
   return (
     <div className="filter-panel har-filter-panel">
+      {fileSummary && (
+        <div className="filter-file-summary" aria-label="Active HAR file">
+          <span className="filter-file-kicker">File</span>
+          <strong title={fileSummary.name}>{fileSummary.name}</strong>
+          <span>{fileSummary.meta}</span>
+        </div>
+      )}
+
+      <div className="filter-section">
+        <h3>Search Requests</h3>
+        <input
+          type="text"
+          placeholder="Filter by URL, status, headers, params, cookies, body..."
+          value={filters.searchTerm}
+          onChange={handleSearchChange}
+          className="search-input"
+        />
+      </div>
+
       <div className="filter-section">
         <h3>Filter by HTTP Status Codes</h3>
         <div className="checkbox-group">
@@ -86,42 +105,6 @@ const FilterPanel: React.FC<FilterPanelProps> = ({ filters, onFilterChange }) =>
         </div>
       </div>
 
-      <div className="filter-section">
-        <h3>Terms to Filter By</h3>
-        <input
-          type="text"
-          placeholder="Filter by URL, status, headers, params, cookies, body..."
-          value={filters.searchTerm}
-          onChange={handleSearchChange}
-          className="search-input"
-        />
-      </div>
-
-      <div className="filter-section">
-        <h3>Timing Type</h3>
-        <div className="radio-group">
-          <label className="radio-label">
-            <input
-              type="radio"
-              name="timingType"
-              value="relative"
-              checked={filters.timingType === 'relative'}
-              onChange={handleTimingTypeChange}
-            />
-            <span>Relative</span>
-          </label>
-          <label className="radio-label">
-            <input
-              type="radio"
-              name="timingType"
-              value="independent"
-              checked={filters.timingType === 'independent'}
-              onChange={handleTimingTypeChange}
-            />
-            <span>Independent</span>
-          </label>
-        </div>
-      </div>
     </div>
   );
 };

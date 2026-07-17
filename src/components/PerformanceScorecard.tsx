@@ -55,6 +55,8 @@ interface Finding {
   metaLinkMode?: MetaLinkMode;
 }
 
+const FINDING_META_PREVIEW_LIMIT = 3;
+
 interface ScoreRule {
   id: string;
   label: string;
@@ -350,7 +352,7 @@ function buildFindings(d: ReturnType<typeof analyse>): Finding[] {
       icon: 'gateway',
       title: `${d.gw.length} gateway error${d.gw.length > 1 ? 's' : ''} detected`,
       desc: 'The edge tier cannot reliably reach the upstream service. Check deployment health, reverse proxy routing, and backend availability.',
-      meta: d.gw.slice(0, 3).map((e) => `${e.request.method} ${e.request.url}`),
+      meta: d.gw.map((e) => `${e.request.method} ${e.request.url}`),
       metaLinkMode: 'clickable',
     });
   }
@@ -361,7 +363,7 @@ function buildFindings(d: ReturnType<typeof analyse>): Finding[] {
       icon: 'auth',
       title: `${d.auth.length} authentication failure${d.auth.length > 1 ? 's' : ''}`,
       desc: 'Requests are being rejected for authorization reasons. Validate session expiry, token formatting, CORS, and header propagation.',
-      meta: d.auth.slice(0, 3).map((e) => `HTTP ${e.response.status} ${e.request.url}`),
+      meta: d.auth.map((e) => `HTTP ${e.response.status} ${e.request.url}`),
       metaLinkMode: 'clickable',
     });
   }
@@ -372,7 +374,7 @@ function buildFindings(d: ReturnType<typeof analyse>): Finding[] {
       icon: 'server',
       title: `${d.errs5xx.length} upstream server error${d.errs5xx.length > 1 ? 's' : ''}`,
       desc: 'Application-level server failures are present. Inspect service logs, dependency health, and database connectivity.',
-      meta: d.errs5xx.slice(0, 3).map((e) => `HTTP ${e.response.status} ${e.request.url}`),
+      meta: d.errs5xx.map((e) => `HTTP ${e.response.status} ${e.request.url}`),
       metaLinkMode: 'clickable',
     });
   }
@@ -383,7 +385,7 @@ function buildFindings(d: ReturnType<typeof analyse>): Finding[] {
       icon: 'client',
       title: `${d.errs4xx.length} client error${d.errs4xx.length > 1 ? 's' : ''}`,
       desc: 'Some resources are missing or requested incorrectly. Verify endpoint paths, payload shape, and expected query parameters.',
-      meta: d.errs4xx.slice(0, 3).map((e) => `HTTP ${e.response.status} ${e.request.url}`),
+      meta: d.errs4xx.map((e) => `HTTP ${e.response.status} ${e.request.url}`),
       metaLinkMode: 'clickable',
     });
   }
@@ -394,7 +396,7 @@ function buildFindings(d: ReturnType<typeof analyse>): Finding[] {
       icon: 'security',
       title: `${d.leakyUrls.length} URL${d.leakyUrls.length > 1 ? 's' : ''} expose sensitive parameters`,
       desc: 'Secrets in query strings can leak into logs, history, and referer headers. Move sensitive values into headers or the request body.',
-      meta: d.leakyUrls.slice(0, 3).map((e) => e.request.url),
+      meta: d.leakyUrls.map((e) => e.request.url),
       metaLinkMode: 'visual-only',
     });
   }
@@ -405,7 +407,7 @@ function buildFindings(d: ReturnType<typeof analyse>): Finding[] {
       icon: 'latency',
       title: `${d.verySlow.length} request${d.verySlow.length > 1 ? 's' : ''} exceed 5 seconds`,
       desc: 'Very slow responses usually point to blocking backend work, missing database indexes, or heavy server-side computation.',
-      meta: [...d.verySlow].sort((a, b) => b.time - a.time).slice(0, 3).map((e) => `${fmtT(e.time)} ${e.request.url}`),
+      meta: [...d.verySlow].sort((a, b) => b.time - a.time).map((e) => `${fmtT(e.time)} ${e.request.url}`),
       metaLinkMode: 'clickable',
     });
   } else if (d.slow.length) {
@@ -414,7 +416,7 @@ function buildFindings(d: ReturnType<typeof analyse>): Finding[] {
       icon: 'latency',
       title: `${d.slow.length} slow request${d.slow.length > 1 ? 's' : ''} over 2 seconds`,
       desc: 'Multiple requests are breaching a comfortable latency budget. Split backend time from payload cost to isolate the real bottleneck.',
-      meta: [...d.slow].sort((a, b) => b.time - a.time).slice(0, 4).map((e) => `${fmtT(e.time)} ${e.request.url}`),
+      meta: [...d.slow].sort((a, b) => b.time - a.time).map((e) => `${fmtT(e.time)} ${e.request.url}`),
       metaLinkMode: 'clickable',
     });
   }
@@ -425,7 +427,7 @@ function buildFindings(d: ReturnType<typeof analyse>): Finding[] {
       icon: 'ttfb',
       title: `High TTFB on ${d.highTTFB.length} requests`,
       desc: 'Slow first-byte times suggest backend processing overhead before the response starts streaming. Look at database caching and expensive upstream calls.',
-      meta: d.highTTFB.slice(0, 3).map((e) => `TTFB ${fmtT(e.timings.wait ?? 0)} ${e.request.url}`),
+      meta: d.highTTFB.map((e) => `TTFB ${fmtT(e.timings.wait ?? 0)} ${e.request.url}`),
       metaLinkMode: 'clickable',
     });
   }
@@ -436,7 +438,7 @@ function buildFindings(d: ReturnType<typeof analyse>): Finding[] {
       icon: 'compression',
       title: `${d.uncompressed.length} large uncompressed text asset${d.uncompressed.length > 1 ? 's' : ''}`,
       desc: `Enable gzip or Brotli for scripts, stylesheets, documents, and API payloads. Estimated transfer savings are about ${fmtB(d.uncompressed.reduce((a, e) => a + getTransferSize(e) * 0.7, 0))}.`,
-      meta: [...d.uncompressed].sort((a, b) => getTransferSize(b) - getTransferSize(a)).slice(0, 3).map((e) => `${fmtB(getTransferSize(e))} ${e.request.url}`),
+      meta: [...d.uncompressed].sort((a, b) => getTransferSize(b) - getTransferSize(a)).map((e) => `${fmtB(getTransferSize(e))} ${e.request.url}`),
       metaLinkMode: 'clickable',
     });
   }
@@ -447,7 +449,7 @@ function buildFindings(d: ReturnType<typeof analyse>): Finding[] {
       icon: 'cache',
       title: `${d.noCacheStatic.length} static resource${d.noCacheStatic.length > 1 ? 's' : ''} missing cache headers`,
       desc: 'Immutable static assets should advertise long-lived caching to avoid unnecessary re-downloads on repeat visits.',
-      meta: d.noCacheStatic.slice(0, 3).map((e) => `${getType(e)} ${e.request.url}`),
+      meta: d.noCacheStatic.map((e) => `${getType(e)} ${e.request.url}`),
       metaLinkMode: 'clickable',
     });
   }
@@ -458,7 +460,7 @@ function buildFindings(d: ReturnType<typeof analyse>): Finding[] {
       icon: 'image',
       title: `${d.bigImg.length} oversized image${d.bigImg.length > 1 ? 's' : ''}`,
       desc: 'Large images increase layout time and network cost. Prefer AVIF or WebP, responsive sizes, and more aggressive compression.',
-      meta: [...d.bigImg].sort((a, b) => getTransferSize(b) - getTransferSize(a)).slice(0, 3).map((e) => `${fmtB(getTransferSize(e))} ${e.request.url}`),
+      meta: [...d.bigImg].sort((a, b) => getTransferSize(b) - getTransferSize(a)).map((e) => `${fmtB(getTransferSize(e))} ${e.request.url}`),
       metaLinkMode: 'clickable',
     });
   }
@@ -469,7 +471,7 @@ function buildFindings(d: ReturnType<typeof analyse>): Finding[] {
       icon: 'mixed',
       title: `${d.mixed.length} insecure HTTP request${d.mixed.length > 1 ? 's' : ''}`,
       desc: 'Plaintext requests weaken transport security. Move all traffic to HTTPS and consider HSTS to eliminate protocol downgrade hops.',
-      meta: d.mixed.slice(0, 3).map((e) => e.request.url),
+      meta: d.mixed.map((e) => e.request.url),
       metaLinkMode: 'clickable',
     });
   }
@@ -480,7 +482,7 @@ function buildFindings(d: ReturnType<typeof analyse>): Finding[] {
       icon: 'duplicate',
       title: `${d.dupes.length} duplicate request pattern${d.dupes.length > 1 ? 's' : ''}`,
       desc: 'Repeated identical requests waste bandwidth and backend work. Add client-side deduplication or short-lived caching where appropriate.',
-      meta: d.dupes.slice(0, 4).map(([key, count]) => {
+      meta: d.dupes.map(([key, count]) => {
         const [method, url] = key.split('|');
         return `x${count} ${method} ${url}`;
       }),
@@ -505,7 +507,7 @@ function buildFindings(d: ReturnType<typeof analyse>): Finding[] {
       icon: 'redirect',
       title: `${d.redirChains.length} redirects detected`,
       desc: 'Redirects add extra round trips before useful content arrives. Point clients directly to the final destination whenever possible.',
-      meta: d.redirChains.slice(0, 3).map((e) => `HTTP ${e.response.status} ${e.request.url}`),
+      meta: d.redirChains.map((e) => `HTTP ${e.response.status} ${e.request.url}`),
       metaLinkMode: 'clickable',
     });
   }
@@ -672,28 +674,49 @@ const KpiCard: React.FC<{
   </article>
 );
 
-const FindingCard: React.FC<{ finding: Finding }> = ({ finding }) => (
-  <article className={`scorecard-finding-card tone-${finding.level}`}>
-    <span className="scorecard-finding-icon" aria-hidden="true">{getFindingIcon(finding.icon)}</span>
-    <div className="scorecard-finding-copy">
-      <div className="scorecard-finding-head">
-        <strong>{finding.title}</strong>
+const FindingCard: React.FC<{ finding: Finding }> = ({ finding }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const meta = finding.meta ?? [];
+  const hasMoreEvidence = meta.length > FINDING_META_PREVIEW_LIMIT;
+  const visibleMeta = isExpanded ? meta : meta.slice(0, FINDING_META_PREVIEW_LIMIT);
+  const hiddenEvidenceCount = meta.length - FINDING_META_PREVIEW_LIMIT;
+
+  return (
+    <article className={`scorecard-finding-card tone-${finding.level}`}>
+      <span className="scorecard-finding-icon" aria-hidden="true">{getFindingIcon(finding.icon)}</span>
+      <div className="scorecard-finding-copy">
+        <div className="scorecard-finding-head">
+          <strong>{finding.title}</strong>
+        </div>
+        <p>{finding.desc}</p>
+        {meta.length > 0 && (
+          <>
+            <ul className="scorecard-finding-meta">
+              {visibleMeta.map((item, index) => (
+                <FindingMetaItem
+                  key={`${item}-${index}`}
+                  item={item}
+                  linkMode={finding.metaLinkMode ?? 'plain'}
+                />
+              ))}
+            </ul>
+            {hasMoreEvidence && (
+              <button
+                type="button"
+                className="scorecard-finding-meta-toggle"
+                aria-expanded={isExpanded}
+                onClick={() => setIsExpanded((current) => !current)}
+              >
+                {isExpanded ? 'Show fewer' : `Show remaining ${hiddenEvidenceCount}`}
+                <ChevronDownIcon />
+              </button>
+            )}
+          </>
+        )}
       </div>
-      <p>{finding.desc}</p>
-      {finding.meta && finding.meta.length > 0 && (
-        <ul className="scorecard-finding-meta">
-          {finding.meta.map((item, index) => (
-            <FindingMetaItem
-              key={`${item}-${index}`}
-              item={item}
-              linkMode={finding.metaLinkMode ?? 'plain'}
-            />
-          ))}
-        </ul>
-      )}
-    </div>
-  </article>
-);
+    </article>
+  );
+};
 
 const PerformanceScorecard: React.FC<ScorecardProps> = ({ harData, onSelectRequest }) => {
   const { score, data, findings, scoreRules } = useMemo(() => {

@@ -44,6 +44,8 @@ describe('Redwood theme surface smoke tests', () => {
 
     expect(document.documentElement.dataset.theme).toBe('redwood');
     expect(screen.getByRole('heading', { name: /har file analyzer documentation/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /find where a search term matched/i })).toBeInTheDocument();
+    expect(screen.getByText(/request details opens the first section containing the search term/i)).toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: /documentation section navigation/i })).toBeInTheDocument();
   });
 

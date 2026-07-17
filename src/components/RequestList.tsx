@@ -69,7 +69,6 @@ interface RequestListProps {
   entries: Entry[];
   selectedEntry: Entry | null;
   onSelectEntry: (entry: Entry) => void;
-  timingType: 'relative' | 'independent';
   focusEntry?: Entry | null;
   focusPath?: RequestFlowFocusPath | null;
   scrollToSelectedSignal?: number;
@@ -82,7 +81,6 @@ const RequestList: React.FC<RequestListProps> = ({
   entries,
   selectedEntry,
   onSelectEntry,
-  timingType,
   focusEntry = null,
   focusPath = null,
   scrollToSelectedSignal = 0,

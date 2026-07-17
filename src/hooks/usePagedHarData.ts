@@ -86,7 +86,6 @@ function defaultFilters(): FilterOptions {
       '5xx': true,
     },
     searchTerm: '',
-    timingType: 'relative',
   };
 }
 

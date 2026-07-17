@@ -40,6 +40,11 @@ interface UnifiedUploaderProps {
   onLogFileUpload: (result: UploadResult, sourceFile: File) => void | Promise<void>;
   logRecentFiles?: RecentFile[];
   onClearLogRecent?: () => void;
+
+  /** Lets the app activate an already-open recent file without uploading it again. */
+  onOpenExistingRecentFile?: (
+    file: { name: string; fileType: UploadFileType }
+  ) => boolean | Promise<boolean>;
 }
 
 interface TypedFile {
@@ -54,6 +59,7 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
   onLogFileUpload,
   logRecentFiles = [],
   onClearLogRecent,
+  onOpenExistingRecentFile,
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -312,6 +318,14 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
     .slice(0, 6);
 
   const handleRecentFileClick = async (f: { name: string; data: File; fileType: UploadFileType }) => {
+    if (onOpenExistingRecentFile) {
+      const wasHandled = await onOpenExistingRecentFile({
+        name: f.name,
+        fileType: f.fileType,
+      });
+      if (wasHandled) return;
+    }
+
     // In-session: f.data is the real File. After a page refresh localStorage only
     // restores name/timestamp so f.data is undefined — restore from IndexedDB.
     let file: File | null =

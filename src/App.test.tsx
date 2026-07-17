@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
 
@@ -13,10 +13,14 @@ type UnifiedUploaderMockProps = {
     hash: string;
     message: string;
   }) => void | Promise<void>;
+  onOpenExistingRecentFile?: (file: {
+    name: string;
+    fileType: 'har' | 'log';
+  }) => boolean | Promise<boolean>;
 };
 
 vi.mock('./components/UnifiedUploader', () => ({
-  default: ({ onHarFileUpload }: UnifiedUploaderMockProps) => (
+  default: ({ onHarFileUpload, onOpenExistingRecentFile }: UnifiedUploaderMockProps) => (
     <div>
       <div>Drop any file to get started</div>
       <button
@@ -34,6 +38,12 @@ vi.mock('./components/UnifiedUploader', () => ({
         }
       >
         Load mock HAR
+      </button>
+      <button
+        type="button"
+        onClick={() => void onOpenExistingRecentFile?.({ name: 'mock.har', fileType: 'har' })}
+      >
+        Open recent mock HAR
       </button>
     </div>
   ),
@@ -179,6 +189,39 @@ describe('App theme behavior', () => {
 });
 
 describe('App documentation navigation', () => {
+  it('opens the unified uploader from the analyzer tab-bar plus button', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: /load mock har/i }));
+
+    expect(screen.getByRole('button', { name: /upload new/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /recent files/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /open another analyzer file/i }));
+
+    const dialog = screen.getByRole('dialog', { name: /upload/i });
+    expect(within(dialog).getByText('Drop any file to get started')).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: /close upload dialog/i }));
+    expect(screen.queryByRole('dialog', { name: /upload/i })).not.toBeInTheDocument();
+  });
+
+  it('activates an already-open recent HAR without creating another tab', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: /load mock har/i }));
+    await user.click(screen.getByRole('button', { name: /open another analyzer file/i }));
+
+    const dialog = screen.getByRole('dialog', { name: /upload/i });
+    await user.click(within(dialog).getByRole('button', { name: /open recent mock har/i }));
+
+    expect(screen.queryByRole('dialog', { name: /upload/i })).not.toBeInTheDocument();
+    expect(screen.getAllByTitle('mock.har')).toHaveLength(1);
+    expect(screen.getByTitle('mock.har')).toHaveClass('active');
+  });
+
   it('mounts the compare workspace inside a persistent shell wrapper', () => {
     render(<App />);
 

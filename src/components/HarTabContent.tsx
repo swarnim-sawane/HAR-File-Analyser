@@ -6,7 +6,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import FilterPanel from './FilterPanel';
 import RequestList from './RequestList';
 import RequestDetails from './RequestDetails';
-import Toolbar from './Toolbar';
 import { useHarData } from '../hooks/useHarData';
 import FloatingAiChat from './FloatingAiChat';
 import RequestFlowDiagram from './RequestFlowDiagram';
@@ -16,7 +15,7 @@ import PerformanceScorecard from './PerformanceScorecard';
 import AiInsights from './AiInsights';
 import { apiClient } from '../services/apiClient';
 import { analyzeRequestFlowFocus } from '../utils/requestFlowFocus';
-import { AlertIcon, ChevronDownIcon, ClockIcon, CloseIcon, FileIcon, NetworkIcon, RouteIcon, ServerIcon, TrashIcon, UploadIcon } from './Icons';
+import { AlertIcon, CloseIcon, NetworkIcon, RouteIcon, ServerIcon } from './Icons';
 import type { Entry, FilterOptions } from '../types/har';
 import type { RequestFlowFocusMode } from '../types/requestFlow';
 
@@ -57,10 +56,6 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
   fileName,
   isActive,
   backendUrl,
-  recentFiles,
-  onAddNewTab,
-  onLoadRecentNewTab,
-  onClearRecent,
 }) => {
   const harState = useHarData();
   const [activeTab, setActiveTab] = useState<HarTab>('analyzer');
@@ -69,7 +64,6 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
   const [issueFocusEnabled, setIssueFocusEnabled] = useState(true);
   const [detailsWidth, setDetailsWidth] = useState(450);
   const [isLoadingFile, setIsLoadingFile] = useState(true);
-  const [showStickyRecent, setShowStickyRecent] = useState(false);
   const [selectedEntryScrollSignal, setSelectedEntryScrollSignal] = useState(0);
   const flowViewRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const autoSelectedFocusKeyRef = useRef<string | null>(null);
@@ -143,22 +137,6 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
-  };
-
-  const formatRecentDate = (timestamp: number) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-
-    const diffHours = Math.floor(diffMins / 60);
-    if (diffHours < 24) return `${diffHours}h ago`;
-
-    const diffDays = Math.floor(diffHours / 24);
-    return `${diffDays}d ago`;
   };
 
   const focusFlowView = (index: number) => {
@@ -279,64 +257,6 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
               </button>
             ))}
           </div>
-          <div className="har-sticky-actions">
-            <button className="btn-toolbar btn-upload har-sticky-upload" onClick={onAddNewTab}>
-              <UploadIcon />
-              <span>Upload New</span>
-            </button>
-            {recentFiles.length > 0 && (
-              <div className={`recent-files-dropdown ${showStickyRecent ? 'active' : ''}`}>
-                <button
-                  className="btn-toolbar btn-recent har-sticky-recent"
-                  onClick={() => setShowStickyRecent(!showStickyRecent)}
-                >
-                  <ClockIcon />
-                  <span>Recent Files</span>
-                  <ChevronDownIcon />
-                </button>
-
-                {showStickyRecent && (
-                  <div className="dropdown-menu">
-                    <div className="dropdown-header">
-                      <span>Recent Files</span>
-                      <button
-                        className="btn-clear-recent"
-                        onClick={() => {
-                          onClearRecent();
-                          setShowStickyRecent(false);
-                        }}
-                      >
-                        <TrashIcon />
-                        <span>Clear All</span>
-                      </button>
-                    </div>
-                    <div className="dropdown-content">
-                      {recentFiles.map((file, index) => (
-                        <button
-                          key={index}
-                          className="recent-file-item"
-                          onClick={() => {
-                            const fileToPass =
-                              file.data instanceof File
-                                ? file.data
-                                : new File([], file.name);
-                            onLoadRecentNewTab(fileToPass);
-                            setShowStickyRecent(false);
-                          }}
-                        >
-                          <div className="recent-file-info">
-                            <FileIcon />
-                            <span className="recent-file-name">{file.name}</span>
-                          </div>
-                          <span className="recent-file-time">{formatRecentDate(file.timestamp)}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
         </div>
       )}
 
@@ -359,17 +279,6 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
         <>
           {activeTab === 'analyzer' && (
             <>
-              <Toolbar
-                onUploadNew={onAddNewTab}
-                onLoadRecent={onLoadRecentNewTab}
-                recentFiles={recentFiles}
-                onClearRecent={onClearRecent}
-                showUploadButton={false}
-                showRecentButton={false}
-                currentFileName={fileName}
-                harEntries={harState.filteredEntries}
-                totalHarEntries={harState.harData.log.entries.length}
-              />
               <div
                 className={`analyzer-layout ${harState.selectedEntry ? 'with-details' : ''}`}
                 style={harState.selectedEntry ? ({ ['--details-width' as any]: `${detailsWidth}px` }) : undefined}
@@ -378,6 +287,12 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
                   <FilterPanel
                     filters={harState.filters}
                     onFilterChange={harState.updateFilters}
+                    fileSummary={{
+                      name: fileName,
+                      meta: harState.filteredEntries.length === harState.harData.log.entries.length
+                        ? `HAR - ${harState.harData.log.entries.length} request${harState.harData.log.entries.length === 1 ? '' : 's'}`
+                        : `HAR - ${harState.filteredEntries.length} of ${harState.harData.log.entries.length} requests`,
+                    }}
                   />
                 </aside>
                 <div className="content-area">
@@ -385,7 +300,6 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
                     entries={harState.filteredEntries}
                     selectedEntry={harState.selectedEntry}
                     onSelectEntry={selectEntryManually}
-                    timingType={harState.filters.timingType}
                     focusEntry={focusEntry}
                     focusPath={requestFlowIssueFocus}
                     scrollToSelectedSignal={selectedEntryScrollSignal}
@@ -398,6 +312,7 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
                       entry={harState.selectedEntry}
                       onClose={() => harState.setSelectedEntry(null)}
                       focusPath={harState.selectedEntry === focusEntry ? requestFlowIssueFocus : null}
+                      searchTerm={harState.filters.searchTerm}
                     />
                   </aside>
                 )}
