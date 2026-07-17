@@ -24,7 +24,7 @@ Run the application locally when developing, testing backend changes, debugging 
 
 The recommended local dependency path is:
 
-- MongoDB: stores HAR metadata, HAR entries, console-log files, and console-log entries.
+- PostgreSQL: stores HAR metadata, HAR entries, console-log files, console-log entries, and AI usage metadata.
 - Redis: powers BullMQ queues, upload progress, and Socket.IO pub/sub events.
 
 ## Architecture
@@ -34,9 +34,9 @@ flowchart LR
     Browser["React + Vite frontend\nport 3000"] --> API["Express API\nport 4000"]
     Browser <--> Socket["Socket.IO progress/events"]
     API --> Redis["Redis\nqueues, progress, pub/sub"]
-    API --> Mongo["MongoDB\nfiles and parsed entries"]
+    API --> Postgres["PostgreSQL\nfiles and parsed entries"]
     Redis --> Worker["Backend worker\nHAR/log parsing"]
-    Worker --> Mongo
+    Worker --> Postgres
     Worker --> Redis
     API --> OpenAI["Approved OpenAI endpoint\noptional AI"]
     API --> Artifacts["Local storage or OCI Object Storage\nuploaded artifacts"]
@@ -49,7 +49,7 @@ Primary runtime components:
 | Frontend | `src/` | Analyzer UI, Request Flow, Console Log Analyzer, AI Insights, sanitization UI, comparison workflow |
 | Backend API | `backend/src/server.ts` | REST API, OpenAPI docs, upload orchestration, status, AI routes, sanitization routes |
 | Worker | `backend/src/worker.ts` | Background parsing and persistence for uploaded HAR/log files |
-| MongoDB | external/container | Persistent analysis data |
+| PostgreSQL | external/container | Persistent analysis data and AI usage metadata |
 | Redis | external/container | Queueing, upload progress, pub/sub event delivery |
 | Artifact store | local or OCI Object Storage | Uploaded chunks and durable source HAR/log artifacts |
 
@@ -69,7 +69,7 @@ HAR-File-Analyser/
 |   |   |-- config/              # Database, CORS, proxy, queue, and upload configuration
 |   |   |-- workers/             # Storage and worker helpers
 |   |   `-- utils/               # Backend utilities
-|   |-- docker-compose.yml       # Local MongoDB and Redis dependencies
+|   |-- docker-compose.yml       # Local PostgreSQL and Redis dependencies
 |   `-- package.json             # Backend scripts
 |-- docs/                        # Integration, Confluence, and planning docs
 |-- scripts/                     # Local developer utilities
@@ -82,7 +82,7 @@ HAR-File-Analyser/
 
 - Node.js 22.13 or newer in the Node.js 22 LTS line is recommended.
 - npm 11.x recommended.
-- Docker Desktop or Rancher Desktop for local MongoDB/Redis containers.
+- Rancher Desktop or another approved OCI-compatible container runtime for local PostgreSQL/Redis containers.
 - Git.
 - Access to Oracle VPN/internal network for hosted environments and approved OpenAI egress.
 
@@ -92,12 +92,12 @@ The application code expects the following external services or infrastructure t
 
 | Dependency | Required | Purpose |
 | --- | --- | --- |
-| MongoDB or MongoDB-compatible database | Yes | Stores uploaded file metadata, parsed HAR entries, console-log entries, analysis state, and cached results |
-| Redis or Redis-compatible cache | Yes | Powers BullMQ queues, upload progress, Socket.IO pub/sub, and worker coordination |
+| PostgreSQL 15 or newer | Yes | Stores uploaded file metadata, parsed HAR entries, console-log entries, analysis state, and AI usage metadata |
+| Redis 7-compatible cache | Yes | Powers BullMQ queues, upload progress, Socket.IO pub/sub, and worker coordination. OCI Cache must use a non-sharded deployment because BullMQ requires Redis scripting commands. |
 | OCI Object Storage | Hosted Deployment only | Replaces shared upload/processed directories with durable cross-container artifact storage |
 | OpenAI API or approved OpenAI-compatible gateway | Optional | Generates AI-assisted summaries when `OPENAI_API_KEY` and `OPENAI_MODEL` are configured |
 | Oracle corporate proxy | Environment-dependent | Required only when the runtime network requires a proxy for approved outbound HTTPS calls |
-| Docker/Rancher Desktop container images | Local development only | Pulls local MongoDB and Redis containers for development setup |
+| Rancher Desktop container images | Local development only | Runs local PostgreSQL and Redis containers for development setup |
 | Internal VM/VCAP hosting | Hosted deployment only | Runs the current internal frontend, backend API, and worker processes |
 
 Third-party code attribution:
@@ -139,7 +139,8 @@ WORKER_HEALTH_PORT=4001
 PUBLIC_API_URL=http://localhost:4000
 OPENAPI_SERVER_URL=http://localhost:4000
 
-MONGODB_URL=mongodb://localhost:27017/har-analyzer
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/har_analyzer
+POSTGRES_SSL_MODE=disable
 REDIS_HOST=localhost
 REDIS_PORT=6379
 
@@ -185,7 +186,7 @@ cd ..
 Start local dependency containers:
 
 ```powershell
-docker compose -f backend/docker-compose.yml up -d mongodb redis
+docker compose -f backend/docker-compose.yml up -d postgres redis
 ```
 
 ## Running the App
@@ -196,7 +197,7 @@ Recommended one-command local startup from the repository root:
 npm run dev:all
 ```
 
-This starts the Vite frontend, Express backend API, and backend worker in one terminal. Use this for normal local development after MongoDB and Redis are running.
+This starts the Vite frontend, Express backend API, and backend worker in one terminal. Use this for normal local development after PostgreSQL and Redis are running.
 
 Expected local URLs:
 
@@ -212,7 +213,7 @@ Stop the development processes with `Ctrl+C`. Stop local containers when no long
 docker compose -f backend/docker-compose.yml down
 ```
 
-To remove local MongoDB/Redis data volumes as well:
+To remove local PostgreSQL/Redis data volumes as well:
 
 ```powershell
 docker compose -f backend/docker-compose.yml down -v
@@ -316,10 +317,10 @@ See [docs/openapi-automation.md](docs/openapi-automation.md) and [docs/oci-opena
 
 ## Docker and Container Notes
 
-`backend/docker-compose.yml` is the recommended local dependency compose file. It starts MongoDB and Redis only.
+`backend/docker-compose.yml` is the recommended local dependency compose file. It starts PostgreSQL and Redis only.
 
 ```powershell
-docker compose -f backend/docker-compose.yml up -d mongodb redis
+docker compose -f backend/docker-compose.yml up -d postgres redis
 ```
 
 The root `docker-compose.yml` and `Dockerfile` are legacy local assets. OCI GenAI Hosted Deployment uses the dedicated definitions under `deploy/hosted/`.
@@ -329,7 +330,7 @@ The Hosted Deployment topology contains two application images:
 - `har-analyzer-app`: React assets and Express API on `0.0.0.0:8080`.
 - `har-analyzer-worker`: BullMQ worker with health endpoints on `0.0.0.0:8080`.
 
-Both use MongoDB and Redis. In Hosted Deployment, uploaded artifacts are exchanged through OCI Object Storage; no shared volume is required. See [OCI GenAI Hosted Deployment](docs/OCI_GENAI_HOSTED_DEPLOYMENT.md) for image builds, environment variables, IAM, and validation.
+Both use OCI PostgreSQL and a non-sharded OCI Cache Redis 7 deployment. Uploaded artifacts are exchanged through OCI Object Storage; no shared volume is required. See [OCI GenAI Hosted Deployment](docs/OCI_GENAI_HOSTED_DEPLOYMENT.md) for image builds, environment variables, IAM, networking, and validation.
 
 The hosted build requires an approved Oracle Artifactory, OCIR, or Oracle Container Registry Node base through `scripts/build-hosted-images.ps1 -NodeImage <approved-node-image>`. It has no public Docker Hub default and rejects Docker Hub image references.
 
@@ -382,7 +383,7 @@ Operational expectations:
 - `OPENAI_BASE_URL` defaults to `https://api.openai.com/v1` and accepts only HTTPS when overridden.
 - Without OpenAI configuration, deterministic Insights remain available, the AI chat control is hidden, and readiness is unaffected.
 - The backend sends `store: false`; the key is never compiled into or returned to the browser.
-- Provider-reported token usage is stored in MongoDB as metadata only. Prompts, generated responses, and API keys are not stored in the usage collection.
+- Provider-reported token usage is stored in PostgreSQL as metadata only. Prompts, generated responses, and API keys are not stored in the usage table.
 - `GET /api/ops/ai-usage` returns totals and breakdowns by model, operation, and UTC day. Optional `from`, `to`, `model`, and `operation` filters are supported.
 - Cost is explicitly an estimate. Configure the approved or negotiated per-million-token rates through `OPENAI_INPUT_USD_PER_1M_TOKENS`, `OPENAI_CACHED_INPUT_USD_PER_1M_TOKENS`, and `OPENAI_OUTPUT_USD_PER_1M_TOKENS`; otherwise token totals remain available and cost is reported as unpriced.
 - AI output can vary between runs because it is generated by a model.
@@ -398,7 +399,7 @@ Check:
 - Redis is running.
 - The backend worker is running.
 - The file status events are reaching the frontend.
-- Backend and worker both use the same Redis and MongoDB configuration.
+- Backend and worker both use the same Redis and PostgreSQL configuration.
 
 ### Frontend loads but backend calls fail
 
@@ -435,6 +436,6 @@ The warning is non-blocking with current Docker Compose. The compose file still 
 
 ## Handoff Readiness
 
-The codebase is organized in a standard frontend/backend/worker structure and is suitable for handoff to a development team. The current architecture is acceptable for an internal diagnostic tool and staged rollout, provided the team treats MongoDB/Redis, authentication, retention, and observability as production-readiness workstreams.
+The codebase is organized in a standard frontend/backend/worker structure and is suitable for handoff to a development team. The current architecture uses PostgreSQL, Redis, and an artifact-store abstraction; authentication, retention, observability, production networking, and managed-service validation remain release-gate workstreams.
 
 Detailed review notes are captured in [docs/handoff-readiness-review.md](docs/handoff-readiness-review.md).

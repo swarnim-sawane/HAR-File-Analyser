@@ -1,11 +1,12 @@
 import dotenv from 'dotenv';
 import { Worker } from 'bullmq';
-import { closeDatabases, connectDatabases, getRedis } from './config/database';
+import { closeDatabases, connectDatabases, getWorkerRedis } from './config/database';
 import { HAR_QUEUE_NAME, LOG_QUEUE_NAME } from './config/queueNames';
 import { processHarFile } from './workers/harProcessor';
 import { processConsoleLog } from './workers/logProcessor';
 import { logError, logInfo, measureDurationMs } from './config/observability';
 import { startWorkerHealthServer } from './workerHealthServer';
+import { getArtifactStore } from './services/artifactStore';
 
 dotenv.config();
 
@@ -45,7 +46,7 @@ async function startWorker() {
     console.log('🔧 Starting HAR Analyzer Worker...\n');
 
     await connectDatabases();
-    const connection = getRedis();
+    const connection = getWorkerRedis();
     const concurrency = parseInt(process.env.WORKER_CONCURRENCY || '2', 10);
     logInfo('worker.starting', { concurrency });
 
@@ -152,6 +153,15 @@ async function startWorker() {
     logWorker.on('failed', (job, err) => {
       console.error(`❌ [Worker] Log job ${job?.id} failed:`, err.message);
     });
+
+    harWorker.on('error', (error) => logError('worker.har.transport_error', { error }));
+    logWorker.on('error', (error) => logError('worker.log.transport_error', { error }));
+
+    await Promise.all([
+      harWorker.waitUntilReady(),
+      logWorker.waitUntilReady(),
+      getArtifactStore().probe(),
+    ]);
 
     ready = true;
 

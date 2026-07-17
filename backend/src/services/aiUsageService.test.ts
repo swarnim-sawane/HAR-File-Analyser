@@ -1,7 +1,5 @@
-import type { Db } from 'mongodb';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  buildAiUsageSummaryPipeline,
   estimateOpenAiCostUsd,
   extractOpenAiResponseMetadata,
   getAiUsagePricing,
@@ -9,6 +7,7 @@ import {
   parseAiUsageSummaryQuery,
   recordAiUsageEvent,
 } from './aiUsageService';
+import type { PostgresStore } from '../persistence/postgresStore';
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -91,11 +90,9 @@ describe('AI usage accounting', () => {
     process.env.AI_USAGE_TRACKING_ENABLED = 'true';
     process.env.OPENAI_INPUT_USD_PER_1M_TOKENS = '2';
     process.env.OPENAI_OUTPUT_USD_PER_1M_TOKENS = '8';
-    const insertOne = vi.fn().mockResolvedValue({ acknowledged: true });
+    const query = vi.fn().mockResolvedValue({ rowCount: 1, rows: [] });
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const db = {
-      collection: vi.fn(() => ({ insertOne })),
-    } as unknown as Db;
+    const database = { query } as unknown as PostgresStore;
 
     await expect(recordAiUsageEvent({
       requestId: 'request-123',
@@ -112,23 +109,16 @@ describe('AI usage accounting', () => {
         reasoningTokens: 10,
         totalTokens: 150,
       },
-    }, db)).resolves.toBe(true);
+    }, database)).resolves.toBe(true);
 
-    const stored = insertOne.mock.calls[0][0] as Record<string, unknown>;
-    expect(stored).toMatchObject({
-      provider: 'openai',
-      requestId: 'request-123',
-      operation: 'insights',
-      usageCaptured: true,
-    });
-    expect(stored).not.toHaveProperty('prompt');
-    expect(stored).not.toHaveProperty('messages');
-    expect(stored).not.toHaveProperty('response');
-    expect(stored).not.toHaveProperty('apiKey');
+    const [sql, values] = query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('INSERT INTO ai_usage_events');
+    expect(values).toEqual(expect.arrayContaining(['request-123', 'insights', 'openai', 100, 50, 150]));
+    expect(sql).not.toMatch(/prompt|messages|api_key/i);
     expect(logSpy.mock.calls.flat().join(' ')).toContain('"totalUnits":150');
   });
 
-  it('validates bounded summary filters before constructing a MongoDB query', () => {
+  it('validates bounded summary filters before constructing a database query', () => {
     const now = new Date('2026-07-15T12:00:00.000Z');
 
     expect(parseAiUsageSummaryQuery({
@@ -147,26 +137,8 @@ describe('AI usage accounting', () => {
     }, now).error).toMatch(/cannot exceed 366 days/i);
   });
 
-  it('builds aggregation filters from validated scalar values only', () => {
-    const query = {
-      from: new Date('2026-07-01T00:00:00.000Z'),
-      to: new Date('2026-07-15T00:00:00.000Z'),
-      operation: 'chat' as const,
-      model: 'approved-model',
-    };
-
-    expect(buildAiUsageSummaryPipeline(query)[0]).toEqual({
-      $match: {
-        createdAt: { $gte: query.from, $lte: query.to },
-        operation: 'chat',
-        model: 'approved-model',
-      },
-    });
-  });
-
   it('returns totals and breakdowns with explicit pricing and privacy metadata', async () => {
-    const toArray = vi.fn().mockResolvedValue([{
-      totals: [{
+    const totals = [{
         _id: null,
         requestCount: 2,
         completedRequests: 2,
@@ -179,22 +151,18 @@ describe('AI usage accounting', () => {
         totalTokens: 140,
         estimatedCostUsd: 0.002,
         costedRequests: 2,
-      }],
-      byModel: [],
-      byOperation: [],
-      byDay: [],
-    }]);
-    const db = {
-      collection: vi.fn(() => ({
-        aggregate: vi.fn(() => ({ toArray })),
-      })),
-    } as unknown as Db;
+      }];
+    const database = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: totals })
+        .mockResolvedValue({ rows: [] }),
+    } as unknown as PostgresStore;
     const query = {
       from: new Date('2026-07-01T00:00:00.000Z'),
       to: new Date('2026-07-15T00:00:00.000Z'),
     };
 
-    const summary = await getAiUsageSummary(query, db);
+    const summary = await getAiUsageSummary(query, database);
 
     expect(summary.totals).toMatchObject({
       requests: 2,
@@ -211,8 +179,7 @@ describe('AI usage accounting', () => {
   });
 
   it('reports unconfigured cost as null instead of falsely reporting zero cost', async () => {
-    const toArray = vi.fn().mockResolvedValue([{
-      totals: [{
+    const totals = [{
         _id: null,
         requestCount: 1,
         completedRequests: 1,
@@ -225,21 +192,17 @@ describe('AI usage accounting', () => {
         totalTokens: 120,
         estimatedCostUsd: 0,
         costedRequests: 0,
-      }],
-      byModel: [],
-      byOperation: [],
-      byDay: [],
-    }]);
-    const db = {
-      collection: vi.fn(() => ({
-        aggregate: vi.fn(() => ({ toArray })),
-      })),
-    } as unknown as Db;
+      }];
+    const database = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: totals })
+        .mockResolvedValue({ rows: [] }),
+    } as unknown as PostgresStore;
 
     const summary = await getAiUsageSummary({
       from: new Date('2026-07-01T00:00:00.000Z'),
       to: new Date('2026-07-15T00:00:00.000Z'),
-    }, db);
+    }, database);
 
     expect(summary.totals).toMatchObject({
       totalTokens: 120,

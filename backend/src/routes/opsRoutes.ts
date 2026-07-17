@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { Queue } from 'bullmq';
-import { getMongoDb, getRedis } from '../config/database';
+import { getDatabase, getRedis } from '../config/database';
 import {
   deriveOverallStatus,
   getOpsStatusColor,
@@ -67,25 +67,25 @@ function buildCheck(input: Omit<OpsCheck, 'color'>): OpsCheck {
   };
 }
 
-async function checkMongo(): Promise<OpsCheck> {
+async function checkPostgres(): Promise<OpsCheck> {
   const startedAt = Date.now();
   try {
-    await getMongoDb().command({ ping: 1 });
+    await getDatabase().ping();
     return buildCheck({
-      id: 'mongodb',
-      label: 'MongoDB',
+      id: 'postgresql',
+      label: 'OCI PostgreSQL',
       status: 'ok',
       detail: 'Connected and responding to ping.',
       latencyMs: measureDurationMs(startedAt),
       affectsOverall: true,
     });
   } catch (error) {
-    logError('ops.mongodb.error', { error });
+    logError('ops.postgresql.error', { error });
     return buildCheck({
-      id: 'mongodb',
-      label: 'MongoDB',
+      id: 'postgresql',
+      label: 'OCI PostgreSQL',
       status: 'error',
-      detail: error instanceof Error ? error.message : 'MongoDB ping failed.',
+      detail: error instanceof Error ? error.message : 'PostgreSQL ping failed.',
       latencyMs: measureDurationMs(startedAt),
       affectsOverall: true,
     });
@@ -283,8 +283,8 @@ async function getStorageSnapshot(id: string, label: string, dirPath: string): P
 
 export async function buildOpsStatus() {
   const uploadDir = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads');
-  const [mongo, redis, harQueueStatus, logQueueStatus, artifactStore, uploadsStorage] = await Promise.all([
-    checkMongo(),
+  const [postgres, redis, harQueueStatus, logQueueStatus, artifactStore, uploadsStorage] = await Promise.all([
+    checkPostgres(),
     checkRedis(),
     checkQueue('harQueue', 'HAR queue', HAR_QUEUE_NAME),
     checkQueue('logQueue', 'Console log queue', LOG_QUEUE_NAME),
@@ -293,7 +293,7 @@ export async function buildOpsStatus() {
   ]);
 
   const checks = [
-    mongo,
+    postgres,
     redis,
     harQueueStatus,
     logQueueStatus,

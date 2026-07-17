@@ -5,6 +5,8 @@
 > This runbook describes the legacy VM/VCAP deployment. Its OCA token-refresh
 > instructions are obsolete because OCA has been decommissioned. Use
 > `OPENAI_API_KEY`, `OPENAI_MODEL`, and the approved secret process instead.
+> New OCI GenAI Hosted deployments use OCI PostgreSQL, non-sharded OCI Cache
+> Redis 7, and OCI Object Storage; follow `docs/OCI_GENAI_HOSTED_DEPLOYMENT.md`.
 
 ## Stack Overview
 

@@ -1,60 +1,20 @@
-import { describe, expect, it, vi } from 'vitest';
-import { ensureMongoIndex } from './database';
+import { describe, expect, it } from 'vitest';
+import { POSTGRES_MIGRATIONS } from '../persistence/postgresMigrations';
 
-describe('ensureMongoIndex', () => {
-  it('skips creation when an equivalent unique index already exists under another name', async () => {
-    const collection = {
-      indexes: vi.fn().mockResolvedValue([
-        {
-          name: 'console_logs_fileId_index_unique',
-          key: { fileId: 1, index: 1 },
-          unique: true,
-        },
-      ]),
-      createIndex: vi.fn(),
-    };
-
-    await ensureMongoIndex(collection, { fileId: 1, index: 1 }, { unique: true });
-
-    expect(collection.indexes).toHaveBeenCalledTimes(1);
-    expect(collection.createIndex).not.toHaveBeenCalled();
+describe('PostgreSQL schema', () => {
+  it('defines durable file, entry, and usage tables', () => {
+    const sql = POSTGRES_MIGRATIONS.map((migration) => migration.sql).join('\n');
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS har_files');
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS har_entries');
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS console_log_files');
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS console_logs');
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS ai_usage_events');
   });
 
-  it('creates the index when no equivalent index exists', async () => {
-    const collection = {
-      indexes: vi.fn().mockResolvedValue([{ name: '_id_', key: { _id: 1 } }]),
-      createIndex: vi.fn().mockResolvedValue('fileId_1_index_1'),
-    };
-
-    await ensureMongoIndex(collection, { fileId: 1, index: 1 }, { unique: true });
-
-    expect(collection.createIndex).toHaveBeenCalledWith({ fileId: 1, index: 1 }, { unique: true });
-  });
-
-  it('creates the index when the collection does not exist yet', async () => {
-    const collection = {
-      indexes: vi.fn().mockRejectedValue(Object.assign(
-        new Error('ns does not exist: har-analyzer.ai_usage_events'),
-        { code: 26, codeName: 'NamespaceNotFound' },
-      )),
-      createIndex: vi.fn().mockResolvedValue('requestId_1'),
-    };
-
-    await expect(
-      ensureMongoIndex(collection, { requestId: 1 }, { unique: true }),
-    ).resolves.toBe('requestId_1');
-
-    expect(collection.createIndex).toHaveBeenCalledWith({ requestId: 1 }, { unique: true });
-  });
-
-  it('does not hide unrelated index lookup failures', async () => {
-    const failure = Object.assign(new Error('authentication failed'), { code: 13 });
-    const collection = {
-      indexes: vi.fn().mockRejectedValue(failure),
-      createIndex: vi.fn(),
-    };
-
-    await expect(ensureMongoIndex(collection, { requestId: 1 })).rejects.toBe(failure);
-    expect(collection.createIndex).not.toHaveBeenCalled();
+  it('enforces one parsed entry per file and index', () => {
+    const sql = POSTGRES_MIGRATIONS[0].sql;
+    expect(sql.match(/PRIMARY KEY \(file_id, entry_index\)/g)).toHaveLength(2);
+    expect(sql).toContain('REFERENCES har_files(file_id) ON DELETE CASCADE');
+    expect(sql).toContain('REFERENCES console_log_files(file_id) ON DELETE CASCADE');
   });
 });

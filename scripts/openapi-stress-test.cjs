@@ -5,11 +5,13 @@ const path = require('path');
 const { performance } = require('perf_hooks');
 
 const ROOT = path.resolve(__dirname, '..');
-const { MongoClient } = require(path.join(ROOT, 'backend', 'node_modules', 'mongodb'));
+const { Pool } = require(path.join(ROOT, 'backend', 'node_modules', 'pg'));
 const Redis = require(path.join(ROOT, 'backend', 'node_modules', 'ioredis'));
 
 const BASE_URL = process.env.STRESS_BASE_URL || process.env.OPENAPI_TEST_BASE_URL || 'http://localhost:4200';
-const MONGODB_URL = process.env.STRESS_MONGODB_URL || 'mongodb://localhost:27017/har-analyzer-stress-test';
+const DATABASE_URL = process.env.STRESS_DATABASE_URL
+  || process.env.DATABASE_URL
+  || 'postgresql://postgres:postgres@localhost:5432/har_analyzer';
 const REDIS_HOST = process.env.REDIS_HOST || 'localhost';
 const REDIS_PORT = Number.parseInt(process.env.REDIS_PORT || '6379', 10);
 const HAR_QUEUE_NAME = process.env.HAR_QUEUE_NAME || 'har-openapi-stress';
@@ -377,7 +379,7 @@ async function exerciseEndpoints(fileId, expectedEntries) {
   const detail = await request('GET', `/api/har/${fileId}/entries/0`);
   assert(detail.json.index === 0, 'entry detail index mismatch');
   if (getBodyBytesPerEntry() > HAR_STORAGE_TEXT_LIMIT_BYTES) {
-    assert(detail.json.storage?.truncatedFields?.includes('response.content.text'), 'large response body was not truncated in MongoDB');
+    assert(detail.json.storage?.truncatedFields?.includes('response.content.text'), 'large response body was not truncated in PostgreSQL');
     recordMs('HAR entry detail truncation', detail.ms);
   } else {
     assert(!detail.json.storage?.truncatedFields?.includes('response.content.text'), 'small response body was unexpectedly truncated');
@@ -386,15 +388,10 @@ async function exerciseEndpoints(fileId, expectedEntries) {
 }
 
 async function cleanup(fileId) {
-  const mongo = new MongoClient(MONGODB_URL);
+  const postgres = new Pool({ connectionString: DATABASE_URL });
   const redis = new Redis({ host: REDIS_HOST, port: REDIS_PORT, maxRetriesPerRequest: null, enableReadyCheck: false });
   try {
-    await mongo.connect();
-    const db = mongo.db();
-    await Promise.all([
-      db.collection('har_files').deleteMany({ fileId }),
-      db.collection('har_entries').deleteMany({ fileId }),
-    ]);
+    await postgres.query('DELETE FROM har_files WHERE file_id = $1', [fileId]);
 
     const patterns = [
       `file:${fileId}:metadata`,
@@ -422,7 +419,7 @@ async function cleanup(fileId) {
       }
     }
   } finally {
-    await mongo.close().catch(() => {});
+    await postgres.end().catch(() => {});
     await redis.quit().catch(() => {});
   }
 }

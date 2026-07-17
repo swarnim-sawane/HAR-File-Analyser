@@ -19,7 +19,7 @@ function truncateTextForStorage(value: unknown): { value: unknown; truncated: bo
     return { value, truncated: false };
   }
 
-  const suffix = '\n[truncated for MongoDB storage; original body remains in the processed HAR file]';
+  const suffix = '\n[truncated for database storage; original body remains in the processed HAR file]';
   let end = Math.min(value.length, HAR_STORAGE_TEXT_LIMIT_BYTES);
   let truncated = value.slice(0, end);
 

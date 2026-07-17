@@ -4,7 +4,7 @@ import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
 import { Queue } from 'bullmq';
-import { getMongoDb, getRedis } from '../config/database';
+import { getDatabase, getRedis } from '../config/database';
 import { HAR_QUEUE_NAME } from '../config/queueNames';
 import { sanitize, getHarInfo, defaultScrubItems } from '../utils/har_sanitize';
 import { isSafeUploadFileId } from '../utils/uploadValidation';
@@ -55,10 +55,7 @@ async function findLegacyFile(fileId: string): Promise<StoredHarRecord | null> {
 }
 
 async function getStoredHarRecord(fileId: string): Promise<StoredHarRecord | null> {
-  const fileDocument = await getMongoDb().collection('har_files').findOne(
-    { fileId },
-    { projection: { fileName: 1, artifactKey: 1, filePath: 1 } },
-  ) as StoredHarRecord | null;
+  const fileDocument = await getDatabase().getFile('har', fileId) as StoredHarRecord | null;
   if (fileDocument?.artifactKey || fileDocument?.filePath) return fileDocument;
 
   const metadataRaw = await redis.get(`file:${fileId}:metadata`);
@@ -79,6 +76,10 @@ async function materializeStoredHar(fileId: string): Promise<MaterializedHar | n
     const destination = path.join(SANITIZE_SCRATCH_DIR, fileId, fileName);
     const materialized = await materializeArtifact(artifactStore, record.artifactKey, destination);
     return { ...materialized, fileName };
+  }
+
+  if (process.env.HOSTED_DEPLOYMENT === 'true') {
+    throw new Error('Hosted sanitization requires an Object Storage artifact key.');
   }
 
   if (!record.filePath || !isInsideDirectory(record.filePath, PROCESSED_DIR)) {
@@ -164,6 +165,18 @@ router.post('/:fileId', async (req: Request, res: Response) => {
       86400,
       JSON.stringify(metadata),
     );
+    await getDatabase().upsertFile('har', {
+      fileId: sanitizedFileId,
+      fileName: sanitizedFileName,
+      artifactKey,
+      fileSize: stats.size,
+      hash,
+      totalEntries: 0,
+      stats: {},
+      uploadedAt,
+      processedAt: null,
+      status: 'processing',
+    });
 
     const job = await harQueue.add('process_file', {
       fileId: sanitizedFileId,
@@ -177,6 +190,8 @@ router.post('/:fileId', async (req: Request, res: Response) => {
       jobId: sanitizedFileId,
       attempts: 3,
       backoff: { type: 'exponential', delay: 2000 },
+      removeOnComplete: { count: 1000 },
+      removeOnFail: { count: 1000 },
     });
 
     metadata.jobId = String(job.id);

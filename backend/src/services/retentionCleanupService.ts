@@ -1,8 +1,8 @@
 import { promises as fs } from 'fs';
 import path from 'path';
-import type { Db } from 'mongodb';
 import type Redis from 'ioredis';
 import type { ArtifactStore } from './artifactStore';
+import type { PostgresStore } from '../persistence/postgresStore';
 
 export interface RetentionCleanupConfig {
   enabled: boolean;
@@ -19,7 +19,7 @@ interface RetentionFileDoc {
 }
 
 export interface RetentionCleanupOptions {
-  db: Db;
+  database: PostgresStore;
   redis: Redis;
   artifactStore?: ArtifactStore;
   uploadDir: string;
@@ -160,16 +160,10 @@ export async function cleanupExpiredAnalysisData(
   const dryRun = options.dryRun === true;
   const allowedFileDirs = [options.processedDir, options.uploadDir];
 
-  const harFiles = await options.db
-    .collection<RetentionFileDoc>('har_files')
-    .find({ uploadedAt: { $lt: cutoff } })
-    .project({ fileId: 1, fileName: 1, filePath: 1, artifactKey: 1 })
-    .toArray() as RetentionFileDoc[];
-  const consoleLogFiles = await options.db
-    .collection<RetentionFileDoc>('console_log_files')
-    .find({ uploadedAt: { $lt: cutoff } })
-    .project({ fileId: 1, fileName: 1, filePath: 1, artifactKey: 1 })
-    .toArray() as RetentionFileDoc[];
+  const [harFiles, consoleLogFiles] = await Promise.all([
+    options.database.findExpiredFiles('har', cutoff),
+    options.database.findExpiredFiles('console', cutoff),
+  ]);
 
   const harFileIds = harFiles.map((file) => file.fileId);
   const consoleLogFileIds = consoleLogFiles.map((file) => file.fileId);
@@ -194,35 +188,26 @@ export async function cleanupExpiredAnalysisData(
   );
   const redisKeys = await deleteRedisKeys(options.redis, allFileIds, dryRun);
 
-  let harEntries = 0;
-  let consoleLogEntries = 0;
-  if (!dryRun) {
-    const [harEntryResult, consoleEntryResult] = await Promise.all([
+  let harEntries: number;
+  let consoleLogEntries: number;
+  if (dryRun) {
+    const [harCount, consoleCount] = await Promise.all([
       harFileIds.length
-        ? options.db.collection('har_entries').deleteMany({ fileId: { $in: harFileIds } })
-        : Promise.resolve({ deletedCount: 0 }),
+        ? options.database.query<{ count: string }>('SELECT COUNT(*)::bigint AS count FROM har_entries WHERE file_id = ANY($1::text[])', [harFileIds])
+        : Promise.resolve({ rows: [{ count: '0' }] }),
       consoleLogFileIds.length
-        ? options.db.collection('console_logs').deleteMany({ fileId: { $in: consoleLogFileIds } })
-        : Promise.resolve({ deletedCount: 0 }),
+        ? options.database.query<{ count: string }>('SELECT COUNT(*)::bigint AS count FROM console_logs WHERE file_id = ANY($1::text[])', [consoleLogFileIds])
+        : Promise.resolve({ rows: [{ count: '0' }] }),
     ]);
-    harEntries = harEntryResult.deletedCount ?? 0;
-    consoleLogEntries = consoleEntryResult.deletedCount ?? 0;
-
-    await Promise.all([
-      harFileIds.length
-        ? options.db.collection('har_files').deleteMany({ fileId: { $in: harFileIds } })
-        : Promise.resolve({ deletedCount: 0 }),
-      consoleLogFileIds.length
-        ? options.db.collection('console_log_files').deleteMany({ fileId: { $in: consoleLogFileIds } })
-        : Promise.resolve({ deletedCount: 0 }),
-    ]);
+    harEntries = Number(harCount.rows[0]?.count ?? 0);
+    consoleLogEntries = Number(consoleCount.rows[0]?.count ?? 0);
   } else {
-    harEntries = await (harFileIds.length
-      ? options.db.collection('har_entries').countDocuments({ fileId: { $in: harFileIds } })
-      : Promise.resolve(0));
-    consoleLogEntries = await (consoleLogFileIds.length
-      ? options.db.collection('console_logs').countDocuments({ fileId: { $in: consoleLogFileIds } })
-      : Promise.resolve(0));
+    const [harDeleted, consoleDeleted] = await Promise.all([
+      options.database.deleteFiles('har', harFileIds),
+      options.database.deleteFiles('console', consoleLogFileIds),
+    ]);
+    harEntries = harDeleted.entries;
+    consoleLogEntries = consoleDeleted.entries;
   }
 
   return {

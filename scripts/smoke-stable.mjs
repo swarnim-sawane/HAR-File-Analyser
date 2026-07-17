@@ -292,7 +292,7 @@ try {
 } catch (error) {
   console.error('\nStable smoke test failed.');
   console.error(error instanceof Error ? error.message : error);
-  console.error('Tip: ensure MongoDB, Redis, and Qdrant are running, for example via `docker compose -f backend/docker-compose.yml up -d`.');
+  console.error('Tip: ensure PostgreSQL and Redis are running, for example via `docker compose -f backend/docker-compose.yml up -d postgres redis`.');
   process.exitCode = 1;
 } finally {
   if (!keepProcesses) {

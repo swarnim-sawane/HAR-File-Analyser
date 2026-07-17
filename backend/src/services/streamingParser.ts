@@ -178,7 +178,7 @@ export async function streamParseHar(
         // Yield to event loop every 1000 entries.
         // The original value of 100 caused ~500 forced context-switches for a
         // 50 000-entry file. On a VM where the event loop is shared with Redis,
-        // MongoDB, and Ollama, each setImmediate pause is measurably costly.
+        // Database and AI calls make each setImmediate pause measurably costly.
         if (entryIndex % 1000 === 0) {
           await new Promise(resolve => setImmediate(resolve));
         }

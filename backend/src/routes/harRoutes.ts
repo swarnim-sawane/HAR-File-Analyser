@@ -2,15 +2,10 @@ import express, { Request, Response } from 'express';
 import { createReadStream } from 'fs';
 import { createGzip } from 'zlib';
 import path from 'path';
-import { getMongoDb } from '../config/database';
-import { getRedis } from '../config/database';
+import { getDatabase, getRedis } from '../config/database';
 import { getArtifactStore } from '../services/artifactStore';
 
 const router = express.Router();
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 function parsePositiveInt(value: unknown, fallback: number, max?: number): number {
   const parsed = typeof value === 'string' && /^\d+$/.test(value)
@@ -34,15 +29,15 @@ function parseNonNegativeInt(value: unknown): number | null {
  * GET /api/har/:fileId
  *
  * Supports immediate read-after-upload by reading assembled file from disk
- * when Mongo metadata is not ready yet.
+ * when PostgreSQL metadata is not ready yet.
  */
 router.get('/:fileId', async (req: Request, res: Response) => {
   try {
     const { fileId } = req.params;
-    const db = getMongoDb();
+    const db = getDatabase();
     const redis = getRedis();
 
-    const fileDoc = await db.collection('har_files').findOne({ fileId });
+    const fileDoc = await db.getFile('har', fileId);
 
     const processedDir = path.resolve(
       process.env.PROCESSED_DIR || path.join(process.cwd(), 'processed')
@@ -52,6 +47,10 @@ router.get('/:fileId', async (req: Request, res: Response) => {
       ? fileDoc.artifactKey
       : null;
     let filePath: string | null = null;
+
+    if (process.env.HOSTED_DEPLOYMENT === 'true' && fileDoc?.filePath && !artifactKey) {
+      return res.status(409).json({ error: 'Legacy local file records must be migrated to Object Storage.' });
+    }
 
     if (!artifactKey && fileDoc?.filePath) {
       filePath = fileDoc.filePath as string;
@@ -70,6 +69,9 @@ router.get('/:fileId', async (req: Request, res: Response) => {
       }
 
       if (!artifactKey) {
+        if (process.env.HOSTED_DEPLOYMENT === 'true') {
+          return res.status(409).json({ error: 'Hosted file metadata is missing an Object Storage artifact key.' });
+        }
         const safeFileName = path.basename(metadata.fileName);
         filePath = path.join(processedDir, `${fileId}_${safeFileName}`);
       }
@@ -130,19 +132,11 @@ router.get('/:fileId/entries', async (req: Request, res: Response) => {
     const limit = parsePositiveInt(req.query.limit, 100, 1000);
     const skip = (page - 1) * limit;
 
-    const db = getMongoDb();
-    const entriesCollection = db.collection('har_entries');
-
-    // Get paginated entries
-    const entries = await entriesCollection
-      .find({ fileId })
-      .sort({ index: 1 })
-      .skip(skip)
-      .limit(limit)
-      .toArray();
-
-    // Get total count for pagination info
-    const totalEntries = await entriesCollection.countDocuments({ fileId });
+    const db = getDatabase();
+    const [entries, totalEntries] = await Promise.all([
+      db.listHarEntries(fileId, { offset: skip, limit }),
+      db.countHarEntries(fileId),
+    ]);
     const totalPages = Math.ceil(totalEntries / limit);
 
     res.json({
@@ -173,10 +167,7 @@ router.get('/:fileId/entries/:index', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Invalid entry index' });
     }
 
-    const db = getMongoDb();
-    const entriesCollection = db.collection('har_entries');
-
-    const entry = await entriesCollection.findOne({ fileId, index: entryIndex });
+    const entry = await getDatabase().getHarEntry(fileId, entryIndex);
 
     if (!entry) {
       return res.status(404).json({ error: 'Entry not found' });
@@ -196,9 +187,7 @@ router.get('/:fileId/entries/:index', async (req: Request, res: Response) => {
 router.get('/:fileId/stats', async (req: Request, res: Response) => {
   try {
     const { fileId } = req.params;
-    const db = getMongoDb();
-
-    const file = await db.collection('har_files').findOne({ fileId });
+    const file = await getDatabase().getFile('har', fileId);
     
     if (!file) {
       return res.status(404).json({ error: 'File not found' });
@@ -218,10 +207,10 @@ router.get('/:fileId/stats', async (req: Request, res: Response) => {
 router.get('/:fileId/status', async (req: Request, res: Response) => {
   try {
     const { fileId } = req.params;
-    const db = getMongoDb();
+    const db = getDatabase();
     const redis = getRedis();
 
-    const file = await db.collection('har_files').findOne({ fileId });
+    const file = await db.getFile('har', fileId);
 
     if (file) {
       return res.json({
@@ -266,39 +255,23 @@ router.get('/:fileId/search', async (req: Request, res: Response) => {
     const limit = parsePositiveInt(req.query.limit, 100, 1000);
     const skip = (page - 1) * limit;
 
-    const db = getMongoDb();
-    const entriesCollection = db.collection('har_entries');
-
-    // Build filter query
-    const filter: any = { fileId };
-    
-    if (method) {
-      filter['request.method'] = method;
-    }
+    const db = getDatabase();
+    const filter: Parameters<typeof db.listHarEntries>[2] = {};
+    if (method) filter.method = String(method);
     if (status) {
       const parsedStatus = parseNonNegativeInt(String(status));
       if (parsedStatus === null) {
         return res.status(400).json({ error: 'Invalid status' });
       }
-      filter['response.status'] = parsedStatus;
+      filter.status = parsedStatus;
     }
-    if (domain) {
-      filter['request.url'] = { $regex: escapeRegExp(String(domain)), $options: 'i' };
-    }
-    if (contentType) {
-      filter['response.content.mimeType'] = { $regex: escapeRegExp(String(contentType)), $options: 'i' };
-    }
+    if (domain) filter.domain = String(domain);
+    if (contentType) filter.contentType = String(contentType);
 
-    // Get filtered entries
-    const entries = await entriesCollection
-      .find(filter)
-      .sort({ index: 1 })
-      .skip(skip)
-      .limit(limit)
-      .toArray();
-
-    // Get total count
-    const totalEntries = await entriesCollection.countDocuments(filter);
+    const [entries, totalEntries] = await Promise.all([
+      db.listHarEntries(fileId, { offset: skip, limit }, filter),
+      db.countHarEntries(fileId, filter),
+    ]);
     const totalPages = Math.ceil(totalEntries / limit);
 
     res.json({

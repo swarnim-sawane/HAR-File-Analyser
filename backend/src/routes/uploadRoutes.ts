@@ -5,7 +5,7 @@ import { createGunzip } from 'zlib';
 import path from 'path';
 import crypto from 'crypto';
 import { once } from 'events';
-import { getRedis } from '../config/database';
+import { getDatabase, getRedis } from '../config/database';
 import { Queue } from 'bullmq';
 import { HAR_QUEUE_NAME, LOG_QUEUE_NAME } from '../config/queueNames';
 import { publishGlobal } from '../utils/socketHelper';
@@ -364,6 +364,18 @@ router.post('/complete', async (req: Request, res: Response) => {
 
     // Publish metadata before making the job visible to workers.
     await redis.setex(`file:${fileId}:metadata`, 86400, JSON.stringify(metadata));
+    await getDatabase().upsertFile(fileType === 'har' ? 'har' : 'console', {
+      fileId,
+      fileName: safeFileName,
+      artifactKey,
+      fileSize: stats.size,
+      hash,
+      totalEntries: 0,
+      stats: {},
+      uploadedAt,
+      processedAt: null,
+      status: 'processing',
+    });
 
     const queue = fileType === 'har' ? harQueue : logQueue;
     const job = await queue.add('process_file', {
@@ -380,7 +392,9 @@ router.post('/complete', async (req: Request, res: Response) => {
       backoff: {
         type: 'exponential',
         delay: 2000
-      }
+      },
+      removeOnComplete: { count: 1000 },
+      removeOnFail: { count: 1000 },
     });
 
     metadata.jobId = String(job.id);

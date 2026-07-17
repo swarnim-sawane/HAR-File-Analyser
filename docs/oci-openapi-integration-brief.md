@@ -65,7 +65,7 @@ POST /api/v1/har/{fileId}/insights
 - Required outputs: summary, failed requests, AI insights, scorecard, raw entries, or all of these
 - Logging, retention, and data handling expectations for customer diagnostic files
 - Retention policy values: `RETENTION_MAX_AGE_HOURS`, cleanup interval, and dry-run validation process
-- OCI sizing validation: disk, MongoDB storage, backend cluster count, worker count, and queue concurrency under realistic customer HAR volumes
+- OCI sizing validation: Object Storage, PostgreSQL storage/connections, backend replica count, worker count, and queue concurrency under realistic customer HAR volumes
 
 ## Recommended Positioning
 

@@ -105,7 +105,7 @@ describe('GET /api/ops/ai-usage', () => {
     });
   });
 
-  it('rejects unsupported operations before querying MongoDB', async () => {
+  it('rejects unsupported operations before querying persistence', async () => {
     await withServer(async (baseUrl) => {
       const response = await fetch(`${baseUrl}/api/ops/ai-usage?operation=%24where`);
 

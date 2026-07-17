@@ -1,5 +1,5 @@
 import { Queue } from 'bullmq';
-import { getRedis, getMongoDb } from '../config/database';
+import { getDatabase, getRedis } from '../config/database';
 import { LOG_QUEUE_NAME } from '../config/queueNames';
 import { streamParseConsoleLog, ParsedLogEntry } from '../services/streamingParser';
 import { publishToFile } from '../utils/socketHelper';
@@ -54,6 +54,10 @@ export async function processConsoleLog(data: LogJobData): Promise<void> {
     // Update status
     await updateFileStatus(fileId, 'parsing');
 
+    if (process.env.HOSTED_DEPLOYMENT === 'true' && !data.artifactKey) {
+      throw new Error('Hosted console-log jobs require artifactKey; local filePath jobs are not supported.');
+    }
+
     let processingPath = data.filePath;
     if (data.artifactKey) {
       const destination = path.join(
@@ -82,10 +86,21 @@ export async function processConsoleLog(data: LogJobData): Promise<void> {
       infos: 0
     };
 
-    // Step 1: Parse log file and store entries in MongoDB
-    const db = getMongoDb();
-    const logsCollection = db.collection('console_logs');
-    await logsCollection.deleteMany({ fileId });
+    // Step 1: Parse the log file and store indexed JSONB entries in PostgreSQL.
+    const db = getDatabase();
+    await db.upsertFile('console', {
+      fileId,
+      fileName,
+      ...(data.artifactKey ? { artifactKey: data.artifactKey } : { filePath: data.filePath }),
+      fileSize,
+      hash: data.hash,
+      totalEntries: 0,
+      stats: {},
+      uploadedAt: new Date(data.uploadedAt),
+      processedAt: null,
+      status: 'processing',
+    });
+    await db.deleteConsoleEntries(fileId);
     let batchBuffer: ParsedLogEntry[] = [];
     const BATCH_SIZE = 1000;
     let totalEntries = 0;
@@ -108,7 +123,7 @@ export async function processConsoleLog(data: LogJobData): Promise<void> {
           createdAt: new Date()
         }));
 
-        await logsCollection.insertMany(toInsert, { ordered: false });
+        await db.insertConsoleEntries(fileId, toInsert);
         batchBuffer = [];
 
         // ✅ FIXED: Progress based on estimated bytes read vs total file size.
@@ -137,7 +152,7 @@ export async function processConsoleLog(data: LogJobData): Promise<void> {
         fileId,
         createdAt: new Date()
       }));
-      await logsCollection.insertMany(toInsert, { ordered: false });
+      await db.insertConsoleEntries(fileId, toInsert);
       batchBuffer = []; // Clear buffer
     }
 
@@ -153,8 +168,8 @@ export async function processConsoleLog(data: LogJobData): Promise<void> {
     await redis.setex(`log_stats:${fileId}`, 86400, JSON.stringify(stats));
     await emitProgress(fileId, 'analyzing', 90);
 
-    // Step 3: Store file metadata in MongoDB
-    await db.collection('console_log_files').replaceOne({ fileId }, {
+    // Step 3: Store final file metadata in PostgreSQL.
+    await db.upsertFile('console', {
       fileId,
       fileName,
       ...(data.artifactKey ? { artifactKey: data.artifactKey } : { filePath: data.filePath }),
@@ -165,7 +180,7 @@ export async function processConsoleLog(data: LogJobData): Promise<void> {
       uploadedAt: new Date(data.uploadedAt),
       processedAt: new Date(),
       status: 'ready'
-    }, { upsert: true });
+    });
 
     // Update status to ready
     await updateFileStatus(fileId, 'ready', {

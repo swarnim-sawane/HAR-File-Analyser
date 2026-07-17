@@ -4,7 +4,7 @@ import path from 'path';
 import cors from 'cors';
 import { Server as SocketIOServer } from 'socket.io';
 import dotenv from 'dotenv';
-import { connectDatabases, closeDatabases, getMongoDb, getRedis } from './config/database';
+import { connectDatabases, closeDatabases, getDatabase, getRedis } from './config/database';
 import { configureOutboundProxy } from './config/outboundProxy';
 import { buildAllowedOrigins, isOriginAllowed } from './config/corsOrigins';
 import { setSocketIOInstance } from './utils/socketHelper';
@@ -164,7 +164,7 @@ io.on('connection', (socket) => {
 /**
  * Set up Redis subscriber using old Redis client (v3.x)
  */
-function setupRedisSubscriber(io: SocketIOServer) {
+async function setupRedisSubscriber(io: SocketIOServer) {
   const redis = getRedis();
   const subscriber = redis.duplicate();
 
@@ -202,9 +202,13 @@ function setupRedisSubscriber(io: SocketIOServer) {
       console.error('❌ Failed to parse Redis message:', err);
     }
   });
+  subscriber.on('error', (error: Error) => {
+    console.error('Redis subscriber error:', error);
+  });
 
   // ✅ OLD CLIENT: Subscribe without callback
-  subscriber.subscribe('socket:events');
+  await subscriber.connect();
+  await subscriber.subscribe('socket:events');
   console.log('✅ Subscribed to Redis socket:events channel');
 
   return subscriber;
@@ -223,7 +227,7 @@ function setupRetentionCleanup(): NodeJS.Timeout | null {
   const runCleanup = async () => {
     try {
       const result = await cleanupExpiredAnalysisData({
-        db: getMongoDb(),
+        database: getDatabase(),
         redis: getRedis(),
         artifactStore: getArtifactStore(),
         uploadDir,
@@ -250,6 +254,7 @@ async function initializeApplication() {
 
     // 1. Connect to databases FIRST
     await connectDatabases();
+    await getArtifactStore().probe();
     console.log('');
 
     // 2. Set up Redis subscriber for worker events

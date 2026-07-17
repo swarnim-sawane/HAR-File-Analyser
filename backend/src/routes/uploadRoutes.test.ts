@@ -12,9 +12,11 @@ const testState = vi.hoisted(() => {
   const sets = new Map<string, Set<string>>();
   const values = new Map<string, string>();
   const add = vi.fn(async () => ({ id: 'job-1' }));
+  const upsertFile = vi.fn(async () => undefined);
 
   return {
     add,
+    upsertFile,
     sets,
     values,
     redis: {
@@ -45,7 +47,10 @@ const testState = vi.hoisted(() => {
   };
 });
 
-vi.mock('../config/database', () => ({ getRedis: () => testState.redis }));
+vi.mock('../config/database', () => ({
+  getRedis: () => testState.redis,
+  getDatabase: () => ({ upsertFile: testState.upsertFile }),
+}));
 vi.mock('bullmq', () => ({
   Queue: class {
     add = testState.add;
@@ -70,6 +75,7 @@ async function startServer(): Promise<string> {
 beforeEach(async () => {
   vi.resetModules();
   testState.add.mockClear();
+  testState.upsertFile.mockClear();
   testState.sets.clear();
   testState.values.clear();
   temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'har-upload-route-'));

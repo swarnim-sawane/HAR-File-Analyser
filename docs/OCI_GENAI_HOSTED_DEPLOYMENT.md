@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines the deployment contract for running HAR Analyzer in the OCI GenAI Hosted Deployment environment. The application retains MongoDB and Redis, uses OCI Object Storage for uploaded artifacts, and uses an approved OpenAI API key for optional AI-assisted analysis.
+This document defines the deployment contract for running HAR Analyzer in the OCI GenAI Hosted Deployment environment. The application uses OCI PostgreSQL for durable relational/JSON data, a non-sharded OCI Cache Redis 7 deployment for queues and events, OCI Object Storage for uploaded artifacts, and an approved OpenAI API key for optional AI-assisted analysis.
 
 ## Deployment Status
 
@@ -10,31 +10,31 @@ This document defines the deployment contract for running HAR Analyzer in the OC
 | --- | --- | --- |
 | Web/API runtime | Ready: combined frontend and API image listens on `0.0.0.0:8080` | Hosted Application, OAuth, DNS, and OCIR configuration |
 | Worker runtime | Ready: worker image exposes health endpoints on `0.0.0.0:8080` | Separate Hosted Application or worker deployment |
-| MongoDB | Supported and required | Approved reachable MongoDB connection string |
-| Redis | Supports `REDIS_URL`, TLS, username, and password | OCI Cache Redis connection URI |
+| PostgreSQL | Native schema, migrations, JSONB repositories, paging, retention, and AI usage storage implemented and tested locally | OCI PostgreSQL endpoint, database, credentials, CA chain, and schema-creation permission |
+| Redis | Supports `REDIS_URL`, TLS, username, password, and separate API/worker retry behavior | Non-sharded OCI Cache Redis 7 TLS connection URI |
 | File storage | OCI Object Storage adapter implemented | Namespace, bucket, resource-principal IAM policy, and lifecycle policy |
 | AI | OpenAI Responses API and persistent token/cost accounting implemented; deterministic fallback retained | GCGA-approved key injected as a secret and outbound HTTPS access |
-| Image build | Reproducible Dockerfiles, OCI DevOps build spec, and Rancher Desktop scripts included; application builds pass | OCI DevOps Managed Build and destination OCIR repositories |
+| Image build | Reproducible Dockerfiles, OCI DevOps build spec, and Rancher Desktop scripts included | Direct OCIR publication is approved until the team-owned DevOps pipeline is available |
 
 ## Relationship to the OCI Container Instance POC
 
-The June 2026 OCI Container Instance deployment remains the proof that the web, API, worker, MongoDB, and Redis application flow works in OCI. It is not the final Hosted Deployment topology.
+The June 2026 OCI Container Instance deployment remains historical proof that the web, API, worker, MongoDB, and Redis application flow worked in OCI. It is not the final Hosted Deployment topology and its dependency containers are not production artifacts.
 
 | Validated Container Instance POC | GenAI Hosted Deployment replacement |
 | --- | --- |
 | `har-web` nginx container on port 80 | React assets served by the `har-analyzer-app` Express container on port 8080 |
 | `har-api` container on port 4000 | `har-analyzer-app` Hosted Application on `0.0.0.0:8080` |
 | `har-worker` shared the instance network and workspace | Separate `har-analyzer-worker` Hosted Application on `0.0.0.0:8080` |
-| MongoDB sidecar on `localhost:27017` | Approved MongoDB service reachable from both Hosted Applications |
-| Redis sidecar on `localhost:6379` | OCI Cache Redis URI reachable from both Hosted Applications |
+| MongoDB sidecar on `localhost:27017` | OCI PostgreSQL private endpoint reachable from both Hosted Applications |
+| Redis sidecar on `localhost:6379` | Non-sharded OCI Cache Redis 7 private endpoint reachable from both Hosted Applications |
 | Shared `/workspace` upload and processed directories | OCI Object Storage for durable/cross-container artifacts; `/tmp` for disposable scratch only |
 | Public IP and nginx reverse proxy | Hosted Application endpoint protected by the selected OAuth or IAM authentication path |
 
-Do not copy the old five-container configuration into Hosted Deployment. In particular, do not deploy MongoDB or Redis sidecars, configure `localhost` database endpoints, mount a shared volume, or reuse ports 80, 3000, or 4000.
+Do not copy the old five-container configuration into Hosted Deployment. In particular, do not deploy database or Redis sidecars, configure `localhost` service endpoints, mount a shared volume, or reuse ports 80, 3000, or 4000.
 
 ## Repository Validation
 
-Validated on 2026-07-16 and promoted to `main` from release-candidate branch `codex/ai-usage-accounting`:
+The last release baseline was validated on 2026-07-16. The PostgreSQL migration is being validated on branch `codex/oci-postgres-hosted-migration` before promotion to `main`:
 
 - Backend: 25 test files and 131 tests passed.
 - Frontend: 36 test files and 285 tests passed.
@@ -42,7 +42,8 @@ Validated on 2026-07-16 and promoted to `main` from release-candidate branch `co
 - Backend TypeScript build passed.
 - Frontend TypeScript and Vite production build passed.
 - Legacy OCA, browser-side AI, local-model, and unused vector retrieval runtime paths were removed.
-- OpenAI token accounting, model/operation breakdowns, and estimated-cost reporting are persisted in MongoDB without prompts, responses, HAR content, or API keys.
+- OpenAI token accounting, model/operation breakdowns, and estimated-cost reporting are persisted in PostgreSQL without prompts, responses, HAR content, or API keys.
+- PostgreSQL migrations and repository behavior were exercised against a live PostgreSQL 15 instance, including HAR/console filtering, facets, and cascading cleanup.
 - Git whitespace validation passed.
 
 The local Hosted Deployment image rehearsal was repeated on 2026-07-16. Rancher Desktop is healthy, but the corporate network refused HTTPS connections to both `container-registry.oracle.com` and `container-registry-bom.oracle.com` while resolving Oracle Linux 9 slim. No release image was built or pushed. Use the OCI DevOps Managed Build path below or provide an approved internal mirror before creating a Hosted Deployment artifact.
@@ -55,12 +56,12 @@ Public Docker Hub images are prohibited. The Dockerfiles have no public-registry
 flowchart LR
     User["Internal user"] --> OAuth["Hosted Deployment OAuth"]
     OAuth --> App["har-analyzer-app\nReact + Express\n0.0.0.0:8080"]
-    App <--> Redis["OCI Cache Redis\nBullMQ, progress, pub/sub"]
-    App <--> Mongo["MongoDB\nmetadata and parsed entries"]
+    App <--> Redis["OCI Cache Redis 7 (non-sharded)\nBullMQ, progress, pub/sub"]
+    App <--> Postgres["OCI PostgreSQL\nmetadata, JSONB entries, AI usage"]
     App <--> ObjectStorage["OCI Object Storage\nchunks and source artifacts"]
     App --> OpenAI["Approved OpenAI endpoint\nResponses API"]
     Redis --> Worker["har-analyzer-worker\nBullMQ + health server\n0.0.0.0:8080"]
-    Worker <--> Mongo
+    Worker <--> Postgres
     Worker <--> ObjectStorage
     Worker --> Redis
 ```
@@ -102,7 +103,7 @@ sequenceDiagram
     participant ObjectStorage as OCI Object Storage
     participant Redis
     participant Worker
-    participant MongoDB
+    participant PostgreSQL
 
     Browser->>API: Upload chunk
     API->>ObjectStorage: PUT tmp/{fileId}/chunks/{index}
@@ -113,7 +114,7 @@ sequenceDiagram
     API->>ObjectStorage: PUT artifacts/{fileId}/source
     API->>Redis: Enqueue job containing artifactKey
     Worker->>ObjectStorage: Stream artifact to worker /tmp
-    Worker->>MongoDB: Store metadata and parsed entries
+    Worker->>PostgreSQL: Store metadata and parsed entries
     Worker->>Redis: Publish progress and completion
     Worker->>Worker: Delete local /tmp materialization
 ```
@@ -129,15 +130,20 @@ Only disposable scratch files are written locally. The images set `HOME`, `TMPDI
 | `NODE_ENV` | `production` | Yes |
 | `HOSTED_DEPLOYMENT` | `true` | Yes |
 | `HOST` | `0.0.0.0` | Recommended; also the code default |
-| `MONGODB_URL` | Secret containing the approved MongoDB URI | Yes |
-| `REDIS_URL` | Secret containing the OCI Cache `redis://` or `rediss://` URI | Yes |
+| `DATABASE_URL` | Secret containing the OCI PostgreSQL connection URI | Yes |
+| `POSTGRES_SSL_MODE` | `verify-full` | Yes |
+| `POSTGRES_SSL_CA`, `POSTGRES_SSL_CA_BASE64`, or `POSTGRES_SSL_CA_FILE` | Approved OCI PostgreSQL CA chain using one injection method | Yes when the endpoint chain is not already trusted by the image |
+| `POSTGRES_POOL_MAX` | Start with `20` per process, then tune against the service connection limit | Recommended |
+| `REDIS_URL` | Secret containing the OCI Cache `rediss://` URI | Yes |
 | `ARTIFACT_STORE` | `oci-object-storage` | Yes |
 | `OCI_OBJECT_STORAGE_NAMESPACE` | OCI Object Storage namespace | Yes |
 | `OCI_OBJECT_STORAGE_BUCKET` | Dedicated bucket name | Yes |
 | `OCI_OBJECT_STORAGE_PREFIX` | `har-analyzer` | Recommended |
 | `OCI_AUTH_MODE` | `resource-principal` | Yes in Hosted Deployment |
 
-Do not set `REDIS_HOST`, `REDIS_PORT`, `REDIS_USERNAME`, `REDIS_PASSWORD`, or `REDIS_TLS` when a complete `REDIS_URL` is supplied.
+Hosted startup rejects disabled PostgreSQL TLS and plaintext Redis. Do not set `REDIS_HOST`, `REDIS_PORT`, `REDIS_USERNAME`, `REDIS_PASSWORD`, or `REDIS_TLS` when a complete `REDIS_URL` is supplied. Use a non-sharded OCI Cache Redis 7 deployment because BullMQ requires Lua scripting commands that are unavailable on OCI Cache sharded deployments.
+
+Both runtimes run the same idempotent PostgreSQL migrations at startup under an advisory lock. The configured database user therefore needs permission to create/alter tables and indexes for initial deployment, or the platform team must run the migrations separately using an approved schema-owner workflow before assigning a narrower runtime user.
 
 ### Application only
 
@@ -195,6 +201,17 @@ Allow dynamic-group <har-analyzer-runtime-group> to manage objects in compartmen
 
 Configure an Object Storage lifecycle rule for stale objects under `har-analyzer/tmp/`. Application retention cleanup removes normal artifacts and stale chunks, while the bucket lifecycle rule provides a recovery control for interrupted uploads.
 
+## OCI Networking
+
+Use **Custom (user-managed)** networking with a VCN and subnet that can resolve and reach the private OCI PostgreSQL and OCI Cache endpoints. The Hosted Application endpoint may be **Public** for the initial controlled test, as directed by the platform team, and changed to Private later. Endpoint visibility controls inbound traffic; it does not provide outbound access to private database/cache endpoints.
+
+The selected subnet and security rules must permit:
+
+- TLS from both runtimes to OCI PostgreSQL.
+- TLS from both runtimes to non-sharded OCI Cache Redis 7.
+- OCI service access to Object Storage through the approved service gateway or platform path.
+- Approved outbound HTTPS from the application runtime to `api.openai.com` when AI is enabled.
+
 ## Build with Rancher Desktop
 
 Run from the repository root:
@@ -230,9 +247,9 @@ powershell -ExecutionPolicy Bypass -File scripts/build-hosted-node-base.ps1 `
 
 If both Oracle endpoints are blocked, mirror `container-registry.oracle.com/os/oraclelinux:9-slim` into the approved internal Artifactory or OCIR from an OCI DevOps build runner and pass that mirror URI through `-OracleLinuxImage`.
 
-### OCI DevOps Managed Build (current required path)
+### OCI DevOps Managed Build (future managed path)
 
-Use `deploy/hosted/build_spec.yaml` because the corporate network currently blocks Oracle Container Registry access from Rancher Desktop. Configure an OCI DevOps **Managed Build** stage with this file as its build-spec path. Use the Oracle Linux 8 runner so the included Podman commands are available.
+Use `deploy/hosted/build_spec.yaml` when the production team makes the managed pipeline available. Until then, the team has directed the developer to publish immutable images directly to the approved private OCIR repositories.
 
 The managed build produces three named Docker image artifacts:
 
@@ -259,10 +276,10 @@ Use immutable release tags. Do not deploy `latest`.
 
 The `har-analyzer` compartment is owned by the production tenancy team. The HAR Analyzer developer is not assumed to have tenancy-administrator, IAM-policy, OCIR-repository, networking, identity-domain, or secret-management privileges.
 
-The production tenancy team must provide one of these image-publishing paths:
+The production tenancy team provides one of these image-publishing paths:
 
-1. **Team-owned OCI DevOps Managed Build (recommended):** the team creates or grants access to the DevOps project, source connection, build pipeline, OCIR repositories, and Deliver Artifacts stages. The developer supplies the source branch, build specification, image contract, and runtime variables. Local `docker login` is not required.
-2. **Delegated OCIR push:** the team creates the private repositories and grants the developer's approved group narrowly scoped permission to push images. The team supplies the region registry, tenancy namespace, repository compartment, repository names, and approved authentication process. Tenancy-administrator access is not required.
+1. **Delegated OCIR push (current approved path):** publish tested immutable images directly to the repositories in the `har-analyzer` compartment.
+2. **Team-owned OCI DevOps Managed Build (future preferred path):** move publication to the team pipeline when it is available, using the included build specification and the same image contract.
 
 Do not use the old `coefmw` OCIR namespace for this production deployment unless the production tenancy team explicitly approves that repository and configures the Hosted Application resource principal to read it. The onboarding guide permits an image repository in another tenancy, but the owning teams must configure and approve the required cross-tenancy access.
 
@@ -271,7 +288,7 @@ Do not use the old `coefmw` OCIR namespace for this production deployment unless
 | Tested source on `main` and exact commit | Compartment and supported Hosted Deployment region |
 | `deploy/hosted/build_spec.yaml` | OCI DevOps project/pipeline or delegated OCIR push access |
 | Application and worker image definitions | Private OCIR repositories and image-pull policies |
-| Runtime environment-variable catalogue | MongoDB, OCI Cache Redis, Object Storage, VCN/subnet, and secret references |
+| Runtime environment-variable catalogue | OCI PostgreSQL, OCI Cache Redis, Object Storage, VCN/subnet, and secret references |
 | Health, upload, AI, and usage validation procedure | Hosted Application/Deployment, OAuth or IAM authentication, DNS, logging, and vulnerability scanning |
 
 Before starting the build, obtain written confirmation of the chosen image-publishing path. A compartment OCID by itself is not sufficient to publish or deploy the application.
@@ -287,10 +304,10 @@ Record these values in the team-owned secret/configuration system, not in Git:
 - OCIR namespace, repository compartment, and push credentials.
 - Operator group and Hosted Application dynamic-group names.
 - OAuth identity domain, confidential application, audience, and scope, or the approved IAM-authenticated onboarding path.
-- MongoDB URI and TLS requirements.
-- OCI Cache Redis URI.
+- OCI PostgreSQL host/database, TLS requirements and CA chain, runtime credentials, and migration/schema-owner decision.
+- Non-sharded OCI Cache Redis 7 TLS URI and authentication details.
 - Object Storage namespace and bucket.
-- VCN and subnet that can reach MongoDB and Redis.
+- VCN and subnet that can reach OCI PostgreSQL and OCI Cache Redis private endpoints.
 
 Do not assume the Mumbai region used by the Container Instance POC supports Hosted Deployment. Select a region shown as supported in the target tenancy and confirm it with the platform team before building region-qualified OCIR tags.
 
@@ -335,8 +352,8 @@ Create the first Hosted Application with these settings:
 | Name | `har-analyzer-app` |
 | Minimum replicas | `1` |
 | Maximum replicas | `2` initially; tune after load testing |
-| Network | Custom VCN/subnet with MongoDB, Redis, Object Storage, and approved outbound access |
-| Endpoint | Internal/public selection approved by the platform team |
+| Network | Custom (user-managed) VCN/subnet with PostgreSQL, Redis, Object Storage, and approved outbound access |
+| Endpoint | Public for the initial controlled test as directed; change to Private later |
 | Authentication | OAuth identity-domain configuration or approved IAM path |
 | Container | `har-analyzer/har-app:<immutable-tag>` |
 | Command override | None |
@@ -360,7 +377,7 @@ Create a second Hosted Application with these settings:
 | Command override | None |
 | `WORKER_CONCURRENCY` | `2` |
 
-Use the same MongoDB, Redis, Object Storage, and resource-principal settings as the application. Do not configure OpenAI, CORS, or public API variables on the worker.
+Use the same PostgreSQL, Redis, Object Storage, and resource-principal settings as the application. Do not configure OpenAI, CORS, or public API variables on the worker.
 
 ### 7. Activate and validate
 
@@ -370,7 +387,7 @@ Create one deployment for each Hosted Application, select the corresponding immu
 
 1. Deploy the application and worker images without command overrides.
 2. Confirm both report `200` from `/health`.
-3. Confirm both report `200` from `/ready` after MongoDB, Redis, and Object Storage initialize.
+3. Confirm both report `200` from `/ready` after PostgreSQL, Redis, and Object Storage initialize.
 4. Open the application through the Hosted Deployment OAuth URL.
 5. Upload one small HAR and one console log.
 6. Confirm progress events arrive, the worker completes processing, and analyzer data loads.
@@ -394,8 +411,8 @@ The browser path has an additional platform gate because HAR Analyzer is a full 
 - Approved Oracle Artifactory, OCIR, or Oracle Container Registry path for the Node base image.
 - Final OAuth application, internal URL, and DNS configuration.
 - Confirmation that Socket.IO/WebSocket upgrades are supported by the Hosted Application ingress.
-- Approved MongoDB endpoint reachable from both runtimes.
-- OCI Cache Redis URI reachable from both runtimes.
+- Approved OCI PostgreSQL private endpoint, credentials, CA chain, schema/migration permissions, and connection limit reachable from both runtimes.
+- Non-sharded OCI Cache Redis 7 TLS URI reachable from both runtimes.
 - Object Storage namespace, bucket, lifecycle rule, and resource-principal IAM policy.
 - GCGA OpenAI key, approved model ID, secret injection, and outbound HTTPS access.
 - Central logging/monitoring destination and alert ownership.

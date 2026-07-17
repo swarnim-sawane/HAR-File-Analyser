@@ -1,5 +1,5 @@
-import type { Db } from 'mongodb';
-import { getMongoDb } from '../config/database';
+import { getDatabase } from '../config/database';
+import type { PostgresStore } from '../persistence/postgresStore';
 import { logInfo, logWarn } from '../config/observability';
 
 export const AI_USAGE_COLLECTION = 'ai_usage_events';
@@ -192,7 +192,7 @@ export function isAiUsageTrackingEnabled(
 
 export async function recordAiUsageEvent(
   input: AiUsageEventInput,
-  db?: Db,
+  database: PostgresStore = getDatabase(),
 ): Promise<boolean> {
   if (!isAiUsageTrackingEnabled()) return false;
 
@@ -211,9 +211,32 @@ export async function recordAiUsageEvent(
   };
 
   try {
-    await (db ?? getMongoDb())
-      .collection<AiUsageEventDocument>(AI_USAGE_COLLECTION)
-      .insertOne(document);
+    await database.query(`
+      INSERT INTO ai_usage_events (
+        request_id, operation, status, provider, model, response_id, provider_http_status,
+        duration_ms, usage_captured, input_tokens, cached_input_tokens, output_tokens,
+        reasoning_tokens, total_tokens, estimated_cost_usd, pricing, created_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17)
+      ON CONFLICT (request_id) DO NOTHING
+    `, [
+      document.requestId,
+      document.operation,
+      document.status,
+      document.provider,
+      document.model,
+      document.providerResponseId ?? null,
+      document.providerHttpStatus ?? null,
+      document.durationMs,
+      document.usageCaptured,
+      document.usage?.inputTokens ?? 0,
+      document.usage?.cachedInputTokens ?? 0,
+      document.usage?.outputTokens ?? 0,
+      document.usage?.reasoningTokens ?? 0,
+      document.usage?.totalTokens ?? 0,
+      document.estimatedCostUsd,
+      document.pricing ? JSON.stringify(document.pricing) : null,
+      document.createdAt,
+    ]);
     logInfo('ai.usage.recorded', {
       requestId: document.requestId,
       operation: document.operation,
@@ -286,72 +309,6 @@ export function parseAiUsageSummaryQuery(
   };
 }
 
-function usageGroupFields() {
-  return {
-    requestCount: { $sum: 1 },
-    completedRequests: {
-      $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] },
-    },
-    failedRequests: {
-      $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] },
-    },
-    usageCapturedRequests: {
-      $sum: { $cond: ['$usageCaptured', 1, 0] },
-    },
-    inputTokens: { $sum: { $ifNull: ['$usage.inputTokens', 0] } },
-    cachedInputTokens: { $sum: { $ifNull: ['$usage.cachedInputTokens', 0] } },
-    outputTokens: { $sum: { $ifNull: ['$usage.outputTokens', 0] } },
-    reasoningTokens: { $sum: { $ifNull: ['$usage.reasoningTokens', 0] } },
-    totalTokens: { $sum: { $ifNull: ['$usage.totalTokens', 0] } },
-    estimatedCostUsd: { $sum: { $ifNull: ['$estimatedCostUsd', 0] } },
-    costedRequests: {
-      $sum: {
-        $cond: [
-          { $ne: [{ $ifNull: ['$estimatedCostUsd', null] }, null] },
-          1,
-          0,
-        ],
-      },
-    },
-  };
-}
-
-export function buildAiUsageSummaryPipeline(query: AiUsageSummaryQuery): object[] {
-  const match: Record<string, unknown> = {
-    createdAt: { $gte: query.from, $lte: query.to },
-  };
-  if (query.operation) match.operation = query.operation;
-  if (query.model) match.model = query.model;
-
-  return [
-    { $match: match },
-    {
-      $facet: {
-        totals: [
-          { $group: { _id: null, ...usageGroupFields() } },
-        ],
-        byModel: [
-          { $group: { _id: '$model', ...usageGroupFields() } },
-          { $sort: { totalTokens: -1 } },
-        ],
-        byOperation: [
-          { $group: { _id: '$operation', ...usageGroupFields() } },
-          { $sort: { requestCount: -1 } },
-        ],
-        byDay: [
-          {
-            $group: {
-              _id: { $dateToString: { date: '$createdAt', format: '%Y-%m-%d', timezone: 'UTC' } },
-              ...usageGroupFields(),
-            },
-          },
-          { $sort: { _id: 1 } },
-        ],
-      },
-    },
-  ];
-}
-
 function emptyAggregateRow(id: string | null = null): AggregateRow {
   return {
     _id: id,
@@ -391,17 +348,58 @@ function serializeAggregateRow(row: AggregateRow) {
 
 export async function getAiUsageSummary(
   query: AiUsageSummaryQuery,
-  db: Db = getMongoDb(),
+  database: PostgresStore = getDatabase(),
 ) {
-  const [aggregateResult = {
-    totals: [],
-    byModel: [],
-    byOperation: [],
-    byDay: [],
-  }] = await db
-    .collection<AiUsageEventDocument>(AI_USAGE_COLLECTION)
-    .aggregate<AiUsageAggregateResult>(buildAiUsageSummaryPipeline(query))
-    .toArray();
+  const clauses = ['created_at >= $1', 'created_at <= $2'];
+  const values: unknown[] = [query.from, query.to];
+  if (query.operation) {
+    values.push(query.operation);
+    clauses.push(`operation = $${values.length}`);
+  }
+  if (query.model) {
+    values.push(query.model);
+    clauses.push(`model = $${values.length}`);
+  }
+  const where = clauses.join(' AND ');
+  const aggregates = `
+    COUNT(*)::int AS "requestCount",
+    COUNT(*) FILTER (WHERE status='completed')::int AS "completedRequests",
+    COUNT(*) FILTER (WHERE status='failed')::int AS "failedRequests",
+    COUNT(*) FILTER (WHERE usage_captured)::int AS "usageCapturedRequests",
+    COALESCE(SUM(input_tokens),0)::bigint AS "inputTokens",
+    COALESCE(SUM(cached_input_tokens),0)::bigint AS "cachedInputTokens",
+    COALESCE(SUM(output_tokens),0)::bigint AS "outputTokens",
+    COALESCE(SUM(reasoning_tokens),0)::bigint AS "reasoningTokens",
+    COALESCE(SUM(total_tokens),0)::bigint AS "totalTokens",
+    COALESCE(SUM(estimated_cost_usd),0)::numeric AS "estimatedCostUsd",
+    COUNT(*) FILTER (WHERE estimated_cost_usd IS NOT NULL)::int AS "costedRequests"
+  `;
+  const [totalsResult, modelResult, operationResult, dayResult] = await Promise.all([
+    database.query(`SELECT NULL::text AS _id, ${aggregates} FROM ai_usage_events WHERE ${where}`, values),
+    database.query(`SELECT model AS _id, ${aggregates} FROM ai_usage_events WHERE ${where} GROUP BY model ORDER BY SUM(total_tokens) DESC`, values),
+    database.query(`SELECT operation AS _id, ${aggregates} FROM ai_usage_events WHERE ${where} GROUP BY operation ORDER BY COUNT(*) DESC`, values),
+    database.query(`SELECT TO_CHAR(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS _id, ${aggregates} FROM ai_usage_events WHERE ${where} GROUP BY 1 ORDER BY 1`, values),
+  ]);
+  const normalize = (row: Record<string, unknown>): AggregateRow => ({
+    _id: row._id == null ? null : String(row._id),
+    requestCount: Number(row.requestCount ?? 0),
+    completedRequests: Number(row.completedRequests ?? 0),
+    failedRequests: Number(row.failedRequests ?? 0),
+    usageCapturedRequests: Number(row.usageCapturedRequests ?? 0),
+    inputTokens: Number(row.inputTokens ?? 0),
+    cachedInputTokens: Number(row.cachedInputTokens ?? 0),
+    outputTokens: Number(row.outputTokens ?? 0),
+    reasoningTokens: Number(row.reasoningTokens ?? 0),
+    totalTokens: Number(row.totalTokens ?? 0),
+    estimatedCostUsd: Number(row.estimatedCostUsd ?? 0),
+    costedRequests: Number(row.costedRequests ?? 0),
+  });
+  const aggregateResult: AiUsageAggregateResult = {
+    totals: totalsResult.rows.map(normalize),
+    byModel: modelResult.rows.map(normalize),
+    byOperation: operationResult.rows.map(normalize),
+    byDay: dayResult.rows.map(normalize),
+  };
   const totals = aggregateResult.totals[0] ?? emptyAggregateRow();
   const currentPricing = getAiUsagePricing();
 

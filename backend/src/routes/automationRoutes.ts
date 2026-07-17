@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { getMongoDb, getRedis } from '../config/database';
+import { getDatabase, getRedis } from '../config/database';
 import type { ParsedHarEntry } from '../services/streamingParser';
 import { generateInsightsForContext } from './aiRoutes';
 import {
@@ -40,8 +40,7 @@ function validateFileId(fileId: string, res: Response): boolean {
 }
 
 async function getHarFile(fileId: string): Promise<HarAutomationFileDoc | null> {
-  const db = getMongoDb();
-  return db.collection('har_files').findOne({ fileId }) as Promise<HarAutomationFileDoc | null>;
+  return getDatabase().getFile('har', fileId) as Promise<HarAutomationFileDoc | null>;
 }
 
 async function getPendingHarMetadata(fileId: string): Promise<HarAutomationPendingMetadata | null> {
@@ -66,33 +65,7 @@ async function sendPendingOrNotFound(fileId: string, res: Response) {
 }
 
 async function getInsightContextEntries(fileId: string): Promise<ParsedHarEntry[]> {
-  const db = getMongoDb();
-  const entriesCollection = db.collection('har_entries');
-
-  const [serverErrors, clientErrors, topSlow] = await Promise.all([
-    entriesCollection
-      .find({ fileId, 'response.status': { $gte: 500 } })
-      .sort({ index: 1 })
-      .limit(INSIGHT_ERROR_LIMIT)
-      .toArray(),
-    entriesCollection
-      .find({ fileId, 'response.status': { $gte: 400, $lt: 500 } })
-      .sort({ index: 1 })
-      .limit(INSIGHT_ERROR_LIMIT)
-      .toArray(),
-    entriesCollection
-      .find({ fileId })
-      .sort({ time: -1 })
-      .limit(INSIGHT_SLOW_LIMIT)
-      .toArray(),
-  ]);
-
-  const combined = new Map<number, ParsedHarEntry>();
-  for (const entry of [...serverErrors, ...clientErrors, ...topSlow] as unknown as ParsedHarEntry[]) {
-    combined.set(entry.index, entry);
-  }
-
-  return Array.from(combined.values()).sort((a, b) => a.index - b.index);
+  return getDatabase().getHarInsightEntries(fileId) as Promise<ParsedHarEntry[]>;
 }
 
 router.get('/har/:fileId/summary', async (req: Request, res: Response) => {
@@ -123,13 +96,9 @@ router.get('/har/:fileId/errors', async (req: Request, res: Response) => {
     }
 
     const { page, limit, skip } = parsePagination(req);
-    const db = getMongoDb();
-    const entriesCollection = db.collection('har_entries');
-    const filter = { fileId, 'response.status': { $gte: 400 } };
-
     const [entries, totalEntries] = await Promise.all([
-      entriesCollection.find(filter).sort({ index: 1 }).skip(skip).limit(limit).toArray(),
-      entriesCollection.countDocuments(filter),
+      getDatabase().listHarEntries(fileId, { offset: skip, limit }, { minimumStatus: 400 }),
+      getDatabase().countHarEntries(fileId, { minimumStatus: 400 }),
     ]);
 
     return res.json(

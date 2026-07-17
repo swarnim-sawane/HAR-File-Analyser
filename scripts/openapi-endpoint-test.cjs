@@ -8,11 +8,13 @@ const { performance } = require('perf_hooks');
 const gzip = promisify(zlib.gzip);
 
 const ROOT = path.resolve(__dirname, '..');
-const { MongoClient } = require(path.join(ROOT, 'backend', 'node_modules', 'mongodb'));
+const { Pool } = require(path.join(ROOT, 'backend', 'node_modules', 'pg'));
 const Redis = require(path.join(ROOT, 'backend', 'node_modules', 'ioredis'));
 
 const BASE_URL = process.env.OPENAPI_TEST_BASE_URL || 'http://localhost:4100';
-const MONGODB_URL = process.env.OPENAPI_TEST_MONGODB_URL || 'mongodb://localhost:27017/har-analyzer-openapi-test';
+const DATABASE_URL = process.env.OPENAPI_TEST_DATABASE_URL
+  || process.env.DATABASE_URL
+  || 'postgresql://postgres:postgres@localhost:5432/har_analyzer';
 const REDIS_HOST = process.env.REDIS_HOST || 'localhost';
 const REDIS_PORT = Number.parseInt(process.env.REDIS_PORT || '6379', 10);
 const HAR_QUEUE_NAME = process.env.HAR_QUEUE_NAME || 'har-openapi-test';
@@ -195,18 +197,13 @@ async function pollReady(fileId, statusRoute) {
 }
 
 async function cleanup() {
-  const mongo = new MongoClient(MONGODB_URL);
+  const postgres = new Pool({ connectionString: DATABASE_URL });
   const redis = new Redis({ host: REDIS_HOST, port: REDIS_PORT, maxRetriesPerRequest: null, enableReadyCheck: false });
   try {
-    await mongo.connect();
-    const db = mongo.db();
     await Promise.all([
-      db.collection('har_files').deleteMany({ fileId: { $regex: `^${TEST_PREFIX}` } }),
-      db.collection('har_files').deleteMany({ fileId: { $regex: `^sanitized_${TEST_PREFIX}` } }),
-      db.collection('har_entries').deleteMany({ fileId: { $regex: `^${TEST_PREFIX}` } }),
-      db.collection('har_entries').deleteMany({ fileId: { $regex: `^sanitized_${TEST_PREFIX}` } }),
-      db.collection('console_log_files').deleteMany({ fileId: { $regex: `^${TEST_PREFIX}` } }),
-      db.collection('console_logs').deleteMany({ fileId: { $regex: `^${TEST_PREFIX}` } }),
+      postgres.query('DELETE FROM har_files WHERE LEFT(file_id, LENGTH($1)) = $1', [TEST_PREFIX]),
+      postgres.query('DELETE FROM har_files WHERE LEFT(file_id, LENGTH($1)) = $1', [`sanitized_${TEST_PREFIX}`]),
+      postgres.query('DELETE FROM console_log_files WHERE LEFT(file_id, LENGTH($1)) = $1', [TEST_PREFIX]),
     ]);
 
     const patterns = [
@@ -241,7 +238,7 @@ async function cleanup() {
       }
     }
   } finally {
-    await mongo.close().catch(() => {});
+    await postgres.end().catch(() => {});
     await redis.quit().catch(() => {});
   }
 }
@@ -552,7 +549,7 @@ async function testLargeHarWorkflow() {
   record('large v1 insight context', context.ms, `${context.json.context.length} chars`);
 
   const detail = await request('GET', `/api/har/${fileId}/entries/0`);
-  assert(detail.json.storage?.truncatedFields?.includes('response.content.text'), 'large response text was not truncated for Mongo storage');
+  assert(detail.json.storage?.truncatedFields?.includes('response.content.text'), 'large response text was not truncated for PostgreSQL storage');
   assert(detail.json.response.content.text.length < largeBody.length, 'stored response text was not shortened');
   record('large entry truncation check', detail.ms);
 

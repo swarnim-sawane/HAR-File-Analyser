@@ -2,6 +2,8 @@
 
 Date: 2026-06-09
 
+> **Historical review:** The persistence and deployment statements below describe the June 2026 architecture. As of 2026-07-17, the active Hosted Deployment design uses OCI PostgreSQL, OCI Cache Redis, and OCI Object Storage. See [OCI GenAI Hosted Deployment](./OCI_GENAI_HOSTED_DEPLOYMENT.md) and [OCI Container Deployment Progress](./oci-container-deployment-progress.md) for the current source of truth.
+
 ## Scope
 
 This review covers the repository structure, local development path, backend API posture, upload handling, persistence dependencies, deployment documentation, and production-readiness risks for transferring HAR File Analyzer to a dedicated development team.

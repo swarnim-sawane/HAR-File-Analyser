@@ -1,5 +1,5 @@
 import { Queue } from 'bullmq';
-import { getRedis, getMongoDb } from '../config/database';
+import { getDatabase, getRedis } from '../config/database';
 import { HAR_QUEUE_NAME } from '../config/queueNames';
 import { streamParseHar, ParsedHarEntry } from '../services/streamingParser';
 import os from 'os';
@@ -60,6 +60,10 @@ export async function processHarFile(data: HarJobData): Promise<void> {
     // Update status
     await updateFileStatus(fileId, 'parsing');
 
+    if (process.env.HOSTED_DEPLOYMENT === 'true' && !data.artifactKey) {
+      throw new Error('Hosted HAR jobs require artifactKey; local filePath jobs are not supported.');
+    }
+
     let processingPath = data.filePath;
     if (data.artifactKey) {
       const destination = path.join(
@@ -91,12 +95,23 @@ export async function processHarFile(data: HarJobData): Promise<void> {
       errors: 0
     };
 
-    // Step 1: Parse HAR file and store entries in MongoDB
-    const db = getMongoDb();
-    const entriesCollection = db.collection('har_entries');
-    await entriesCollection.deleteMany({ fileId });
+    // Step 1: Parse the HAR file and store indexed JSONB entries in PostgreSQL.
+    const db = getDatabase();
+    await db.upsertFile('har', {
+      fileId,
+      fileName,
+      ...(data.artifactKey ? { artifactKey: data.artifactKey } : { filePath: data.filePath }),
+      fileSize,
+      hash: data.hash,
+      totalEntries: 0,
+      stats: {},
+      uploadedAt: new Date(data.uploadedAt),
+      processedAt: null,
+      status: 'processing',
+    });
+    await db.deleteHarEntries(fileId);
     let batchBuffer: ParsedHarEntry[] = [];
-    // Larger batches = fewer MongoDB round-trips per file.
+    // Larger batches reduce database round-trips per file.
     // 2000 entries * ~2 KB avg = ~4 MB per insert, well within driver limits.
     const BATCH_SIZE = 2000;
     // Only push a progress event to Redis every N batches (= every 10 000 entries)
@@ -120,7 +135,7 @@ export async function processHarFile(data: HarJobData): Promise<void> {
         const createdAt = new Date();
         const toInsert = batchBuffer.map(e => prepareHarEntryForStorage(e, fileId, createdAt));
 
-        await entriesCollection.insertMany(toInsert, { ordered: false });
+        await db.insertHarEntries(fileId, toInsert);
         batchCount++;
 
         // Only emit to Redis every PROGRESS_EMIT_EVERY batches to reduce round-trips
@@ -142,7 +157,7 @@ export async function processHarFile(data: HarJobData): Promise<void> {
     if (batchBuffer.length > 0) {
       const createdAt = new Date();
       const toInsert = batchBuffer.map(e => prepareHarEntryForStorage(e, fileId, createdAt));
-      await entriesCollection.insertMany(toInsert, { ordered: false });
+      await db.insertHarEntries(fileId, toInsert);
       batchBuffer = []; // Clear buffer
     }
 
@@ -158,8 +173,8 @@ export async function processHarFile(data: HarJobData): Promise<void> {
     await redis.setex(`stats:${fileId}`, 86400, JSON.stringify(stats));
     await emitProgress(fileId, 'analyzing', 90);
 
-    // Step 3: Store file metadata in MongoDB
-    await db.collection('har_files').replaceOne({ fileId }, {
+    // Step 3: Store final file metadata in PostgreSQL.
+    await db.upsertFile('har', {
       fileId,
       fileName,
       ...(data.artifactKey ? { artifactKey: data.artifactKey } : { filePath: data.filePath }),
@@ -170,10 +185,8 @@ export async function processHarFile(data: HarJobData): Promise<void> {
       uploadedAt: new Date(data.uploadedAt),
       processedAt: new Date(),
       status: 'ready'
-    }, { upsert: true });
+    });
 
-    // ✅ CRITICAL FIX: Wait for MongoDB write to be fully committed
-    await new Promise(resolve => setTimeout(resolve, 200));
 
     // Update status to ready
     await updateFileStatus(fileId, 'ready', {

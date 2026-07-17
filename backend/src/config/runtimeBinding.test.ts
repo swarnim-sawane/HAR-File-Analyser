@@ -31,13 +31,13 @@ describe('getRuntimeBinding', () => {
       .toEqual({ host: '0.0.0.0', port: 8080 });
   });
 
-  it('honors a platform-provided PORT value', () => {
-    expect(getRuntimeBinding({ HOSTED_DEPLOYMENT: 'true', PORT: '9090' }, 4000))
-      .toEqual({ host: '0.0.0.0', port: 9090 });
-    expect(getRuntimeBinding(
-      { HOSTED_DEPLOYMENT: 'true', PORT: '9090' },
+  it('rejects bindings that violate the Hosted Deployment contract', () => {
+    expect(() => getRuntimeBinding({ HOSTED_DEPLOYMENT: 'true', PORT: '9090' }, 4000))
+      .toThrow(/port 8080/);
+    expect(() => getRuntimeBinding(
+      { HOSTED_DEPLOYMENT: 'true', HOST: '127.0.0.1' },
       4001,
       'WORKER_HEALTH_PORT',
-    )).toEqual({ host: '0.0.0.0', port: 9090 });
+    )).toThrow(/HOST=0.0.0.0/);
   });
 });
