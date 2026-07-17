@@ -72,8 +72,8 @@ Inject `OPENAI_API_KEY` through the approved secret path. Do not copy it into th
 | Release source | Reviewed release candidate promoted to `main` on 2026-07-16 |
 | Production access | Operator/admin access and the existing OCIR repository are now available; the team instructed direct OCIR publication until its DevOps pipeline is ready |
 | Frontend tests | 38 files and 293 tests passed on 2026-07-17 |
-| Backend tests | 25 files and 130 tests passed on 2026-07-17; the live PostgreSQL integration test passed separately |
-| End-to-end validation | Real HAR and console-log uploads completed through the API, Redis queue, worker, and PostgreSQL; the OpenAPI endpoint suite passed all 47 checks |
+| Backend tests | 26 files and 131 tests passed on 2026-07-17; the live PostgreSQL integration test passed separately |
+| End-to-end validation | Real HAR and console-log uploads completed through the API, Redis queue, worker, and PostgreSQL; the OpenAPI endpoint suite passed all 47 checks; a 32 MB Oracle HAR containing an embedded NUL byte completed with 123 entries after PostgreSQL-safe evidence encoding |
 | Production builds | Frontend, backend, and frontend lint passed on 2026-07-17 |
 | Local hosted image build | Reconfirmed blocked while resolving the approved global Oracle Linux base image on 2026-07-17; final images must be built after the Oracle registry or approved internal mirror is reachable |
 | OCI DevOps build | Build specification prepared at `deploy/hosted/build_spec.yaml`; direct OCIR publication is the approved interim path |

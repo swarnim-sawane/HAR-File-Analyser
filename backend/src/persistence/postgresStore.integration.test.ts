@@ -50,7 +50,11 @@ describeWithPostgres('PostgresStore integration', () => {
         index: 1,
         startedDateTime: now.toISOString(),
         time: 310,
-        request: { method: 'POST', url: 'https://example.test/fail' },
+        request: {
+          method: 'POST',
+          url: 'https://example.test/fail',
+          postData: { mimeType: 'application/json', text: 'before\u0000after' },
+        },
         response: { status: 503, content: { mimeType: 'text/plain' } },
       },
     ]);
@@ -63,6 +67,7 @@ describeWithPostgres('PostgresStore integration', () => {
     );
     expect(failed).toHaveLength(1);
     expect(failed[0].response.status).toBe(503);
+    expect(failed[0].request.postData.text).toBe('before\\u0000after');
 
     await store.upsertFile('console', {
       fileId: consoleFileId,

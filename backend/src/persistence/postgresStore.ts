@@ -79,6 +79,23 @@ function countMap(rows: Array<{ key: string | null; count: string | number }>): 
   return Object.fromEntries(rows.filter((row) => row.key).map((row) => [row.key as string, Number(row.count)]));
 }
 
+export function sanitizeForPostgresJson(value: unknown): unknown {
+  if (typeof value === 'string') return value.replace(/\u0000/g, '\\u0000');
+  if (Array.isArray(value)) return value.map(sanitizeForPostgresJson);
+  if (value instanceof Date) return value;
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
+      key.replace(/\u0000/g, '\\u0000'),
+      sanitizeForPostgresJson(entry),
+    ]));
+  }
+  return value;
+}
+
+function stringifyPostgresJson(value: unknown): string {
+  return JSON.stringify(sanitizeForPostgresJson(value));
+}
+
 export class PostgresStore {
   constructor(readonly pool: Pool) {}
 
@@ -115,7 +132,7 @@ export class PostgresStore {
         updated_at = NOW()
     `, [
       document.fileId, document.fileName, document.artifactKey ?? null, document.filePath ?? null,
-      document.fileSize, document.hash ?? null, document.totalEntries, JSON.stringify(document.stats ?? {}),
+      document.fileSize, document.hash ?? null, document.totalEntries, stringifyPostgresJson(document.stats ?? {}),
       document.uploadedAt, document.processedAt ?? null, document.status,
     ]);
   }
@@ -145,7 +162,7 @@ export class PostgresStore {
         response_mime_type = EXCLUDED.response_mime_type,
         payload = EXCLUDED.payload,
         created_at = EXCLUDED.created_at
-    `, [fileId, JSON.stringify(entries)]);
+    `, [fileId, stringifyPostgresJson(entries)]);
   }
 
   private harWhere(fileId: string, filter: HarEntryFilter = {}): { sql: string; values: unknown[] } {
@@ -228,7 +245,7 @@ export class PostgresStore {
         issue_tags=EXCLUDED.issue_tags, primary_issue=EXCLUDED.primary_issue,
         parse_status=EXCLUDED.parse_status, parse_format=EXCLUDED.parse_format,
         parse_warnings=EXCLUDED.parse_warnings, payload=EXCLUDED.payload, created_at=EXCLUDED.created_at
-    `, [fileId, JSON.stringify(entries)]);
+    `, [fileId, stringifyPostgresJson(entries)]);
   }
 
   private consoleWhere(fileId: string, filter: ConsoleEntryFilter): { sql: string; values: unknown[] } {
