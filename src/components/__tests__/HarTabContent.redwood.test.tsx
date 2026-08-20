@@ -2,8 +2,16 @@ import React from 'react';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import HarTabContent from '../HarTabContent';
+import { clearHarDataCache } from '../../services/harDataCache';
 
-const { getHarDataMock, mockHarState, requestFlowDiagramMock, requestFlowGraphViewMock, requestListMock } = vi.hoisted(() => {
+const {
+  getHarDataMock,
+  mockHarState,
+  requestDetailsMock,
+  requestFlowDiagramMock,
+  requestFlowGraphViewMock,
+  requestListMock,
+} = vi.hoisted(() => {
   const sampleHarFile = {
     log: {
       version: '1.2',
@@ -88,6 +96,7 @@ const { getHarDataMock, mockHarState, requestFlowDiagramMock, requestFlowGraphVi
     requestFlowDiagramMock: vi.fn(),
     requestFlowGraphViewMock: vi.fn(),
     requestListMock: vi.fn(),
+    requestDetailsMock: vi.fn(),
     mockHarState: {
       harData: sampleHarFile,
       filteredEntries: sampleHarFile.log.entries,
@@ -137,7 +146,10 @@ vi.mock('../RequestList', () => ({
 }));
 
 vi.mock('../RequestDetails', () => ({
-  default: () => <div>Request details mock</div>,
+  default: (props: any) => {
+    requestDetailsMock(props);
+    return <div>Request details mock: {props.entry.request.url}</div>;
+  },
 }));
 
 vi.mock('../FloatingAiChat', () => ({
@@ -172,6 +184,7 @@ vi.mock('../AiInsights', () => ({
 
 describe('HarTabContent Redwood theme smoke test', () => {
   beforeEach(() => {
+    clearHarDataCache();
     document.documentElement.dataset.theme = 'redwood';
     document.documentElement.style.colorScheme = 'light';
     window.localStorage.setItem('theme', 'redwood');
@@ -192,6 +205,7 @@ describe('HarTabContent Redwood theme smoke test', () => {
     requestFlowDiagramMock.mockClear();
     requestFlowGraphViewMock.mockClear();
     requestListMock.mockClear();
+    requestDetailsMock.mockClear();
     mockHarState.setSelectedEntry.mockClear();
     mockHarState.updateFilters.mockClear();
   });
@@ -347,7 +361,7 @@ describe('HarTabContent Redwood theme smoke test', () => {
     );
   });
 
-  it('redirects Request Flow node clicks back to Analyzer and requests selected-row scrolling', async () => {
+  it('opens Request Flow node details on the right without returning to Analyzer', async () => {
     const user = userEvent.setup();
     const allEntries = mockHarState.harData.log.entries;
     mockHarState.filters = {
@@ -381,29 +395,33 @@ describe('HarTabContent Redwood theme smoke test', () => {
     await user.click(screen.getByRole('button', { name: /request flow/i }));
     const flowProps = requestFlowGraphViewMock.mock.calls.at(-1)?.[0];
     expect(flowProps).toBeTruthy();
+    const analyzerSelectionCallCount = mockHarState.setSelectedEntry.mock.calls.length;
 
     act(() => {
       flowProps.onNodeClick(allEntries[1]);
     });
 
     await waitFor(() => {
-      expect(screen.getByText('Request list mock')).toBeInTheDocument();
-    });
-
-    expect(mockHarState.setSelectedEntry).toHaveBeenCalledWith(allEntries[1]);
-    expect(mockHarState.updateFilters).toHaveBeenCalledWith(
-      expect.objectContaining({
-        searchTerm: '',
-        statusCodes: expect.objectContaining({ '4xx': true }),
-      })
-    );
-
-    await waitFor(() => {
-      expect(requestListMock).toHaveBeenLastCalledWith(
+      expect(screen.getByText(/Request details mock: https:\/\/idcs\.example\.com\/favicon\.ico/i)).toBeInTheDocument();
+      expect(requestDetailsMock).toHaveBeenLastCalledWith(
         expect.objectContaining({
-          scrollToSelectedSignal: expect.any(Number),
+          entry: allEntries[1],
+          searchTerm: 'currently-hiding-the-clicked-row',
         })
       );
+    });
+
+    expect(screen.getByText('Scattered view mock')).toBeInTheDocument();
+    expect(screen.queryByText('Request list mock')).not.toBeInTheDocument();
+    expect(mockHarState.setSelectedEntry).toHaveBeenCalledTimes(analyzerSelectionCallCount);
+    expect(mockHarState.updateFilters).not.toHaveBeenCalled();
+
+    act(() => {
+      requestDetailsMock.mock.calls.at(-1)?.[0].onClose();
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Request details mock:/i)).not.toBeInTheDocument();
     });
   });
 });

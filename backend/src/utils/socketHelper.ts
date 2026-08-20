@@ -10,6 +10,24 @@ type SocketEventEnvelope = {
 
 let ioInstance: SocketIOServer | null = null;
 
+export type SocketEventTransport = 'local' | 'redis';
+
+export function getSocketEventTransport(
+  env: NodeJS.ProcessEnv = process.env,
+): SocketEventTransport {
+  const configured = env.SOCKET_EVENT_TRANSPORT?.trim().toLowerCase();
+  if (configured === 'local' || configured === 'redis') return configured;
+  if (configured) {
+    throw new Error('SOCKET_EVENT_TRANSPORT must be either "local" or "redis".');
+  }
+
+  // OCI Hosted Applications expose managed Cache through a local proxy. A
+  // SUBSCRIBE on that proxy can place unrelated command traffic in subscriber
+  // mode, breaking BullMQ and upload-completion Lua scripts. Hosted clients
+  // already poll authoritative status, so local delivery is the safe default.
+  return env.HOSTED_DEPLOYMENT === 'true' ? 'local' : 'redis';
+}
+
 export function setSocketIOInstance(io: SocketIOServer): void {
   ioInstance = io;
 }
@@ -31,6 +49,17 @@ export function emitGlobal(event: string, data: any): void {
 }
 
 async function publishSocketEnvelope(envelope: SocketEventEnvelope): Promise<void> {
+  if (getSocketEventTransport() === 'local') {
+    if (envelope.scope === 'file' && envelope.room) {
+      const fileId = envelope.data?.fileId;
+      if (fileId) emitToFile(fileId, envelope.type, envelope.data);
+      return;
+    }
+
+    emitGlobal(envelope.type, envelope.data);
+    return;
+  }
+
   try {
     const redis = getRedis();
     await redis.publish('socket:events', JSON.stringify(envelope));

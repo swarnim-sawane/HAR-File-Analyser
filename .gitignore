@@ -60,6 +60,7 @@ Desktop.ini
 *.temp
 .cache/
 .parcel-cache/
+.codex-tmp/
 
 # TypeScript
 *.tsbuildinfo
@@ -95,12 +96,21 @@ Desktop.ini
 .pnp.*
 
 # Docker
-.dockerignore
 
 # AI/ML model cache
 .ollama/
 chroma_data/
 *.gguf
+
+# Local agent/runtime state
+.claude-flow/
+
+# Python-generated artifacts
+__pycache__/
+*.py[cod]
+
+# Generated skill packages (source remains under codex-skills/)
+codex-skills/*.zip
 
 # HAR files (optional - uncomment if you don't want to commit test files)
 # *.har

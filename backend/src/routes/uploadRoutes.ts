@@ -7,6 +7,7 @@ import crypto from 'crypto';
 import { once } from 'events';
 import { getDatabase, getRedis } from '../config/database';
 import { Queue } from 'bullmq';
+import { buildBullMqConnectionOptions } from '../config/bullmqConfig';
 import { HAR_QUEUE_NAME, LOG_QUEUE_NAME } from '../config/queueNames';
 import { publishGlobal } from '../utils/socketHelper';
 import {
@@ -37,6 +38,94 @@ const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || path.join(process.cwd(
 const ASSEMBLY_DIR = path.resolve(
   process.env.ARTIFACT_SCRATCH_DIR || path.join(UPLOAD_DIR, 'assembled'),
 );
+const COMPLETION_LOCK_TTL_SECONDS = 35 * 60;
+const COMPLETION_RESULT_TTL_SECONDS = 24 * 60 * 60;
+const COMPLETION_WAIT_MS = Math.max(
+  0,
+  Number.parseInt(process.env.UPLOAD_COMPLETION_WAIT_MS || '10000', 10) || 0,
+);
+const COMPLETION_POLL_MS = Math.max(
+  10,
+  Number.parseInt(process.env.UPLOAD_COMPLETION_POLL_MS || '100', 10) || 100,
+);
+
+interface CompletionResponse {
+  success: true;
+  fileId: string;
+  jobId: string;
+  fileName: string;
+  fileSize: number;
+  hash: string;
+  message: string;
+}
+
+interface CompletionRecord {
+  version: 1;
+  fingerprint: string;
+  response: CompletionResponse;
+}
+
+const RELEASE_COMPLETION_LOCK_SCRIPT = `
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+`;
+
+const PUBLISH_COMPLETION_SCRIPT = `
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])
+  redis.call('DEL', KEYS[1])
+  return 1
+end
+return 0
+`;
+
+function completionKeys(fileId: string) {
+  return {
+    lock: `upload:${fileId}:complete:lock`,
+    result: `upload:${fileId}:complete:result`,
+  };
+}
+
+function buildCompletionFingerprint(
+  safeFileName: string,
+  fileType: 'har' | 'log',
+  totalChunks: number,
+  compressed: '' | 'gzip',
+): string {
+  return crypto.createHash('sha256').update(JSON.stringify({
+    fileName: safeFileName,
+    fileType,
+    totalChunks,
+    compressed,
+  })).digest('hex');
+}
+
+async function readCompletionRecord(key: string): Promise<CompletionRecord | null> {
+  const serialized = await redis.get(key);
+  if (!serialized) return null;
+
+  try {
+    const record = JSON.parse(serialized) as Partial<CompletionRecord>;
+    if (record.version !== 1 || typeof record.fingerprint !== 'string' || !record.response) {
+      return null;
+    }
+    return record as CompletionRecord;
+  } catch {
+    return null;
+  }
+}
+
+async function waitForCompletionRecord(key: string): Promise<CompletionRecord | null> {
+  const deadline = Date.now() + COMPLETION_WAIT_MS;
+  do {
+    const record = await readCompletionRecord(key);
+    if (record) return record;
+    if (Date.now() >= deadline) return null;
+    await new Promise((resolve) => setTimeout(resolve, COMPLETION_POLL_MS));
+  } while (true);
+}
 
 console.log('Upload scratch directory:', UPLOAD_DIR);
 console.log('Assembly scratch directory:', ASSEMBLY_DIR);
@@ -54,8 +143,8 @@ if (!fsSync.existsSync(ASSEMBLY_DIR)) {
 }
 
 // Create queues
-const harQueue = new Queue(HAR_QUEUE_NAME, { connection: redis });
-const logQueue = new Queue(LOG_QUEUE_NAME, { connection: redis });
+const harQueue = new Queue(HAR_QUEUE_NAME, buildBullMqConnectionOptions(redis));
+const logQueue = new Queue(LOG_QUEUE_NAME, buildBullMqConnectionOptions(redis));
 
 // FIXED: Use a temporary name first, then rename
 const storage = multer.diskStorage({
@@ -242,10 +331,11 @@ router.post('/chunk', (req: Request, res: Response, next: NextFunction) => {
 router.post('/complete', async (req: Request, res: Response) => {
   const startedAt = Date.now();
   const localScratchPaths = new Set<string>();
+  let completionLock: { key: string; token: string } | null = null;
   try {
     const { fileId, totalChunks, fileName, fileType, compressed } = req.body;
 
-    if (!fileId || !totalChunks || !fileName || !fileType) {
+    if (!fileId || !totalChunks || typeof fileName !== 'string' || !fileName.trim() || !fileType) {
       logWarn('upload.complete.invalid_request', { reason: 'missing_parameters' });
       return res.status(400).json({ error: 'Missing parameters' });
     }
@@ -266,7 +356,64 @@ router.post('/complete', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Invalid totalChunks' });
     }
 
-    console.log(`📦 Assembling file: ${fileName} (${parsedTotalChunks} chunks)`);
+    if (compressed !== undefined && compressed !== 'gzip') {
+      logWarn('upload.complete.invalid_request', { fileId, reason: 'invalid_compression' });
+      return res.status(400).json({ error: 'Invalid compressed value' });
+    }
+
+    const safeFileName = path.posix.basename(fileName.trim().replace(/\\/g, '/'));
+    if (!safeFileName || safeFileName === '.' || safeFileName.length > 255) {
+      logWarn('upload.complete.invalid_request', { fileId, reason: 'invalid_file_name' });
+      return res.status(400).json({ error: 'Invalid fileName' });
+    }
+
+    const fingerprint = buildCompletionFingerprint(
+      safeFileName,
+      fileType,
+      parsedTotalChunks,
+      compressed === 'gzip' ? 'gzip' : '',
+    );
+    const keys = completionKeys(fileId);
+    const sendCachedCompletion = (record: CompletionRecord) => {
+      if (record.fingerprint !== fingerprint) {
+        logWarn('upload.complete.idempotency_conflict', { fileId });
+        return res.status(409).json({
+          error: 'fileId was already completed with different upload parameters',
+        });
+      }
+      return res.status(200).json(record.response);
+    };
+
+    const cachedBeforeLock = await readCompletionRecord(keys.result);
+    if (cachedBeforeLock) return sendCachedCompletion(cachedBeforeLock);
+
+    const lockToken = crypto.randomUUID();
+    const acquired = await redis.set(
+      keys.lock,
+      lockToken,
+      'EX',
+      COMPLETION_LOCK_TTL_SECONDS,
+      'NX',
+    );
+    if (acquired !== 'OK') {
+      const completedByOwner = await waitForCompletionRecord(keys.result);
+      if (completedByOwner) return sendCachedCompletion(completedByOwner);
+      res.setHeader('Retry-After', '1');
+      return res.status(202).json({
+        success: false,
+        status: 'processing',
+        fileId,
+        message: 'Upload completion is already in progress',
+      });
+    }
+    completionLock = { key: keys.lock, token: lockToken };
+
+    // A prior owner may have committed a replay record immediately before this
+    // request acquired the lock. Re-check before touching chunks or metadata.
+    const cachedAfterLock = await readCompletionRecord(keys.result);
+    if (cachedAfterLock) return sendCachedCompletion(cachedAfterLock);
+
+    console.log(`📦 Assembling file: ${safeFileName} (${parsedTotalChunks} chunks)`);
 
     // Verify all chunks received
     const receivedChunks = await redis.scard(`upload:${fileId}:chunks`);
@@ -286,7 +433,6 @@ router.post('/complete', async (req: Request, res: Response) => {
 
     // Assemble from provider-neutral chunk objects. In OCI mode, each request may
     // be handled by a different API replica without relying on a shared volume.
-    const safeFileName = path.basename(fileName);
     const outputPath = path.join(ASSEMBLY_DIR, `${fileId}_${safeFileName}`);
     localScratchPaths.add(outputPath);
     const assembledSize = await assembleChunkStreams(fileId, parsedTotalChunks, outputPath);
@@ -400,15 +546,64 @@ router.post('/complete', async (req: Request, res: Response) => {
     metadata.jobId = String(job.id);
     await redis.setex(`file:${fileId}:metadata`, 86400, JSON.stringify(metadata));
 
-    // The durable artifact and queue job now exist, so transport chunks and
-    // replica-local assembly files can be removed.
+    const completionResponse: CompletionResponse = {
+      success: true,
+      fileId,
+      jobId: String(job.id),
+      fileName: safeFileName,
+      fileSize: stats.size,
+      hash,
+      message: 'File uploaded successfully, processing started',
+    };
+    const completionRecord: CompletionRecord = {
+      version: 1,
+      fingerprint,
+      response: completionResponse,
+    };
+    try {
+      const published = await redis.eval(
+        PUBLISH_COMPLETION_SCRIPT,
+        2,
+        keys.lock,
+        keys.result,
+        lockToken,
+        JSON.stringify(completionRecord),
+        String(COMPLETION_RESULT_TTL_SECONDS),
+      );
+      if (published !== 1) {
+        throw new Error('Upload completion lock expired before the result could be committed');
+      }
+      completionLock = null;
+    } catch (cacheError) {
+      // The durable artifact, PostgreSQL metadata, and idempotent BullMQ job are
+      // already committed. A Redis replay-cache failure must not turn an
+      // accepted upload into a client-visible 500 and provoke a duplicate upload.
+      logWarn('upload.complete.result_cache_failed', {
+        fileId,
+        error: cacheError,
+      });
+    }
+
+    // Commit the metadata-only replay record before deleting chunks. Repeated
+    // requests can now return the same response without reassembly or requeueing.
     for (let index = 0; index < parsedTotalChunks; index++) {
       await artifactStore.delete(uploadChunkKey(fileId, index)).catch(() => false);
     }
-    await fs.rm(outputPath, { force: true });
+    await fs.rm(outputPath, { force: true }).catch((cleanupError) => {
+      logWarn('upload.complete.cleanup_failed', {
+        fileId,
+        target: 'local_assembly',
+        error: cleanupError instanceof Error ? cleanupError.message : 'unknown',
+      });
+    });
     localScratchPaths.delete(outputPath);
-    await redis.del(`upload:${fileId}:chunks`);
-    await redis.del(`upload:${fileId}:progress`);
+    await redis.del(`upload:${fileId}:chunks`, `upload:${fileId}:progress`).catch((cleanupError) => {
+      logWarn('upload.complete.cleanup_failed', {
+        fileId,
+        target: 'redis_upload_tracking',
+        error: cleanupError instanceof Error ? cleanupError.message : 'unknown',
+      });
+    });
 
     console.log(`✅ File uploaded successfully: ${safeFileName} (Job: ${job.id})`);
     logInfo('upload.complete.enqueued', {
@@ -420,15 +615,7 @@ router.post('/complete', async (req: Request, res: Response) => {
       durationMs: measureDurationMs(startedAt),
     });
 
-    res.json({
-      success: true,
-      fileId,
-      jobId: job.id,
-      fileName: safeFileName,
-      fileSize: stats.size,
-      hash,
-      message: 'File uploaded successfully, processing started'
-    });
+    res.json(completionResponse);
 
   } catch (error) {
     console.error('Complete upload error:', error);
@@ -443,6 +630,14 @@ router.post('/complete', async (req: Request, res: Response) => {
       details: 'The upload could not be finalized. Retry the upload or contact support with the request ID.'
     });
   } finally {
+    if (completionLock) {
+      await redis.eval(
+        RELEASE_COMPLETION_LOCK_SCRIPT,
+        1,
+        completionLock.key,
+        completionLock.token,
+      ).catch(() => undefined);
+    }
     await Promise.all(Array.from(localScratchPaths).map((filePath) =>
       fs.rm(filePath, { force: true }).catch(() => undefined),
     ));

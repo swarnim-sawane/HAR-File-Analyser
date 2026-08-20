@@ -172,3 +172,21 @@ describe('RequestList — selected row scrolling', () => {
     });
   });
 });
+
+describe('RequestList — large HAR virtualization', () => {
+  it('keeps the full request-list height while mounting only the visible rows', () => {
+    const entries = Array.from({ length: 2_000 }, (_, index) => makeEntry({
+      startedDateTime: `2026-03-18T06:${String(Math.floor(index / 60) % 60).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}.000Z`,
+      request: {
+        ...makeEntry().request,
+        url: `https://example.com/api/request/${index}`,
+      },
+    }));
+
+    render(<RequestList entries={entries} selectedEntry={null} onSelectEntry={noop} />);
+
+    expect(screen.getByTestId('har-virtual-list-inner')).toHaveStyle({ height: '128000px' });
+    expect(screen.getAllByTestId('har-virtual-row').length).toBeLessThan(100);
+    expect(screen.queryByText('https://example.com/api/request/1999')).not.toBeInTheDocument();
+  });
+});

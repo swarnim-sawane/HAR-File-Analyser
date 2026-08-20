@@ -1,0 +1,8 @@
+[
+  {
+    "destination": "0.0.0.0/0",
+    "destinationType": "CIDR_BLOCK",
+    "networkEntityId": "ocid1.internetgateway.oc1.phx.aaaaaaaax6gpnthwxc22kv4oljtcrmq55y3ygevpp6xktvmd5f3wqk4b7vua",
+    "description": "Public HAR UI API Gateway internet route"
+  }
+]

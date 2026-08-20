@@ -24,6 +24,9 @@ import {
   shouldParseConsoleLogLocally,
 } from './utils/consoleLogProcessing';
 import type { UploadFileType } from './utils/uploadFileTypes';
+import { BACKEND_BASE_URL } from './services/runtimeUrls';
+import type { HarPreviewSnapshot } from './services/progressiveHarPreview';
+import type { HarPreviewSession } from './services/harPreviewClient';
 
 interface RecentFile {
   name: string;
@@ -34,8 +37,11 @@ interface RecentFile {
 /** A single open HAR file tab */
 interface HarFileTab {
   id: string;       // unique tab id (generated)
-  fileId: string;   // backend file id (used to load data)
+  fileId: string;   // empty while local preview is provisional
   fileName: string; // display name
+  previewId?: string;
+  previewSnapshot?: HarPreviewSnapshot;
+  generation: number;
 }
 
 /** A single open Console Log tab */
@@ -46,10 +52,14 @@ interface LogFileTab {
   localData: ConsoleLogFile | null; // pre-parsed data for small files
 }
 
-const BACKEND_URL =
-  import.meta.env.VITE_BACKEND_URL ||
-  import.meta.env.VITE_API_URL ||
-  'http://localhost:4000';
+type AnalyzerFileKind = 'har' | 'log';
+
+interface AnalyzerFileTabRef {
+  id: string;
+  kind: AnalyzerFileKind;
+}
+
+const BACKEND_URL = BACKEND_BASE_URL;
 
 type AppPath = '/' | '/docs';
 
@@ -67,6 +77,7 @@ const App: React.FC = () => {
   const [pathname, setPathname] = useState<AppPath>(() => normalizePathname(window.location.pathname));
   // ── HAR multi-tab state ──────────────────────────────────────────────────────
   const [harTabs, setHarTabs] = useState<HarFileTab[]>([]);
+  const harTabsRef = useRef<HarFileTab[]>([]);
   const [activeHarTabId, setActiveHarTabId] = useState<string | null>(null);
   const [harShowUploader, setHarShowUploader] = useState(true);
   const [harRecentFiles, setHarRecentFiles] = useState<RecentFile[]>([]);
@@ -78,17 +89,21 @@ const App: React.FC = () => {
   // ── Console Log multi-tab state ──────────────────────────────────────────────
   const [logTabs, setLogTabs] = useState<LogFileTab[]>([]);
   const [activeLogTabId, setActiveLogTabId] = useState<string | null>(null);
+  const [fileTabOrder, setFileTabOrder] = useState<AnalyzerFileTabRef[]>([]);
   const [logRecentFiles, setLogRecentFiles] = useState<RecentFile[]>([]);
   const [isLogProcessing, setIsLogProcessing] = useState(false);
   const [logLoadingMessage, setLogLoadingMessage] = useState('Loading console log file...');
   const [showLogLocalFallback, setShowLogLocalFallback] = useState(false);
   const logCancelRef = React.useRef<(() => void) | null>(null);
   const compareWrapperRef = useRef<HTMLDivElement | null>(null);
+  const harPreviewSessionsRef = useRef<Map<string, HarPreviewSession>>(new Map());
+  const closedHarPreviewIdsRef = useRef<Set<string>>(new Set());
 
   const MAX_LOG_TABS = 8;
 
   // ── Main navigation ──────────────────────────────────────────────────────────
   const [activeTool, setActiveTool] = useState<'har' | 'sanitizer' | 'console' | 'compare'>('har');
+  const [lastAnalyzerTool, setLastAnalyzerTool] = useState<'har' | 'console'>('har');
 
   const MAX_HAR_TABS = 8;
   const MAX_RECENT_FILES = 5;
@@ -104,6 +119,10 @@ const App: React.FC = () => {
     });
   }, [theme]);
 
+  useEffect(() => {
+    harTabsRef.current = harTabs;
+  }, [harTabs]);
+
   useLayoutEffect(() => {
     if (activeTool !== 'compare') return;
 
@@ -116,6 +135,12 @@ const App: React.FC = () => {
     }
 
     compareWrapper.scrollTop = 0;
+  }, [activeTool]);
+
+  useEffect(() => {
+    if (activeTool === 'har' || activeTool === 'console') {
+      setLastAnalyzerTool(activeTool);
+    }
   }, [activeTool]);
 
   useEffect(() => {
@@ -148,7 +173,7 @@ const App: React.FC = () => {
     wsClient.subscribeToFile(deepLinkFileId);
 
     const tryOpenTab = (fileId: string, fileName?: string) => {
-      openHarTab({ fileId, fileName: fileName || fileId, fileSize: 0, hash: '', jobId: '', success: true, message: '' });
+      openHarTab({ fileId, fileName: fileName || fileId, fileSize: 0, hash: '', jobId: '', success: true, message: '' }, true);
       const clean = window.location.pathname + window.location.hash;
       window.history.replaceState({}, '', clean);
     };
@@ -188,11 +213,18 @@ const App: React.FC = () => {
     });
   }, []);
 
-  /** Switch to a different open HAR file tab */
-  const handleHarFileTabSwitch = (tabId: string) => {
-    if (tabId === activeHarTabId) return;
-    setActiveHarTabId(tabId);
-  };
+  /** Activate an evidence file and route it to its deterministic analyzer. */
+  const activateFileTab = useCallback((tab: AnalyzerFileTabRef) => {
+    if (tab.kind === 'har') {
+      setActiveHarTabId(tab.id);
+      setHarShowUploader(false);
+      setActiveTool('har');
+      return;
+    }
+
+    setActiveLogTabId(tab.id);
+    setActiveTool('console');
+  }, []);
 
 
 
@@ -224,9 +256,100 @@ const App: React.FC = () => {
     });
   };
 
+  const handleHarPreviewSessionCreated = useCallback((session: HarPreviewSession) => {
+    harPreviewSessionsRef.current.set(session.previewId, session);
+  }, []);
+
+  const handleHarPreviewSnapshot = useCallback((snapshot: HarPreviewSnapshot) => {
+    if (closedHarPreviewIdsRef.current.has(snapshot.previewId)) return;
+
+    const previewTabId = `preview_${snapshot.previewId}`;
+    const currentTabs = harTabsRef.current;
+    const existingPreview = currentTabs.find((tab) => tab.previewId === snapshot.previewId);
+    if (!existingPreview && currentTabs.length >= MAX_HAR_TABS) return;
+
+    setHarTabs((currentTabs) => {
+      const existingIndex = currentTabs.findIndex((tab) => tab.previewId === snapshot.previewId);
+      if (existingIndex >= 0) {
+        const existing = currentTabs[existingIndex];
+        if ((existing.previewSnapshot?.revision ?? -1) >= snapshot.revision) return currentTabs;
+        const next = [...currentTabs];
+        next[existingIndex] = { ...existing, fileName: snapshot.fileName, previewSnapshot: snapshot };
+        return next;
+      }
+
+      return [...currentTabs, {
+        id: previewTabId,
+        fileId: '',
+        fileName: snapshot.fileName,
+        previewId: snapshot.previewId,
+        previewSnapshot: snapshot,
+        generation: 0,
+      }];
+    });
+    setFileTabOrder((currentOrder) => currentOrder.some((tab) => (
+      tab.kind === 'har' && tab.id === previewTabId
+    )) ? currentOrder : [...currentOrder, { id: previewTabId, kind: 'har' }]);
+    setActiveHarTabId(previewTabId);
+    setHarShowUploader(false);
+    setActiveTool('har');
+    setIsUploadModalOpen(false);
+  }, []);
+
+  const handleHarPreviewRemoved = useCallback((
+    previewId: string,
+    reason: 'completed' | 'cancelled' | 'failed',
+  ) => {
+    harPreviewSessionsRef.current.delete(previewId);
+    if (reason === 'completed') return;
+
+    closedHarPreviewIdsRef.current.add(previewId);
+    const tabId = `preview_${previewId}`;
+    const remainingHarTabs = harTabsRef.current.filter((tab) => tab.id !== tabId || Boolean(tab.fileId));
+    setHarTabs(remainingHarTabs);
+    setFileTabOrder((currentOrder) => currentOrder.filter((tab) => (
+      tab.kind !== 'har' || tab.id !== tabId
+    )));
+    setActiveHarTabId((currentTabId) => {
+      if (currentTabId !== tabId) return currentTabId;
+      const nextTabId = remainingHarTabs[0]?.id ?? null;
+      if (!nextTabId) setHarShowUploader(true);
+      return nextTabId;
+    });
+  }, []);
+
+  const handleHarPreviewConsumed = useCallback((tabId: string) => {
+    setHarTabs((currentTabs) => currentTabs.map((tab) => (
+      tab.id === tabId ? { ...tab, previewSnapshot: undefined } : tab
+    )));
+  }, []);
+
   /** Open a new HAR tab for the given upload result.
    *  Pass switchTool=true (default false) to also activate the HAR tool tab. */
   const openHarTab = useCallback((result: UploadResult, switchTool = false) => {
+    if (result.previewId && closedHarPreviewIdsRef.current.has(result.previewId)) {
+      return;
+    }
+
+    const provisionalTab = result.previewId
+      ? harTabs.find((tab) => tab.previewId === result.previewId)
+      : undefined;
+    if (provisionalTab) {
+      setHarTabs((currentTabs) => currentTabs.map((tab) => tab.id === provisionalTab.id
+        ? {
+            ...tab,
+            fileId: result.fileId,
+            fileName: result.fileName,
+            generation: tab.generation + 1,
+          }
+        : tab));
+      setActiveHarTabId(provisionalTab.id);
+      setHarShowUploader(false);
+      if (switchTool) setActiveTool('har');
+      registerRecentHarFile(result.fileName, new File([], result.fileName));
+      return;
+    }
+
     const normalizedName = result.fileName.trim().toLowerCase();
     const existingTab = harTabs.find(
       tab => tab.fileName.trim().toLowerCase() === normalizedName
@@ -234,7 +357,7 @@ const App: React.FC = () => {
     if (existingTab) {
       setActiveHarTabId(existingTab.id);
       setHarShowUploader(false);
-      if (switchTool) setActiveTool('har');
+      if (switchTool) activateFileTab({ id: existingTab.id, kind: 'har' });
       return;
     }
 
@@ -246,14 +369,16 @@ const App: React.FC = () => {
       id: `tab_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       fileId: result.fileId,
       fileName: result.fileName,
+      generation: 0,
     };
     setHarTabs(prev => [...prev, newTab]);
+    setFileTabOrder(prev => [...prev, { id: newTab.id, kind: 'har' }]);
     setActiveHarTabId(newTab.id);
     setHarShowUploader(false);
     if (switchTool) setActiveTool('har');
     registerRecentHarFile(result.fileName, new File([], result.fileName));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [harTabs]);
+  }, [activateFileTab, harTabs]);
 
   const handleHarFileUpload = useCallback(async (result: UploadResult) => {
     openHarTab(result);
@@ -308,9 +433,7 @@ const App: React.FC = () => {
       );
       if (!existingTab) return false;
 
-      setActiveTool('har');
-      setActiveHarTabId(existingTab.id);
-      setHarShowUploader(false);
+      activateFileTab({ id: existingTab.id, kind: 'har' });
       setIsUploadModalOpen(false);
       return true;
     }
@@ -320,27 +443,10 @@ const App: React.FC = () => {
     );
     if (!existingTab) return false;
 
-    setActiveTool('console');
-    setActiveLogTabId(existingTab.id);
+    activateFileTab({ id: existingTab.id, kind: 'log' });
     setIsUploadModalOpen(false);
     return true;
-  }, [harTabs, logTabs]);
-
-  /** Close a HAR file tab; activate the nearest remaining tab */
-  const closeHarTab = (tabId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setHarTabs(prev => {
-      const idx = prev.findIndex(t => t.id === tabId);
-      const next = prev.filter(t => t.id !== tabId);
-      if (activeHarTabId === tabId) {
-        // Activate the tab to the left, or the right if it was the first
-        const nextActive = next[Math.max(0, idx - 1)]?.id ?? next[0]?.id ?? null;
-        setActiveHarTabId(nextActive);
-        if (next.length === 0) setHarShowUploader(true);
-      }
-      return next;
-    });
-  };
+  }, [activateFileTab, harTabs, logTabs]);
 
   /** Triggered by an analyzer tab-bar plus button. */
   const handleAddTabClick = () => {
@@ -359,7 +465,7 @@ const App: React.FC = () => {
     );
     if (existingTab) {
       setActiveLogTabId(existingTab.id);
-      if (switchTool) setActiveTool('console');
+      if (switchTool) activateFileTab({ id: existingTab.id, kind: 'log' });
       return;
     }
 
@@ -374,27 +480,61 @@ const App: React.FC = () => {
       localData: opts.localData,
     };
     setLogTabs(prev => [...prev, newTab]);
+    setFileTabOrder(prev => [...prev, { id: newTab.id, kind: 'log' }]);
     setActiveLogTabId(newTab.id);
     if (switchTool) setActiveTool('console');
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [logTabs]);
+  }, [activateFileTab, logTabs]);
 
-  const closeLogTab = (tabId: string, e: React.MouseEvent) => {
+  /** Close a file tab and preserve the combined cross-analyzer order. */
+  const closeFileTab = (tab: AnalyzerFileTabRef, e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
-    setLogTabs(prev => {
-      const idx = prev.findIndex(t => t.id === tabId);
-      const next = prev.filter(t => t.id !== tabId);
-      if (activeLogTabId === tabId) {
-        const nextActive = next[Math.max(0, idx - 1)]?.id ?? next[0]?.id ?? null;
-        setActiveLogTabId(nextActive);
-      }
-      return next;
-    });
-  };
 
-  const handleLogTabSwitch = (tabId: string) => {
-    if (tabId === activeLogTabId) return;
-    setActiveLogTabId(tabId);
+    const closedIndex = fileTabOrder.findIndex(candidate => (
+      candidate.id === tab.id && candidate.kind === tab.kind
+    ));
+    const nextOrder = fileTabOrder.filter(candidate => !(
+      candidate.id === tab.id && candidate.kind === tab.kind
+    ));
+    const wasDisplayed = tab.kind === 'har'
+      ? activeTool === 'har' && activeHarTabId === tab.id
+      : activeTool === 'console' && activeLogTabId === tab.id;
+
+    setFileTabOrder(nextOrder);
+
+    if (tab.kind === 'har') {
+      const closingHarTab = harTabs.find(candidate => candidate.id === tab.id);
+      if (closingHarTab?.previewId && !closingHarTab.fileId) {
+        closedHarPreviewIdsRef.current.add(closingHarTab.previewId);
+        harPreviewSessionsRef.current.get(closingHarTab.previewId)?.cancel();
+        harPreviewSessionsRef.current.delete(closingHarTab.previewId);
+      }
+      const nextHarTabs = harTabs.filter(candidate => candidate.id !== tab.id);
+      setHarTabs(nextHarTabs);
+      if (activeHarTabId === tab.id && !wasDisplayed) {
+        setActiveHarTabId(nextHarTabs[0]?.id ?? null);
+      }
+      if (nextHarTabs.length === 0) setHarShowUploader(true);
+    } else {
+      const nextLogTabs = logTabs.filter(candidate => candidate.id !== tab.id);
+      setLogTabs(nextLogTabs);
+      if (activeLogTabId === tab.id && !wasDisplayed) {
+        setActiveLogTabId(nextLogTabs[0]?.id ?? null);
+      }
+    }
+
+    if (!wasDisplayed) return;
+
+    const nextTab = nextOrder[closedIndex] ?? nextOrder[closedIndex - 1];
+    if (nextTab) {
+      activateFileTab(nextTab);
+      return;
+    }
+
+    setActiveHarTabId(null);
+    setActiveLogTabId(null);
+    setHarShowUploader(true);
+    setActiveTool('har');
   };
 
   const registerRecentLogFile = (fileName: string, fileObj: File) => {
@@ -584,25 +724,69 @@ const App: React.FC = () => {
     logTabs.length === 0 &&
     !isLogProcessing;
 
+  const analyzerFileTabs = fileTabOrder.flatMap((tabRef) => {
+    const fileTab = tabRef.kind === 'har'
+      ? harTabs.find(tab => tab.id === tabRef.id)
+      : logTabs.find(tab => tab.id === tabRef.id);
+
+    return fileTab ? [{ ...tabRef, fileName: fileTab.fileName }] : [];
+  });
+  const canOpenAnotherAnalyzerFile =
+    harTabs.length < MAX_HAR_TABS || logTabs.length < MAX_LOG_TABS;
+
+  const handleFileTabKeyDown = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    currentTab: AnalyzerFileTabRef
+  ) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+
+    event.preventDefault();
+    const currentIndex = analyzerFileTabs.findIndex(tab => (
+      tab.id === currentTab.id && tab.kind === currentTab.kind
+    ));
+    if (currentIndex < 0) return;
+
+    let nextIndex = currentIndex;
+    if (event.key === 'ArrowLeft') {
+      nextIndex = (currentIndex - 1 + analyzerFileTabs.length) % analyzerFileTabs.length;
+    } else if (event.key === 'ArrowRight') {
+      nextIndex = (currentIndex + 1) % analyzerFileTabs.length;
+    } else if (event.key === 'Home') {
+      nextIndex = 0;
+    } else if (event.key === 'End') {
+      nextIndex = analyzerFileTabs.length - 1;
+    }
+
+    const nextTab = analyzerFileTabs[nextIndex];
+    activateFileTab(nextTab);
+    requestAnimationFrame(() => {
+      document.getElementById(`analyzer-file-tab-${nextTab.kind}-${nextTab.id}`)?.focus();
+    });
+  };
+
   const isDocsRoute = pathname === '/docs';
   const headerTitle = isDocsRoute
     ? 'Documentation'
     : showUnifiedUploader
     ? 'File Analyzer'
-    : activeTool === 'har'
-    ? 'HAR Analyzer'
+    : activeTool === 'har' || activeTool === 'console'
+    ? 'File Analyzer'
     : activeTool === 'compare'
     ? 'HAR Compare'
-    : 'Console Log Analyzer';
+    : activeTool === 'sanitizer'
+    ? 'HAR Sanitizer'
+    : 'File Analyzer';
   const headerSubtitle = isDocsRoute
     ? 'Curated usage guide for HAR and console log analysis'
     : showUnifiedUploader
     ? 'HAR & Console Log Analysis'
-    : activeTool === 'har'
-    ? 'Network Analysis Tool'
+    : activeTool === 'har' || activeTool === 'console'
+    ? 'HAR & Console Log Analysis'
     : activeTool === 'compare'
     ? 'Side-by-side HAR comparison'
-    : 'Console Log Analysis';
+    : activeTool === 'sanitizer'
+    ? 'Privacy-safe evidence preparation'
+    : 'HAR & Console Log Analysis';
   const headerActionLabel = isDocsRoute ? 'Back to Analyzer' : 'Documentation';
   const handleHeaderAction = () => {
     navigateTo(isDocsRoute ? '/' : '/docs');
@@ -610,19 +794,23 @@ const App: React.FC = () => {
 
   return (
     <div className="app-container">
-      {isUploadModalOpen && (
+      <div
+        className={isUploadModalOpen
+          ? 'sanitize-modal-overlay upload-workbench-modal-overlay'
+          : 'background-upload-runtime'}
+        onMouseDown={(event) => {
+          if (isUploadModalOpen && event.target === event.currentTarget) setIsUploadModalOpen(false);
+        }}
+      >
         <div
-          className="sanitize-modal-overlay upload-workbench-modal-overlay"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setIsUploadModalOpen(false);
-          }}
+          className={isUploadModalOpen
+            ? 'sanitize-modal upload-workbench-modal'
+            : 'background-upload-runtime__inner'}
+          role={isUploadModalOpen ? 'dialog' : undefined}
+          aria-modal={isUploadModalOpen ? true : undefined}
+          aria-labelledby={isUploadModalOpen ? 'upload-workbench-modal-title' : undefined}
         >
-          <div
-            className="sanitize-modal upload-workbench-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="upload-workbench-modal-title"
-          >
+          {isUploadModalOpen && (
             <div className="sanitize-modal-header upload-workbench-modal-header">
               <div className="sanitize-modal-icon" aria-hidden="true">
                 <UploadIcon />
@@ -632,7 +820,8 @@ const App: React.FC = () => {
                 <p>Add another HAR file or console log to the analyzer.</p>
               </div>
             </div>
-            <div className="upload-workbench-modal-body">
+          )}
+            <div className={isUploadModalOpen ? 'upload-workbench-modal-body' : 'background-upload-runtime__body'}>
               <UnifiedUploader
                 onHarFileUpload={async (result) => {
                   await handleUnifiedHarUpload(result);
@@ -655,8 +844,14 @@ const App: React.FC = () => {
                   void clearRecentFiles('log');
                 }}
                 onOpenExistingRecentFile={handleOpenExistingRecentFile}
+                onHarPreviewSnapshot={handleHarPreviewSnapshot}
+                onHarPreviewSessionCreated={handleHarPreviewSessionCreated}
+                onHarPreviewRemoved={handleHarPreviewRemoved}
+                workspaceVisible={isUploadModalOpen}
+                inputId="unified-file-input-modal"
               />
             </div>
+          {isUploadModalOpen && (
             <button
               className="sanitize-modal-close"
               type="button"
@@ -665,9 +860,9 @@ const App: React.FC = () => {
             >
               <CloseIcon />
             </button>
-          </div>
+          )}
         </div>
-      )}
+      </div>
 
       <header className="app-header">
         <div className="header-brand">
@@ -704,8 +899,7 @@ const App: React.FC = () => {
         ) : (
           <>
         {/* ── Unified uploader — shown when no files are open in either tool ── */}
-        {showUnifiedUploader && (
-          <div className="upload-section">
+        <div className={showUnifiedUploader ? 'upload-section' : 'background-upload-runtime'}>
             <UnifiedUploader
               onHarFileUpload={handleUnifiedHarUpload}
               harRecentFiles={harRecentFiles}
@@ -721,31 +915,27 @@ const App: React.FC = () => {
                 void clearRecentFiles('log');
               }}
               onOpenExistingRecentFile={handleOpenExistingRecentFile}
+              onHarPreviewSnapshot={handleHarPreviewSnapshot}
+              onHarPreviewSessionCreated={handleHarPreviewSessionCreated}
+              onHarPreviewRemoved={handleHarPreviewRemoved}
+              workspaceVisible={showUnifiedUploader}
+              inputId="unified-file-input-home"
             />
-          </div>
-        )}
+        </div>
 
         {/* Tool Selector + all tool content — hidden while the unified home screen is shown */}
         {!showUnifiedUploader && (<>
         <div className="tool-selector">
           <button
-            className={`tool-tab ${activeTool === 'har' ? 'active' : ''}`}
-            onClick={() => handleToolChange('har')}
+            className={`tool-tab ${activeTool === 'har' || activeTool === 'console' ? 'active' : ''}`}
+            onClick={() => handleToolChange(lastAnalyzerTool)}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+              <path d="M5 3h9l5 5v13H5z"></path>
+              <path d="M14 3v5h5"></path>
+              <path d="M8 12h8M8 16h8" strokeLinecap="round"></path>
             </svg>
-            HAR
-          </button>
-          <button
-            className={`tool-tab ${activeTool === 'console' ? 'active' : ''}`}
-            onClick={() => handleToolChange('console')}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polyline points="4 17 10 11 4 5"></polyline>
-              <line x1="12" y1="19" x2="20" y2="19"></line>
-            </svg>
-            Console
+            Analyzer
           </button>
           <button
             className={`tool-tab ${activeTool === 'compare' ? 'active' : ''}`}
@@ -773,58 +963,91 @@ const App: React.FC = () => {
           </button>
         </div>
 
+        {/* One chronological file rail shared by every deterministic analyzer. */}
+        {analyzerFileTabs.length > 0 && (
+          <div className="har-file-tabs analyzer-file-tabs">
+            <div
+              className="har-file-tabs-list"
+              role="tablist"
+              aria-label="Open analyzer files"
+            >
+              {analyzerFileTabs.map(tab => {
+                const isActive = tab.kind === 'har'
+                  ? activeTool === 'har' && tab.id === activeHarTabId
+                  : activeTool === 'console' && tab.id === activeLogTabId;
+                const analyzerLabel = tab.kind === 'har' ? 'HAR' : 'LOG';
+
+                return (
+                  <div
+                    key={`${tab.kind}-${tab.id}`}
+                    className={`har-file-tab ${isActive ? 'active' : ''}`}
+                    title={tab.fileName}
+                  >
+                    <button
+                      id={`analyzer-file-tab-${tab.kind}-${tab.id}`}
+                      type="button"
+                      className="har-file-tab-select"
+                      role="tab"
+                      aria-label={`${analyzerLabel} file: ${tab.fileName}`}
+                      aria-selected={isActive}
+                      tabIndex={isActive ? 0 : -1}
+                      onClick={() => activateFileTab(tab)}
+                      onKeyDown={(event) => handleFileTabKeyDown(event, tab)}
+                    >
+                      {tab.kind === 'har' ? (
+                        <svg className="har-file-tab-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+                          <path d="M3 2h7l3 3v9H3z" />
+                          <path d="M10 2v3h3" />
+                        </svg>
+                      ) : (
+                        <svg className="har-file-tab-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+                          <path d="M3 4l4 4-4 4" />
+                          <path d="M8.5 12H13" />
+                        </svg>
+                      )}
+                      <span className={`analyzer-file-tab-kind analyzer-file-tab-kind-${tab.kind}`}>
+                        {analyzerLabel}
+                      </span>
+                      <span className="har-file-tab-name">{tab.fileName}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="har-file-tab-close"
+                      aria-label={`Close ${tab.fileName}`}
+                      onClick={(event) => closeFileTab(tab, event)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
+
+              {canOpenAnotherAnalyzerFile && (
+                <button
+                  type="button"
+                  className="har-file-tab-add"
+                  onClick={handleAddTabClick}
+                  title="Open another analyzer file"
+                  aria-label="Open another analyzer file"
+                >
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <path d="M8 3v10M3 8h10" strokeLinecap="round" />
+                  </svg>
+                </button>
+              )}
+            </div>
+
+            <button type="button" className="har-file-tabs-upload" onClick={handleAddTabClick}>
+              <UploadIcon />
+              <span>Upload New</span>
+            </button>
+          </div>
+        )}
+
 
         {/* HAR Analyzer Tool — multi-tab */}
         {activeTool === 'har' && (
           <>
-            {/* ── HAR file tab bar ─────────────────────────────────────── */}
-            {harTabs.length > 0 && (
-              <div className="har-file-tabs">
-                <div className="har-file-tabs-list">
-                  {harTabs.map(tab => (
-                  <button
-                    key={tab.id}
-                    className={`har-file-tab ${tab.id === activeHarTabId ? 'active' : ''}`}
-                    onClick={() => handleHarFileTabSwitch(tab.id)}
-                    title={tab.fileName}
-                  >
-                    <svg className="har-file-tab-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                      <path d="M3 2h7l3 3v9H3z" />
-                      <path d="M10 2v3h3" />
-                    </svg>
-                    <span className="har-file-tab-name">{tab.fileName}</span>
-                    <span
-                      className="har-file-tab-close"
-                      role="button"
-                      aria-label={`Close ${tab.fileName}`}
-                      onClick={(e) => closeHarTab(tab.id, e)}
-                    >
-                      ×
-                    </span>
-                  </button>
-                  ))}
-
-                  {harTabs.length < MAX_HAR_TABS && (
-                    <button
-                      className="har-file-tab-add"
-                      onClick={handleAddTabClick}
-                      title="Open another HAR file"
-                      aria-label="Open another analyzer file"
-                    >
-                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M8 3v10M3 8h10" strokeLinecap="round" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
-
-                <button className="har-file-tabs-upload" onClick={handleAddTabClick}>
-                  <UploadIcon />
-                  <span>Upload New</span>
-                </button>
-              </div>
-            )}
-
             {/* ── Upload screen when no files are open yet ─────────────── */}
             {harShowUploader && harTabs.length === 0 && (
               <div className="upload-section">
@@ -844,7 +1067,7 @@ const App: React.FC = () => {
             {/* ── One HarTabContent per open file (all mounted, only active shown) */}
             {harTabs.map(tab => (
               <HarTabContent
-                key={tab.id}
+                key={`${tab.id}:${tab.generation}`}
                 tabId={tab.id}
                 fileId={tab.fileId}
                 fileName={tab.fileName}
@@ -857,6 +1080,8 @@ const App: React.FC = () => {
                   setHarRecentFiles([]);
                   localStorage.removeItem(HAR_RECENT_FILES_KEY);
                 }}
+                previewSnapshot={tab.previewSnapshot}
+                onPreviewConsumed={() => handleHarPreviewConsumed(tab.id)}
               />
             ))}
           </>
@@ -885,54 +1110,6 @@ const App: React.FC = () => {
                     Parse locally instead
                   </button>
                 )}
-              </div>
-            )}
-
-            {/* ── Console file tab bar ─────────────────────────────────── */}
-            {logTabs.length > 0 && (
-              <div className="har-file-tabs">
-                <div className="har-file-tabs-list">
-                  {logTabs.map(tab => (
-                  <button
-                    key={tab.id}
-                    className={`har-file-tab ${tab.id === activeLogTabId ? 'active' : ''}`}
-                    onClick={() => handleLogTabSwitch(tab.id)}
-                    title={tab.fileName}
-                  >
-                    <svg className="har-file-tab-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                      <polyline points="4 17 10 11 4 5" />
-                      <line x1="12" y1="19" x2="20" y2="19" />
-                    </svg>
-                    <span className="har-file-tab-name">{tab.fileName}</span>
-                    <span
-                      className="har-file-tab-close"
-                      role="button"
-                      aria-label={`Close ${tab.fileName}`}
-                      onClick={(e) => closeLogTab(tab.id, e)}
-                    >
-                      ×
-                    </span>
-                  </button>
-                  ))}
-
-                  {logTabs.length < MAX_LOG_TABS && (
-                    <button
-                      className="har-file-tab-add"
-                      onClick={handleAddTabClick}
-                      title="Open another console log file"
-                      aria-label="Open another analyzer file"
-                    >
-                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M8 3v10M3 8h10" strokeLinecap="round" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
-
-                <button className="har-file-tabs-upload" onClick={handleAddTabClick}>
-                  <UploadIcon />
-                  <span>Upload New</span>
-                </button>
               </div>
             )}
 
@@ -983,7 +1160,14 @@ const App: React.FC = () => {
           ref={compareWrapperRef}
           style={{ display: activeTool === 'compare' ? undefined : 'none' }}
         >
-          <HarCompare openTabs={harTabs.map(t => ({ fileId: t.fileId, fileName: t.fileName }))} />
+          <HarCompare
+            openTabs={harTabs.map(t => ({ fileId: t.fileId, fileName: t.fileName }))}
+            openLogTabs={logTabs.map(t => ({
+              fileId: t.fileId,
+              fileName: t.fileName,
+              localData: t.localData,
+            }))}
+          />
         </div>
           </>
         )}

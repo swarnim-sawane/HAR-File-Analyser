@@ -1,0 +1,4 @@
+interface:
+  display_name: "HAR Analyzer"
+  short_description: "Analyze HAR and console evidence safely"
+  default_prompt: "Use $analyze-har-evidence to create a fast, visual, evidence-backed HAR or console report."

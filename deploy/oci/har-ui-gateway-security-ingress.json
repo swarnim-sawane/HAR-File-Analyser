@@ -1,0 +1,15 @@
+[
+  {
+    "source": "0.0.0.0/0",
+    "sourceType": "CIDR_BLOCK",
+    "protocol": "6",
+    "isStateless": false,
+    "description": "Public HTTPS to API Gateway",
+    "tcpOptions": {
+      "destinationPortRange": {
+        "min": 443,
+        "max": 443
+      }
+    }
+  }
+]

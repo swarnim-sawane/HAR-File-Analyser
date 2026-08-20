@@ -7,7 +7,7 @@ import dotenv from 'dotenv';
 import { connectDatabases, closeDatabases, getDatabase, getRedis } from './config/database';
 import { configureOutboundProxy } from './config/outboundProxy';
 import { buildAllowedOrigins, isOriginAllowed } from './config/corsOrigins';
-import { setSocketIOInstance } from './utils/socketHelper';
+import { getSocketEventTransport, setSocketIOInstance } from './utils/socketHelper';
 import { buildOpenApiDocument, renderOpenApiDocsHtml } from './openapiSpec';
 import {
   cleanupExpiredAnalysisData,
@@ -15,6 +15,7 @@ import {
 } from './services/retentionCleanupService';
 import { getArtifactStore } from './services/artifactStore';
 import { getRuntimeBinding } from './config/runtimeBinding';
+import { probeInternalWorkerReadiness } from './config/internalWorkerReadiness';
 
 dotenv.config();
 const outboundProxyUrl = configureOutboundProxy();
@@ -85,7 +86,14 @@ app.get('/ready', async (_req, res) => {
 
   try {
     const status = await buildOpsStatus();
-    return res.status(status.status === 'error' ? 503 : 200).json(status);
+    const worker = await probeInternalWorkerReadiness();
+    const workerFailed = worker.configured && !worker.ready;
+    const responseStatus = workerFailed
+      ? { ...status, status: 'error', color: 'red', internalWorker: worker }
+      : worker.configured
+        ? { ...status, internalWorker: worker }
+        : status;
+    return res.status(status.status === 'error' || workerFailed ? 503 : 200).json(responseStatus);
   } catch (error) {
     return res.status(503).json({
       status: 'error',
@@ -257,8 +265,16 @@ async function initializeApplication() {
     await getArtifactStore().probe();
     console.log('');
 
-    // 2. Set up Redis subscriber for worker events
-    redisSubscriber = await setupRedisSubscriber(io);
+    // 2. Set up cross-replica socket events only when the Redis transport is
+    // explicitly safe. OCI Hosted defaults to local Socket.IO plus client
+    // status polling so the managed Cache proxy never enters subscriber mode.
+    const socketEventTransport = getSocketEventTransport();
+    if (socketEventTransport === 'redis') {
+      redisSubscriber = await setupRedisSubscriber(io);
+    } else {
+      redisSubscriber = null;
+      console.log('Socket events use local delivery; Redis SUBSCRIBE is disabled.');
+    }
     retentionCleanupTimer = setupRetentionCleanup();
 
     // 3. Import routes AFTER database connection
@@ -301,6 +317,9 @@ async function initializeApplication() {
     console.error('❌ Failed to start server:', error);
     startupError = error instanceof Error ? error.message : 'Application initialization failed.';
     applicationReady = false;
+    if (process.env.FAIL_FAST_ON_STARTUP_ERROR === 'true') {
+      setImmediate(() => void shutdown().finally(() => process.exit(1)));
+    }
   }
 }
 

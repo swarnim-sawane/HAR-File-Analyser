@@ -45,7 +45,10 @@ export function buildPostgresPoolConfig(env: NodeJS.ProcessEnv = process.env): P
     max: positiveInteger(env.POSTGRES_POOL_MAX, 20),
     connectionTimeoutMillis: positiveInteger(env.POSTGRES_CONNECT_TIMEOUT_MS, 10_000),
     idleTimeoutMillis: positiveInteger(env.POSTGRES_IDLE_TIMEOUT_MS, 30_000),
-    statement_timeout: positiveInteger(env.POSTGRES_STATEMENT_TIMEOUT_MS, 60_000),
+    query_timeout: positiveInteger(
+      env.POSTGRES_QUERY_TIMEOUT_MS ?? env.POSTGRES_STATEMENT_TIMEOUT_MS,
+      60_000,
+    ),
     application_name: env.POSTGRES_APPLICATION_NAME?.trim() || 'har-analyzer',
     ssl: sslMode === 'disable'
       ? false

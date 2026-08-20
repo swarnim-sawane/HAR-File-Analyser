@@ -265,8 +265,12 @@ describe('RequestFlowGraphView', () => {
     expect(screen.getByTestId('react-flow-mock')).toHaveAttribute('data-has-on-edges-change', 'true');
     expect(screen.getByTestId('react-flow-controls')).toBeInTheDocument();
     expect(screen.getByTestId('react-flow-minimap')).toHaveAttribute('data-position', 'top-right');
-    expect(screen.getByTestId('react-flow-panel-top-left')).toBeInTheDocument();
-    expect(screen.queryByTestId('react-flow-panel-top-right')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('react-flow-panel-bottom-center')).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/request flow control sidebar/i)).toHaveClass('is-open');
+    expect(screen.getByRole('button', { name: /hide request flow controls/i })).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    );
     expect(screen.getByLabelText(/scattered view diagnostic controls/i)).toBeInTheDocument();
     expect(screen.queryByText('Legend')).not.toBeInTheDocument();
     expect(screen.queryByText('Request Flow Summary')).not.toBeInTheDocument();
@@ -281,11 +285,12 @@ describe('RequestFlowGraphView', () => {
     expect(screen.getAllByTestId('react-flow-edge').map((edge) => edge.getAttribute('data-edge-type'))).toEqual([
       'default',
     ]);
-    expect(screen.getAllByRole('button', { name: /open in analyzer/i })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: /open request details/i })).toHaveLength(2);
     expect(screen.getByRole('button', { name: /app\.js 503/i })).toBeInTheDocument();
   });
 
-  it('renders a compact diagnostic toolbar instead of separate legend and summary panels', () => {
+  it('starts open and hides or restores the diagnostic toolbar from its left-edge handle', async () => {
+    const user = userEvent.setup();
     const entries: Entry[] = [
       makeEntry({
         request: { ...makeEntry().request, url: 'https://portal.example.com/' },
@@ -300,6 +305,11 @@ describe('RequestFlowGraphView', () => {
     renderGraphView({ entries });
 
     expect(screen.getByLabelText(/scattered view diagnostic controls/i)).toBeInTheDocument();
+    const hideControls = screen.getByRole('button', { name: /hide request flow controls/i });
+    expect(hideControls).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    );
     expect(screen.getByRole('button', { name: /all/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /errors/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /slow/i })).toBeInTheDocument();
@@ -307,6 +317,23 @@ describe('RequestFlowGraphView', () => {
     expect(screen.getByText(/shown/i)).toBeInTheDocument();
     expect(screen.queryByText('Legend')).not.toBeInTheDocument();
     expect(screen.queryByText('Request Flow Summary')).not.toBeInTheDocument();
+
+    await user.click(hideControls);
+
+    expect(screen.queryByLabelText(/scattered view diagnostic controls/i)).not.toBeInTheDocument();
+    const showControls = screen.getByRole('button', { name: /show request flow controls/i });
+    expect(showControls).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    );
+
+    await user.click(showControls);
+
+    expect(screen.getByLabelText(/scattered view diagnostic controls/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /hide request flow controls/i })).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    );
   });
 
   it('lists failed requests as jump targets and focuses the selected error in the graph', async () => {
@@ -352,7 +379,7 @@ describe('RequestFlowGraphView', () => {
     ]);
   });
 
-  it('forwards node selection back to the analyzer callback', async () => {
+  it('forwards node selection to the request-details callback', async () => {
     const user = userEvent.setup();
     const entries: Entry[] = [
       makeEntry({
@@ -363,13 +390,13 @@ describe('RequestFlowGraphView', () => {
 
     renderGraphView({ entries, onNodeClick: handleNodeClick });
 
-    await user.click(screen.getByRole('button', { name: /open in analyzer/i }));
+    await user.click(screen.getByRole('button', { name: /open request details/i }));
 
     expect(handleNodeClick).toHaveBeenCalledTimes(1);
     expect(handleNodeClick).toHaveBeenCalledWith(entries[0]);
   });
 
-  it('renders request details in node preview cards for scattered view hover access', async () => {
+  it('does not render a hover preview card over the graph nodes', async () => {
     const user = userEvent.setup();
     const entries: Entry[] = [
       makeEntry({
@@ -401,28 +428,14 @@ describe('RequestFlowGraphView', () => {
 
     renderGraphView({ entries });
 
-    const preview = screen.getByRole('tooltip', {
-      name: /POST \/api\/orders\?id=42 404 request preview/i,
-    });
-
-    expect(preview).toHaveTextContent('Request preview');
-    expect(preview).toHaveTextContent('POST 404');
-    expect(preview).toHaveTextContent('/api/orders?id=42');
-    expect(preview).toHaveTextContent('portal.example.com');
-    expect(preview).toHaveTextContent('404 Not Found');
-    expect(preview).toHaveTextContent('379ms');
-    expect(preview).toHaveTextContent('0 B');
-    expect(preview).toHaveTextContent('application/json');
-    expect(preview).toHaveTextContent('Wait 340ms');
-    expect(preview).toHaveTextContent('Receive 27ms');
-    expect(preview).toHaveTextContent('Missing response body');
-
-    const requestNode = screen.getByRole('button', { name: /open in analyzer post/i });
+    const requestNode = screen.getByRole('button', { name: /open request details post/i });
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
     expect(screen.getByTestId('react-flow-node')).toHaveAttribute('data-node-style-z-index', '3');
 
     await user.hover(requestNode);
 
-    expect(screen.getByTestId('react-flow-node')).toHaveAttribute('data-node-style-z-index', '1000');
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    expect(screen.getByTestId('react-flow-node')).toHaveAttribute('data-node-style-z-index', '3');
   });
 
   it('auto-focuses the likely issue path and can restore the normal graph', async () => {
@@ -618,7 +631,7 @@ describe('RequestFlowGraphView', () => {
       'unset',
       'unset',
     ]);
-    expect(screen.getAllByRole('button', { name: /open in analyzer/i })[0]).toHaveStyle({
+    expect(screen.getAllByRole('button', { name: /open request details/i })[0]).toHaveStyle({
       opacity: '0.54',
       filter: 'grayscale(0.72) saturate(0.48)',
     });

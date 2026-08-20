@@ -1,6 +1,7 @@
 param(
   [string]$AppImage = "har-analyzer-app:hosted-local",
   [string]$WorkerImage = "har-analyzer-worker:hosted-local",
+  [string]$CombinedImage = "har-analyzer-combined:hosted-local",
   [string]$NodeImage = $env:HAR_NODE_IMAGE
 )
 
@@ -49,7 +50,11 @@ Invoke-HostedImageBuild `
   -Dockerfile (Join-Path $repoRoot "deploy/hosted/Dockerfile.worker") `
   -Image $WorkerImage
 
-foreach ($image in @($AppImage, $WorkerImage)) {
+Invoke-HostedImageBuild `
+  -Dockerfile (Join-Path $repoRoot "deploy/hosted/Dockerfile.combined") `
+  -Image $CombinedImage
+
+foreach ($image in @($AppImage, $WorkerImage, $CombinedImage)) {
   $architecture = docker image inspect $image --format '{{.Architecture}}'
   if ($LASTEXITCODE -ne 0) {
     throw "Could not inspect built image $image."
@@ -80,3 +85,4 @@ foreach ($image in @($AppImage, $WorkerImage)) {
 Write-Host "Hosted Deployment images built successfully:"
 Write-Host "  $AppImage"
 Write-Host "  $WorkerImage"
+Write-Host "  $CombinedImage"

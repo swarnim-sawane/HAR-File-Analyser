@@ -17,12 +17,11 @@ import {
 } from './Icons';
 import { Entry, HarFile } from '../types/har';
 import { apiClient } from '../services/apiClient';
+import { BACKEND_BASE_URL } from '../services/runtimeUrls';
 import { HAR_FILE_INPUT_ACCEPT } from '../utils/uploadFileTypes';
+import ConsoleLogCompare, { OpenLogTab } from './ConsoleLogCompare';
 
-const BACKEND_URL =
-  (import.meta as any).env?.VITE_BACKEND_URL ||
-  (import.meta as any).env?.VITE_API_URL ||
-  'http://localhost:4000';
+const BACKEND_URL = BACKEND_BASE_URL;
 
 function percentile(sorted: number[], p: number): number {
   if (sorted.length === 0) return 0;
@@ -243,6 +242,7 @@ function buildWaterfall(
 }
 
 type CompareTab = 'stats' | 'requests' | 'waterfall' | 'ai';
+type CompareMode = 'har' | 'console';
 
 interface OpenTab {
   fileId: string;
@@ -251,6 +251,7 @@ interface OpenTab {
 
 interface HarCompareProps {
   openTabs?: OpenTab[];
+  openLogTabs?: OpenLogTab[];
 }
 
 interface DropZoneProps {
@@ -475,6 +476,7 @@ interface CompareSnapshot {
   aiText: string;
   aiError: string | null;
   diffFilter: 'all' | 'regressions' | 'improvements' | 'new' | 'fixed';
+  compareMode: CompareMode;
 }
 let compareSnapshot: CompareSnapshot = {
   harA: null, harB: null,
@@ -482,11 +484,13 @@ let compareSnapshot: CompareSnapshot = {
   activeTab: 'stats',
   aiText: '', aiError: null,
   diffFilter: 'all',
+  compareMode: 'har',
 };
 
-const HarCompare: React.FC<HarCompareProps> = ({ openTabs = [] }) => {
+const HarCompare: React.FC<HarCompareProps> = ({ openTabs = [], openLogTabs = [] }) => {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const navShellRef = useRef<HTMLDivElement | null>(null);
+  const [compareMode, setCompareMode] = useState<CompareMode>(compareSnapshot.compareMode);
   const [harA, setHarA] = useState<HarFile | null>(compareSnapshot.harA);
   const [harB, setHarB] = useState<HarFile | null>(compareSnapshot.harB);
   const [nameA, setNameA] = useState<string | null>(compareSnapshot.nameA);
@@ -506,8 +510,8 @@ const HarCompare: React.FC<HarCompareProps> = ({ openTabs = [] }) => {
 
   // Keep the snapshot in sync so a tab switch never loses work.
   useEffect(() => {
-    compareSnapshot = { harA, harB, nameA, nameB, activeTab, aiText, aiError, diffFilter };
-  }, [harA, harB, nameA, nameB, activeTab, aiText, aiError, diffFilter]);
+    compareSnapshot = { harA, harB, nameA, nameB, activeTab, aiText, aiError, diffFilter, compareMode };
+  }, [harA, harB, nameA, nameB, activeTab, aiText, aiError, diffFilter, compareMode]);
 
   const scrollCompareWorkspaceIntoView = useCallback((behavior: ScrollBehavior = 'auto') => {
     const root = rootRef.current;
@@ -840,6 +844,31 @@ Formatting rules:
 
   return (
     <div className="cmp-root" ref={rootRef}>
+      <div className="cmp-mode-switch" role="tablist" aria-label="Compare type">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={compareMode === 'har'}
+          className={compareMode === 'har' ? 'is-active' : ''}
+          onClick={() => setCompareMode('har')}
+        >
+          HAR Compare
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={compareMode === 'console'}
+          className={compareMode === 'console' ? 'is-active' : ''}
+          onClick={() => setCompareMode('console')}
+        >
+          Console Log Compare
+        </button>
+      </div>
+
+      {compareMode === 'console' ? (
+        <ConsoleLogCompare openTabs={openLogTabs} />
+      ) : (
+        <>
       {!ready && (
         <>
           <section className="cmp-hero">
@@ -1230,6 +1259,8 @@ Formatting rules:
               )}
             </section>
           )}
+        </>
+      )}
         </>
       )}
     </div>

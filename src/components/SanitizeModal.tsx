@@ -2,10 +2,9 @@
 import React, { useState, useEffect } from 'react';
 import { defaultScrubItems } from '../utils/har_sanitize';
 import type { UploadResult } from '../services/chunkedUploader';
+import { API_BASE_URL } from '../services/runtimeUrls';
 import type { ScrubType, ScrubState } from './HarSanitizer';
 import { CloseIcon } from './Icons';
-
-const API_BASE_URL = (import.meta as any).env?.VITE_API_URL ?? 'http://localhost:4000';
 
 interface SanitizeModalProps {
   uploadResult: UploadResult;

@@ -356,7 +356,7 @@ describe('RequestFlowTraceView', () => {
       'terminal',
     ]);
 
-    await user.click(screen.getAllByRole('button', { name: /open in analyzer/i })[0]);
+    await user.click(screen.getAllByRole('button', { name: /open request details/i })[0]);
 
     expect(handleNodeClick).toHaveBeenCalledTimes(1);
     expect(handleNodeClick).toHaveBeenCalledWith(entries[0]);

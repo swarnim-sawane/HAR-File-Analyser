@@ -10,8 +10,27 @@ import {
   ConsoleLogEntry,
   ConsoleLogQuery,
 } from '../types/consolelog';
+import { API_BASE_URL } from './runtimeUrls';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+const DEFAULT_API_TIMEOUT_MS = 60_000;
+// The OCI API Gateway allows 300 seconds. Large HARs can take longer than the
+// default API timeout to stream through the signed UI proxy, so keep this
+// request just below the gateway ceiling instead of aborting and restarting
+// the entire download after 60 seconds.
+export const HAR_DATA_TIMEOUT_MS = 295_000;
+
+export interface HarFileStatus {
+  fileId: string;
+  fileName: string;
+  status: string;
+  fileSize?: number | null;
+  hash?: string;
+  jobId?: string;
+  totalEntries?: number | null;
+  uploadedAt?: string | null;
+  processedAt?: string | null;
+  error?: string;
+}
 
 class ApiClient {
   private client: AxiosInstance;
@@ -22,7 +41,7 @@ class ApiClient {
 
     this.client = axios.create({
       baseURL: API_BASE_URL,
-      timeout: 60000,
+      timeout: DEFAULT_API_TIMEOUT_MS,
       headers: {
         'Content-Type': 'application/json',
         'X-Session-Id': this.sessionId
@@ -54,11 +73,13 @@ class ApiClient {
 
   // HAR API Methods
   async getHarData(fileId: string): Promise<HarFile> {
-    const response = await this.client.get(`/api/har/${fileId}`);
+    const response = await this.client.get(`/api/har/${fileId}`, {
+      timeout: HAR_DATA_TIMEOUT_MS,
+    });
     return response.data;
   }
 
-  async getHarStatus(fileId: string) {
+  async getHarStatus(fileId: string): Promise<HarFileStatus> {
     // ✅ FIXED: Match route pattern /:fileId/status
     const response = await this.client.get(`/api/har/${fileId}/status`);
     return response.data;

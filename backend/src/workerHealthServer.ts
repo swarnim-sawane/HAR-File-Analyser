@@ -11,11 +11,30 @@ export interface WorkerHealthServerOptions {
   port?: number;
 }
 
+export function getWorkerHealthBinding(
+  env: NodeJS.ProcessEnv = process.env,
+): { host: string; port: number } {
+  const internalPort = env.INTERNAL_WORKER_HEALTH_PORT?.trim();
+  if (!internalPort) return getRuntimeBinding(env, 4001, 'WORKER_HEALTH_PORT');
+
+  const port = Number.parseInt(internalPort, 10);
+  if (!Number.isSafeInteger(port) || port < 1024 || port > 65535) {
+    throw new Error(`Invalid INTERNAL_WORKER_HEALTH_PORT: ${internalPort}`);
+  }
+
+  const host = env.INTERNAL_WORKER_HEALTH_HOST?.trim() || '127.0.0.1';
+  if (host !== '127.0.0.1' && host !== '::1' && host !== 'localhost') {
+    throw new Error('INTERNAL_WORKER_HEALTH_HOST must be a loopback host.');
+  }
+
+  return { host, port };
+}
+
 export function startWorkerHealthServer(
   state: WorkerHealthState,
   options: WorkerHealthServerOptions = {},
 ): Server {
-  const binding = getRuntimeBinding(process.env, 4001, 'WORKER_HEALTH_PORT');
+  const binding = getWorkerHealthBinding(process.env);
   const host = options.host || binding.host;
   const port = options.port ?? binding.port;
 

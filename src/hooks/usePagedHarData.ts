@@ -7,7 +7,7 @@ import {
   HarEntrySummary,
   HarSortField,
 } from '../types/har';
-import { apiClient } from '../services/apiClient';
+import { apiClient, type HarFileStatus } from '../services/apiClient';
 import { useDebouncedValue } from './useDebouncedValue';
 
 const PAGE_SIZE = 200;
@@ -15,15 +15,6 @@ const PAGE_CACHE_LIMIT = 5;
 const ALL_STATUS_BUCKETS: Array<keyof FilterOptions['statusCodes']> = ['0', '1xx', '2xx', '3xx', '4xx', '5xx'];
 
 type SortDirection = 'asc' | 'desc';
-
-interface HarFileStatus {
-  fileId: string;
-  fileName: string;
-  status: string;
-  totalEntries: number | null;
-  uploadedAt: string | null;
-  processedAt: string | null;
-}
 
 interface UsePagedHarDataOptions {
   fileId: string;

@@ -3,6 +3,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { Queue } from 'bullmq';
 import { getDatabase, getRedis } from '../config/database';
+import { buildBullMqConnectionOptions } from '../config/bullmqConfig';
 import {
   deriveOverallStatus,
   getOpsStatusColor,
@@ -15,6 +16,7 @@ import {
 import { HAR_QUEUE_NAME, LOG_QUEUE_NAME } from '../config/queueNames';
 import { getOpenAiConfig, getOpenAiConfigurationError } from '../config/openAiConfig';
 import { getArtifactStore } from '../services/artifactStore';
+import { probeRedisOperationalCommands } from '../config/redisOperationalProbe';
 import {
   getAiUsagePricing,
   getAiUsageSummary,
@@ -52,11 +54,11 @@ let logQueue: Queue | null = null;
 
 function queueFor(name: string): Queue {
   if (name === HAR_QUEUE_NAME) {
-    if (!harQueue) harQueue = new Queue(HAR_QUEUE_NAME, { connection: getRedis() });
+    if (!harQueue) harQueue = new Queue(HAR_QUEUE_NAME, buildBullMqConnectionOptions(getRedis()));
     return harQueue;
   }
 
-  if (!logQueue) logQueue = new Queue(LOG_QUEUE_NAME, { connection: getRedis() });
+  if (!logQueue) logQueue = new Queue(LOG_QUEUE_NAME, buildBullMqConnectionOptions(getRedis()));
   return logQueue;
 }
 
@@ -95,12 +97,14 @@ async function checkPostgres(): Promise<OpsCheck> {
 async function checkRedis(): Promise<OpsCheck> {
   const startedAt = Date.now();
   try {
-    const response = await getRedis().ping();
+    const probe = await probeRedisOperationalCommands(getRedis());
     return buildCheck({
       id: 'redis',
       label: 'Redis',
-      status: response === 'PONG' ? 'ok' : 'warning',
-      detail: response === 'PONG' ? 'Connected and responding to ping.' : `Unexpected ping response: ${response}`,
+      status: probe.ping === 'PONG' ? 'ok' : 'warning',
+      detail: probe.ping === 'PONG'
+        ? 'PING, lock, and Lua script commands are operational.'
+        : `Unexpected ping response: ${probe.ping}`,
       latencyMs: measureDurationMs(startedAt),
       affectsOverall: true,
     });

@@ -1,0 +1,34 @@
+FROM node:22-bookworm-slim
+
+ENV NODE_ENV=production \
+    HOME=/tmp \
+    STATIC_DIR=/app/public \
+    BACKEND_PROXY_TIMEOUT_MS=1800000 \
+    BACKEND_PROXY_MAX_BODY_BYTES=16777216 \
+    OCI_REGION_FALLBACK=us-phoenix-1 \
+    OCI_AUTH_MODE=instance-principal \
+    AUTH_MODE=idcs
+
+LABEL org.opencontainers.image.title="HAR Analyzer session UI" \
+      org.opencontainers.image.description="IDCS-authenticated HAR Analyzer UI for OCI Container Instances" \
+      com.oracle.har-analyzer.runtime="container-instance-session-ui"
+
+WORKDIR /app
+
+RUN npm init -y \
+    && npm install --omit=dev --no-audit --no-fund oci-common@2.136.1 \
+    && npm cache clean --force
+
+COPY dist ./public
+COPY deploy/hosted/ui-server.mjs ./ui-server.mjs
+COPY deploy/hosted/ui-proxy-core.mjs ./ui-proxy-core.mjs
+COPY deploy/hosted/ui-auth-core.mjs ./ui-auth-core.mjs
+
+RUN chown -R node:node /app
+
+USER node
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+CMD ["node", "ui-server.mjs"]

@@ -5,10 +5,12 @@
   "scripts": {
     "dev": "vite",
     "dev:all": "node scripts/dev-all.cjs",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && node scripts/verify-frontend-runtime.mjs",
     "preview": "vite preview",
     "lint": "eslint src --ext ts,tsx",
     "test": "vitest run",
+    "test:hosted-ui-proxy": "node --test deploy/hosted/ui-proxy-core.test.mjs deploy/hosted/ui-auth-core.test.mjs scripts/oci-hosted-ui-browser-proxy-core.test.mjs",
+    "demo:oci-hosted-ui": "node scripts/oci-hosted-ui-browser-proxy.mjs",
     "test:openapi:endpoints": "node scripts/openapi-endpoint-test.cjs",
     "test:openapi:stress": "node scripts/openapi-stress-test.cjs",
     "test:watch": "vitest",
@@ -42,5 +44,8 @@
     "typescript": "^5.3.3",
     "vite": "^7.3.0",
     "vitest": "^4.1.2"
+  },
+  "overrides": {
+    "socket.io-parser": "4.2.7"
   }
 }

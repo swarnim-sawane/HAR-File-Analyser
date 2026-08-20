@@ -3,7 +3,9 @@ param(
   [string]$NodeBaseImage,
   [string]$OracleLinuxImage = "container-registry.oracle.com/os/oraclelinux:9-slim",
   [ValidateSet("20", "22")]
-  [string]$NodeJsStream = "22"
+  [string]$NodeJsStream = "22",
+  [ValidatePattern("^\d+\.\d+\.\d+$")]
+  [string]$MinimumNodeVersion = "22.23.0"
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,9 +21,10 @@ if (-not $approvedRegistry) {
   throw "Unapproved Oracle Linux registry '$registryHost'. Public Docker Hub images are not permitted."
 }
 
-docker build --platform linux/amd64 `
+docker build --pull --no-cache --platform linux/amd64 `
   --build-arg "ORACLE_LINUX_IMAGE=$OracleLinuxImage" `
   --build-arg "NODEJS_STREAM=$NodeJsStream" `
+  --build-arg "NODEJS_MIN_VERSION=$MinimumNodeVersion" `
   -f (Join-Path $repoRoot "deploy/hosted/Dockerfile.node-base") `
   -t $NodeBaseImage `
   $repoRoot
@@ -35,9 +38,14 @@ if ($LASTEXITCODE -ne 0 -or $architecture -ne 'amd64') {
   throw "$NodeBaseImage was not built as linux/amd64."
 }
 
-docker run --rm $NodeBaseImage node --version
+$nodeVersionOutput = docker run --rm $NodeBaseImage node --version
 if ($LASTEXITCODE -ne 0) {
   throw "$NodeBaseImage does not provide a working Node.js runtime."
+}
+
+$nodeVersion = [version]($nodeVersionOutput.Trim().TrimStart("v"))
+if ($nodeVersion -lt [version]$MinimumNodeVersion) {
+  throw "$NodeBaseImage provides Node.js $nodeVersion, below required $MinimumNodeVersion."
 }
 
 docker run --rm $NodeBaseImage npm --version
@@ -45,4 +53,4 @@ if ($LASTEXITCODE -ne 0) {
   throw "$NodeBaseImage does not provide a working npm runtime."
 }
 
-Write-Host "Hosted Node base image built successfully: $NodeBaseImage"
+Write-Host "Hosted Node base image built successfully: $NodeBaseImage (Node.js $nodeVersion)"

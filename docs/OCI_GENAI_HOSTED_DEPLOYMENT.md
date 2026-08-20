@@ -11,7 +11,7 @@ This document defines the deployment contract for running HAR Analyzer in the OC
 | Web/API runtime | Ready: combined frontend and API image listens on `0.0.0.0:8080` | Hosted Application, OAuth, DNS, and OCIR configuration |
 | Worker runtime | Ready: worker image exposes health endpoints on `0.0.0.0:8080` | Separate Hosted Application or worker deployment |
 | PostgreSQL | Native schema, migrations, JSONB repositories, paging, retention, and AI usage storage implemented and tested locally | OCI PostgreSQL endpoint, database, credentials, CA chain, and schema-creation permission |
-| Redis | Supports `REDIS_URL`, TLS, username, password, and separate API/worker retry behavior | Non-sharded OCI Cache Redis 7 TLS connection URI |
+| Redis | Uses the platform-injected `REDIS_URL` as supplied, including its transport scheme, with separate API/worker retry behavior | Managed Cache attachment through the Hosted Application Redis proxy |
 | File storage | OCI Object Storage adapter implemented | Namespace, bucket, resource-principal IAM policy, and lifecycle policy |
 | AI | OpenAI Responses API and persistent token/cost accounting implemented; deterministic fallback retained | GCGA-approved key injected as a secret and outbound HTTPS access |
 | Image build | Reproducible Dockerfiles, OCI DevOps build spec, Rancher Desktop scripts, and immutable Phoenix OCIR images are available | Team-owned DevOps pipeline remains a follow-up |
@@ -144,14 +144,19 @@ Only disposable scratch files are written locally. The images set `HOME`, `TMPDI
 | `POSTGRES_SSL_MODE` | `verify-full` | Yes |
 | `POSTGRES_SSL_CA`, `POSTGRES_SSL_CA_BASE64`, or `POSTGRES_SSL_CA_FILE` | Approved OCI PostgreSQL CA chain using one injection method | Yes when the endpoint chain is not already trusted by the image |
 | `POSTGRES_POOL_MAX` | Start with `20` per process, then tune against the service connection limit | Recommended |
-| `REDIS_URL` | Secret containing the OCI Cache `rediss://` URI | Yes |
+| `REDIS_URL` | Injected by the managed Cache attachment; use the complete `redis://` or `rediss://` URI as supplied | Yes |
+| `REDIS_INITIAL_CONNECT_MAX_ATTEMPTS` | `10`; total startup connection attempts before failing | Recommended |
+| `REDIS_INITIAL_CONNECT_RETRY_DELAY_MS` | `500`; initial retry delay with exponential backoff | Recommended |
+| `REDIS_INITIAL_CONNECT_RETRY_MAX_DELAY_MS` | `5000`; maximum delay between startup attempts | Recommended |
 | `ARTIFACT_STORE` | `oci-object-storage` | Yes |
 | `OCI_OBJECT_STORAGE_NAMESPACE` | OCI Object Storage namespace | Yes |
 | `OCI_OBJECT_STORAGE_BUCKET` | Dedicated bucket name | Yes |
 | `OCI_OBJECT_STORAGE_PREFIX` | `har-analyzer` | Recommended |
 | `OCI_AUTH_MODE` | `resource-principal` | Yes in Hosted Deployment |
 
-Hosted startup rejects disabled PostgreSQL TLS and plaintext Redis. Do not set `REDIS_HOST`, `REDIS_PORT`, `REDIS_USERNAME`, `REDIS_PASSWORD`, or `REDIS_TLS` when a complete `REDIS_URL` is supplied. Use a non-sharded OCI Cache Redis 7 deployment because BullMQ requires Lua scripting commands that are unavailable on OCI Cache sharded deployments.
+Hosted startup rejects disabled PostgreSQL TLS. Redis follows the scheme in the platform-injected `REDIS_URL`: `redis://` is valid for the Hosted Application loopback proxy, while `rediss://` enables end-to-end Redis TLS. Do not set `REDIS_HOST`, `REDIS_PORT`, `REDIS_USERNAME`, `REDIS_PASSWORD`, or `REDIS_TLS` when a complete `REDIS_URL` is supplied. Use a non-sharded OCI Cache Redis 7 deployment because BullMQ requires Lua scripting commands that are unavailable on OCI Cache sharded deployments.
+
+At startup, the application retries the Redis connection and `PING` using bounded exponential backoff. The default sequence makes 10 total attempts, starts at 500 ms, and caps the delay at 5 seconds. Retry logs contain only the attempt number and delay; Redis credentials and URL values are not logged.
 
 Both runtimes run the same idempotent PostgreSQL migrations at startup under an advisory lock. The configured database user therefore needs permission to create/alter tables and indexes for initial deployment, or the platform team must run the migrations separately using an approved schema-owner workflow before assigning a narrower runtime user.
 
@@ -285,6 +290,27 @@ docker push bom.ocir.io/<namespace>/har-analyzer/har-worker:<tag>
 ```
 
 Use immutable release tags. Do not deploy `latest`.
+
+### Vulnerability scan gate
+
+Do not create or retry a Hosted Deployment until the exact application image tag has completed an OCIR vulnerability scan with **zero Critical findings**. A new scan result does not repair an existing image; findings must be addressed by rebuilding and publishing a new immutable tag.
+
+The hosted Node base build:
+
+- refreshes the Oracle Linux base and installed RPM packages;
+- pulls the current Oracle Linux base without using the local build cache;
+- requires Node.js `22.23.0` or newer and fails if the Oracle Linux module resolves an older runtime;
+- validates the Node.js version again after the image is built.
+
+If a deployment reports that its image could not be accessed or validated:
+
+1. Confirm that the complete image path and immutable tag exist in the expected OCIR region and compartment.
+2. Open the exact image version and inspect **Scan results**.
+3. If any Critical issue is present, rebuild the Node base, application, and worker with new immutable tags. Do not reuse or overwrite the rejected tag.
+4. Push all new images and wait for the application image scan to finish.
+5. Create a new Hosted Deployment only after the application image reports zero Critical findings.
+
+The rejected `postgres-hosted-20260717-c294535` application image is retained only as deployment evidence. Its scan contains Critical Node.js runtime findings and it must not be selected for another deployment.
 
 ## Production Tenancy Ownership
 

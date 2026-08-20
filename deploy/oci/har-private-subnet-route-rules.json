@@ -1,0 +1,8 @@
+[
+  {
+    "destination": "0.0.0.0/0",
+    "destinationType": "CIDR_BLOCK",
+    "networkEntityId": "ocid1.natgateway.oc1.phx.aaaaaaaajowt3domsaaaesa6rjxfrmz7ygj5b75uyc4ynu5xney6ioxl3jrq",
+    "description": "HAR Analyzer private workload egress"
+  }
+]

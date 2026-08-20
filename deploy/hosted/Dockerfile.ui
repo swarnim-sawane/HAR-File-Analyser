@@ -1,0 +1,51 @@
+ARG NODE_IMAGE
+ARG BACKEND_RUNTIME_IMAGE
+
+FROM ${NODE_IMAGE} AS frontend-build
+
+WORKDIR /build/frontend
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY index.html tsconfig.json tsconfig.node.json vite.config.ts ./
+COPY public ./public
+COPY shared ./shared
+COPY src ./src
+
+ARG VITE_API_URL=.
+ARG VITE_BACKEND_URL=.
+ARG VITE_WS_URL=.
+ARG VITE_WS_TRANSPORTS=polling
+ENV VITE_API_URL=${VITE_API_URL} \
+    VITE_BACKEND_URL=${VITE_BACKEND_URL} \
+    VITE_WS_URL=${VITE_WS_URL} \
+    VITE_WS_TRANSPORTS=${VITE_WS_TRANSPORTS}
+RUN npx tsc && npx vite build --base=./
+
+FROM ${BACKEND_RUNTIME_IMAGE} AS ui-runtime-dependencies
+
+FROM ${NODE_IMAGE} AS runtime
+
+ARG BACKEND_HEALTH_URL
+ARG BACKEND_INVOKE_URL
+ARG OCI_REGION_FALLBACK=us-phoenix-1
+ENV NODE_ENV=production \
+    HOSTED_DEPLOYMENT=true \
+    HOME=/tmp \
+    STATIC_DIR=/app/public \
+    BACKEND_HEALTH_URL=${BACKEND_HEALTH_URL} \
+    BACKEND_INVOKE_URL=${BACKEND_INVOKE_URL} \
+    BACKEND_PROXY_TIMEOUT_MS=1800000 \
+    BACKEND_PROXY_MAX_BODY_BYTES=16777216 \
+    OCI_REGION_FALLBACK=${OCI_REGION_FALLBACK}
+
+WORKDIR /app
+COPY --from=frontend-build /build/frontend/dist ./public
+COPY --from=ui-runtime-dependencies /app/node_modules ./node_modules
+COPY deploy/hosted/ui-server.mjs ./ui-server.mjs
+COPY deploy/hosted/ui-proxy-core.mjs ./ui-proxy-core.mjs
+
+USER 10001:10001
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+CMD ["node", "ui-server.mjs"]

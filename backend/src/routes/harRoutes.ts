@@ -3,6 +3,7 @@ import { createReadStream } from 'fs';
 import { createGzip } from 'zlib';
 import path from 'path';
 import { getDatabase, getRedis } from '../config/database';
+import { isSafeUploadFileId } from '../utils/uploadValidation';
 import { getArtifactStore } from '../services/artifactStore';
 
 const router = express.Router();
@@ -207,32 +208,70 @@ router.get('/:fileId/stats', async (req: Request, res: Response) => {
 router.get('/:fileId/status', async (req: Request, res: Response) => {
   try {
     const { fileId } = req.params;
+    if (!isSafeUploadFileId(fileId)) {
+      return res.status(400).json({ error: 'Invalid fileId' });
+    }
+
     const db = getDatabase();
     const redis = getRedis();
 
+    // PostgreSQL is the durable authority. Redis metadata enriches the status
+    // response but must not hide an accepted upload when Cache is unavailable.
     const file = await db.getFile('har', fileId);
+    let metadata: string | null = null;
+    try {
+      metadata = await redis.get(`file:${fileId}:metadata`);
+    } catch (error) {
+      console.warn('HAR status Redis metadata lookup failed; using PostgreSQL state.', {
+        fileId,
+        error: error instanceof Error ? error.message : 'Redis lookup failed',
+      });
+    }
+    let redisData: Record<string, any> | null = null;
+    if (metadata) {
+      try {
+        redisData = JSON.parse(metadata);
+      } catch {
+        console.warn('HAR status Redis metadata was invalid JSON; using PostgreSQL state.', { fileId });
+      }
+    }
 
     if (file) {
+      const status = redisData?.status === 'error' ? 'error' : file.status;
+      const processingError = typeof file.stats?.processingError === 'string'
+        ? file.stats.processingError.slice(0, 240)
+        : typeof redisData?.error === 'string'
+          ? redisData.error.slice(0, 240)
+          : undefined;
       return res.json({
         fileId: file.fileId,
         fileName: file.fileName,
-        status: file.status,
+        status,
+        fileSize: file.fileSize,
+        ...(file.hash ? { hash: file.hash } : {}),
+        jobId: typeof redisData?.jobId === 'string' ? redisData.jobId : file.fileId,
         totalEntries: file.totalEntries,
         uploadedAt: file.uploadedAt,
-        processedAt: file.processedAt
+        processedAt: file.processedAt,
+        ...(status === 'error' && processingError ? { error: processingError } : {}),
       });
     }
 
-    const metadata = await redis.get(`file:${fileId}:metadata`);
-    if (metadata) {
-      const data = JSON.parse(metadata);
+    if (redisData) {
+      const data = redisData;
       return res.json({
         fileId,
         fileName: data.fileName,
         status: data.status,
+        fileSize: typeof data.fileSize === 'number' ? data.fileSize : null,
+        ...(typeof data.hash === 'string' ? { hash: data.hash } : {}),
+        jobId: typeof data.jobId === 'string' ? data.jobId : fileId,
         totalEntries: data.totalEntries ?? null,
         uploadedAt: data.uploadedAt ?? null,
-        processedAt: null
+        processedAt: null,
+        ...(data.status === 'error' && typeof data.error === 'string'
+          ? { error: data.error.slice(0, 240) }
+          : {}),
       });
     }
 

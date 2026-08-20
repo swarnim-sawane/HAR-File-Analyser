@@ -77,6 +77,10 @@ interface RequestListProps {
 type SortField = 'status' | 'method' | 'url' | 'size' | 'time' | 'timestamp';
 type SortDirection = 'asc' | 'desc';
 
+const REQUEST_ROW_HEIGHT = 64;
+const REQUEST_OVERSCAN = 12;
+const FALLBACK_VIEWPORT_HEIGHT = 600;
+
 const RequestList: React.FC<RequestListProps> = ({
   entries,
   selectedEntry,
@@ -88,7 +92,11 @@ const RequestList: React.FC<RequestListProps> = ({
   const [sortField, setSortField] = useState<SortField>('timestamp');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const selectedRowRef = useRef<HTMLDivElement | null>(null);
+  const listContentRef = useRef<HTMLDivElement | null>(null);
   const handledScrollSignalRef = useRef(0);
+  const pendingScrollSignalRef = useRef(0);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(FALLBACK_VIEWPORT_HEIGHT);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -133,12 +141,83 @@ const RequestList: React.FC<RequestListProps> = ({
   }, [entries, sortField, sortDirection]);
 
   const maxTime = useMemo(() => {
-    return Math.max(...entries.map(e => e.time), 1);
+    return entries.reduce((maximum, entry) => Math.max(maximum, entry.time), 1);
   }, [entries]);
+
+  const totalHeight = sortedEntries.length * REQUEST_ROW_HEIGHT;
+  const visibleRange = useMemo(() => {
+    const start = Math.max(0, Math.floor(scrollTop / REQUEST_ROW_HEIGHT) - REQUEST_OVERSCAN);
+    const end = Math.min(
+      sortedEntries.length,
+      Math.ceil((scrollTop + viewportHeight) / REQUEST_ROW_HEIGHT) + REQUEST_OVERSCAN,
+    );
+    return { start, end };
+  }, [scrollTop, sortedEntries.length, viewportHeight]);
+
+  const visibleEntries = useMemo(
+    () => sortedEntries.slice(visibleRange.start, visibleRange.end),
+    [sortedEntries, visibleRange.end, visibleRange.start],
+  );
+
+  useEffect(() => {
+    const element = listContentRef.current;
+    if (!element) return;
+
+    const updateViewportHeight = () => {
+      setViewportHeight(element.clientHeight || FALLBACK_VIEWPORT_HEIGHT);
+    };
+
+    updateViewportHeight();
+    if (typeof ResizeObserver === 'undefined') return;
+
+    const observer = new ResizeObserver(updateViewportHeight);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const element = listContentRef.current;
+    if (!element) return;
+
+    const maxScrollTop = Math.max(0, totalHeight - viewportHeight);
+    if (element.scrollTop <= maxScrollTop) return;
+
+    element.scrollTop = maxScrollTop;
+    setScrollTop(maxScrollTop);
+  }, [totalHeight, viewportHeight]);
 
   useEffect(() => {
     if (!selectedEntry || scrollToSelectedSignal <= 0) return;
     if (handledScrollSignalRef.current === scrollToSelectedSignal) return;
+
+    if (selectedRowRef.current) {
+      selectedRowRef.current.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+        inline: 'nearest',
+      });
+      handledScrollSignalRef.current = scrollToSelectedSignal;
+      return;
+    }
+
+    const selectedIndex = sortedEntries.indexOf(selectedEntry);
+    const element = listContentRef.current;
+    if (selectedIndex < 0 || !element) return;
+
+    const targetScrollTop = Math.max(
+      0,
+      Math.min(
+        totalHeight - viewportHeight,
+        selectedIndex * REQUEST_ROW_HEIGHT - (viewportHeight - REQUEST_ROW_HEIGHT) / 2,
+      ),
+    );
+    element.scrollTop = targetScrollTop;
+    setScrollTop(targetScrollTop);
+    pendingScrollSignalRef.current = scrollToSelectedSignal;
+  }, [scrollToSelectedSignal, selectedEntry, sortedEntries, totalHeight, viewportHeight]);
+
+  useEffect(() => {
+    if (pendingScrollSignalRef.current !== scrollToSelectedSignal) return;
     if (!selectedRowRef.current) return;
 
     selectedRowRef.current.scrollIntoView({
@@ -147,7 +226,8 @@ const RequestList: React.FC<RequestListProps> = ({
       inline: 'nearest',
     });
     handledScrollSignalRef.current = scrollToSelectedSignal;
-  }, [scrollToSelectedSignal, selectedEntry, sortedEntries]);
+    pendingScrollSignalRef.current = 0;
+  }, [scrollToSelectedSignal, visibleRange.end, visibleRange.start]);
 
   const getStatusClass = (status: number): string => {
     if (status >= 200 && status < 300) return 'status-2xx';
@@ -164,7 +244,7 @@ const RequestList: React.FC<RequestListProps> = ({
       : <ArrowDown size={12} className="sort-icon active" aria-hidden="true" />;
   };
 
-  const renderEntry = (entry: Entry, index: number) => {
+  const renderEntry = (entry: Entry) => {
     const isSelected = selectedEntry === entry;
     const isFocusEntry = focusEntry === entry && Boolean(focusPath);
     const focusLabel = focusPath?.confidence === 'low' ? 'Worth checking' : 'Likely issue';
@@ -174,7 +254,6 @@ const RequestList: React.FC<RequestListProps> = ({
 
     return (
       <div
-        key={index}
         ref={isSelected ? selectedRowRef : null}
         className={`request-item ${isSelected ? 'selected' : ''} ${isFocusEntry ? 'likely-issue' : ''} ${isFocusEntry && focusPath?.confidence === 'low' ? 'focus-low' : ''}`}
         onClick={() => onSelectEntry(entry)}
@@ -291,11 +370,33 @@ const RequestList: React.FC<RequestListProps> = ({
         </button>
         <span className="header-cell">Timeline</span>
       </div>
-      <div className="request-list-content">
+      <div
+        ref={listContentRef}
+        className="request-list-content"
+        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+      >
         {entries.length === 0 ? (
           <div className="no-data">No requests match the current filters</div>
         ) : (
-          sortedEntries.map((entry, index) => renderEntry(entry, index))
+          <div
+            className="har-virtual-list-inner"
+            data-testid="har-virtual-list-inner"
+            style={{ height: `${totalHeight}px` }}
+          >
+            {visibleEntries.map((entry, offset) => {
+              const index = visibleRange.start + offset;
+              return (
+                <div
+                  key={`${entry.startedDateTime}:${entry.request.url}:${index}`}
+                  className="har-virtual-row"
+                  data-testid="har-virtual-row"
+                  style={{ transform: `translateY(${index * REQUEST_ROW_HEIGHT}px)` }}
+                >
+              {renderEntry(entry)}
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
     </div>

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { makeParsedEntry } from '../../test-utils/fixtures';
 import type { ParsedHarEntry } from '../../services/streamingParser';
+import { isValidHarRequestEntry } from '../harProcessor';
 
 // ── Reference implementations of the private harProcessor functions ─────────
 // These mirror the logic in harProcessor.ts exactly.
@@ -189,5 +190,20 @@ describe('finalizeStats', () => {
     expect(result).toHaveProperty('domains');
     expect(result).toHaveProperty('contentTypes');
     expect(result).toHaveProperty('errors');
+  });
+});
+
+describe('HAR request entry validation', () => {
+  it('accepts a complete request entry', () => {
+    expect(isValidHarRequestEntry(makeParsedEntry())).toBe(true);
+  });
+
+  it.each([
+    { startedDateTime: undefined },
+    { request: { method: undefined, url: 'https://example.com' } },
+    { request: { method: 'GET', url: undefined } },
+    { response: { status: Number.NaN } },
+  ])('rejects invalid required fields: %o', (overrides) => {
+    expect(isValidHarRequestEntry(makeParsedEntry(overrides as Partial<ParsedHarEntry>))).toBe(false);
   });
 });

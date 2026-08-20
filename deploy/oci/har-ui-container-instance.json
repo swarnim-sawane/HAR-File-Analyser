@@ -1,0 +1,58 @@
+{
+  "availabilityDomain": "ZSEf:PHX-AD-1",
+  "compartmentId": "ocid1.compartment.oc1..aaaaaaaaxqizjc3kmis32okxspg62qfchiwtp5t6psbhiuelssobbstys36a",
+  "containerRestartPolicy": "ALWAYS",
+  "containers": [
+    {
+      "displayName": "har-analyzer-ui-invalid-har-fix-20260820",
+      "imageUrl": "phx.ocir.io/axfm33dl0mwg/har-analyzer/har-app:container-ui-invalid-har-fix-20260820-01",
+      "isResourcePrincipalDisabled": false,
+      "environmentVariables": {
+        "AUTH_MODE": "idcs",
+        "OCI_AUTH_MODE": "resource-principal",
+        "PUBLIC_BASE_URL": "https://jxc7ntykekeecmlifn4ijizsmi.apigateway.us-phoenix-1.oci.customer-oci.com",
+        "IDCS_DOMAIN_URL": "https://idcs-4c25395e789648a1ae24218030f05d0a.identity.oraclecloud.com",
+        "IDCS_CLIENT_ID": "818a47b17c3e4aaa9cd298604cccf6b1",
+        "IDCS_CLIENT_SECRET_VAULT_ID": "ocid1.vaultsecret.oc1.phx.amaaaaaaxlowriqa5inij7bspp4nc5cjornp6a6xrgsbkpuovqpqq2ragkgq",
+        "IDCS_SCOPES": "openid profile email",
+        "BACKEND_INVOKE_URL": "https://inference.generativeai.us-phoenix-1.oci.oraclecloud.com/20251112/hostedApplicationsIam/ocid1.generativeaihostedapplicationiam.oc1.phx.amaaaaaaxlowriqaudnn2rer2bthxhaof5c2rzj3fa4nkotky7znbqmidyrq/actions/invoke",
+        "OCI_REGION_FALLBACK": "us-phoenix-1",
+        "PORT": "8080"
+      },
+      "healthChecks": [
+        {
+          "healthCheckType": "HTTP",
+          "name": "har-ui-health",
+          "path": "/health",
+          "port": 8080,
+          "initialDelayInSeconds": 15,
+          "intervalInSeconds": 30,
+          "timeoutInSeconds": 5,
+          "failureThreshold": 3,
+          "successThreshold": 1,
+          "failureAction": "KILL"
+        }
+      ],
+      "resourceConfig": {
+        "vcpusLimit": 1,
+        "memoryLimitInGBs": 2
+      }
+    }
+  ],
+  "displayName": "har-analyzer-ui-invalid-har-fix-20260820",
+  "gracefulShutdownTimeoutInSeconds": 30,
+  "shape": "CI.Standard.x86.Generic",
+  "shapeConfig": {
+    "ocpus": 1,
+    "memoryInGBs": 2
+  },
+  "vnics": [
+    {
+      "displayName": "har-analyzer-ui-invalid-har-fix-vnic",
+      "hostnameLabel": "harui820ih1",
+      "isPublicIpAssigned": false,
+      "skipSourceDestCheck": false,
+      "subnetId": "ocid1.subnet.oc1.phx.aaaaaaaaoktighadnrpqp3zgftvkbianfqqvxn7x7mhubp5yp6u4efekmska"
+    }
+  ]
+}

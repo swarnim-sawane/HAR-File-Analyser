@@ -3,7 +3,6 @@ import ReactFlow, {
   Background,
   Controls,
   MiniMap,
-  Panel,
   MarkerType,
   useEdgesState,
   useNodesState,
@@ -18,7 +17,14 @@ import {
 } from '../utils/requestFlowFilters';
 import { analyzeFlow, TYPE_COLOR, type ZoneRequest } from '../utils/requestFlowAnalyzer';
 import { analyzeRequestFlowFocus, type RequestFlowFocusPath } from '../utils/requestFlowFocus';
-import { AlertIcon, FlameIcon, GlobeIcon, SearchIcon, SparklesIcon } from './Icons';
+import {
+  AlertIcon,
+  ChevronRightIcon,
+  FlameIcon,
+  GlobeIcon,
+  SearchIcon,
+  SparklesIcon,
+} from './Icons';
 import {
   DefaultNode,
   ErrorNode,
@@ -268,9 +274,10 @@ const RequestFlowGraphView: React.FC<RequestFlowGraphViewProps> = ({
   const searchInputId = useId();
   const reactFlowInstanceRef = useRef<ReactFlowInstance | null>(null);
   const hasAutoFitFocusRef = useRef<string | null>(null);
+  const diagnosticDrawerToggleRef = useRef<HTMLButtonElement | null>(null);
   const [focusLikelyIssue, setFocusLikelyIssue] = useState(true);
   const [selectedErrorNodeId, setSelectedErrorNodeId] = useState<string | null>(null);
-  const [previewNodeId, setPreviewNodeId] = useState<string | null>(null);
+  const [diagnosticDrawerOpen, setDiagnosticDrawerOpen] = useState(true);
 
   useEffect(() => {
     onNodeClickRef.current = onNodeClick;
@@ -346,7 +353,6 @@ const RequestFlowGraphView: React.FC<RequestFlowGraphViewProps> = ({
 
   useEffect(() => {
     setSelectedErrorNodeId(null);
-    setPreviewNodeId(null);
   }, [entries]);
 
   useEffect(() => {
@@ -420,7 +426,6 @@ const RequestFlowGraphView: React.FC<RequestFlowGraphViewProps> = ({
         const isFocusPath = isIssueFocused && focusNodeIdSet.has(node.id);
         const isFocusAnchor = isIssueFocused && node.id === focusAnchorNodeId;
         const isErrorJumpSelected = selectedErrorNodeId === node.id;
-        const isPreviewOpen = previewNodeId === node.id;
         const matchesFlowVisibility = focusedNodeIdSet.has(node.id);
         const isCritical = Boolean(isFocusPath || isErrorJumpSelected);
         const isDimmed = !matchesFlowVisibility || (isIssueFocused && !isFocusPath && !isErrorJumpSelected);
@@ -438,12 +443,10 @@ const RequestFlowGraphView: React.FC<RequestFlowGraphViewProps> = ({
             focusSeverity: focusPath?.severity,
             focusStep: isFocusPath ? focusStepByNodeId.get(node.id) : undefined,
             focusReason: isFocusAnchor ? focusPrimaryReason : undefined,
-            onPreviewOpen: () => setPreviewNodeId(node.id),
-            onPreviewClose: () => setPreviewNodeId((current) => current === node.id ? null : current),
           },
           style: {
             ...(node.style || {}),
-            zIndex: isPreviewOpen ? 1000 : isErrorJumpSelected ? 4 : isFocusAnchor ? 3 : isFocusPath ? 2 : 1,
+            zIndex: isErrorJumpSelected ? 4 : isFocusAnchor ? 3 : isFocusPath ? 2 : 1,
           },
         };
       }),
@@ -458,7 +461,6 @@ const RequestFlowGraphView: React.FC<RequestFlowGraphViewProps> = ({
       focusStepByNodeId,
       focusPrimaryReason,
       selectedErrorNodeId,
-      previewNodeId,
     ]
   );
 
@@ -534,6 +536,127 @@ const RequestFlowGraphView: React.FC<RequestFlowGraphViewProps> = ({
 
   return (
     <section className="request-flow-scattered-shell">
+      <aside
+        className={`request-flow-diagnostic-sidebar ${diagnosticDrawerOpen ? 'is-open' : 'is-collapsed'}`}
+        aria-label="Request Flow control sidebar"
+        onKeyDown={(event) => {
+          if (event.key !== 'Escape' || !diagnosticDrawerOpen) return;
+
+          event.stopPropagation();
+          setDiagnosticDrawerOpen(false);
+          window.requestAnimationFrame(() => diagnosticDrawerToggleRef.current?.focus());
+        }}
+      >
+        <button
+          ref={diagnosticDrawerToggleRef}
+          type="button"
+          className="request-flow-diagnostic-sidebar-handle"
+          aria-controls="request-flow-diagnostic-controls"
+          aria-expanded={diagnosticDrawerOpen}
+          aria-label={`${diagnosticDrawerOpen ? 'Hide' : 'Show'} Request Flow controls`}
+          title={`${diagnosticDrawerOpen ? 'Hide' : 'Show'} Request Flow controls`}
+          onClick={() => setDiagnosticDrawerOpen((current) => !current)}
+        >
+          <span aria-hidden="true"><ChevronRightIcon /></span>
+        </button>
+
+        {diagnosticDrawerOpen && (
+          <div
+            id="request-flow-diagnostic-controls"
+            className="request-flow-diagnostic-toolbar"
+            aria-label="Scattered view diagnostic controls"
+          >
+            <div className="request-flow-diagnostic-toolbar-row">
+              <div className="request-flow-diagnostic-focus-list" aria-label="Request Flow focus">
+                {FOCUS_OPTIONS.map((option) => (
+                  <button
+                    key={option.mode}
+                    type="button"
+                    className={`request-flow-diagnostic-chip ${focusMode === option.mode ? 'is-active' : ''}`}
+                    aria-pressed={focusMode === option.mode}
+                    onClick={() => onFocusModeChange(option.mode)}
+                  >
+                    <span aria-hidden="true">{option.icon}</span>
+                    <span>{option.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              <label
+                className={`request-flow-diagnostic-focus-toggle ${focusLikelyIssueActive && focusPath ? 'is-active' : ''}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={focusLikelyIssueActive && Boolean(focusPath)}
+                  disabled={!focusPath}
+                  onChange={(event) => handleIssueFocusToggle(event.target.checked)}
+                />
+                <span>Focus issue</span>
+              </label>
+            </div>
+
+            <div className="request-flow-diagnostic-toolbar-row">
+              <div className="request-flow-diagnostic-status-list" aria-label="Status filters">
+                {STATUS_FILTERS.map((item) => (
+                  <label key={item.code} className="request-flow-diagnostic-status-chip">
+                    <input
+                      type="checkbox"
+                      checked={filters.statusCodes[item.code]}
+                      onChange={() => handleStatusCodeChange(item.code)}
+                    />
+                    <span className={`status-badge status-${item.code}`}>{item.label}</span>
+                  </label>
+                ))}
+              </div>
+
+              <div className="request-flow-diagnostic-count">
+                <strong>{focusedRequestCount}</strong> / {totalRequests} shown
+                {failedCount > 0 && <span className="is-danger"> · {failedCount} failed</span>}
+                {slowCount > 0 && <span> · {slowCount} slow</span>}
+                {p90 ? <span> · p90 {p90.toFixed(0)}ms</span> : null}
+              </div>
+            </div>
+
+            {errorJumpItems.length > 0 && (
+              <div className="request-flow-diagnostic-error-row" aria-label="Failed request jump list">
+                <span className="request-flow-diagnostic-error-label">Errors</span>
+                <div className="request-flow-diagnostic-error-list">
+                  {errorJumpItems.map((item) => {
+                    const nodeId = `request-${item.index}`;
+                    const selected = selectedErrorNodeId === nodeId;
+
+                    return (
+                      <button
+                        key={nodeId}
+                        type="button"
+                        className={`request-flow-diagnostic-error-chip ${selected ? 'is-selected' : ''}`}
+                        aria-pressed={selected}
+                        aria-label={`Open error ${item.status} ${item.pathLabel}`}
+                        onClick={() => handleErrorJump(item.index)}
+                      >
+                        <strong>{item.status}</strong>
+                        <span>{item.pathLabel}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <label className="request-flow-diagnostic-search" htmlFor={searchInputId}>
+              <SearchIcon />
+              <input
+                id={searchInputId}
+                type="search"
+                value={filters.searchTerm}
+                placeholder="Search URL, status, headers..."
+                onChange={handleSearchTermChange}
+              />
+            </label>
+          </div>
+        )}
+      </aside>
+
       <div className="request-flow-scattered-canvas">
         <ReactFlow
           className="request-flow-scattered-view"
@@ -565,98 +688,6 @@ const RequestFlowGraphView: React.FC<RequestFlowGraphViewProps> = ({
               borderRadius: '10px',
             }}
           />
-
-          <Panel position="top-left">
-            <div className="request-flow-diagnostic-toolbar" aria-label="Scattered view diagnostic controls">
-              <div className="request-flow-diagnostic-toolbar-row">
-                <div className="request-flow-diagnostic-focus-list" aria-label="Request Flow focus">
-                  {FOCUS_OPTIONS.map((option) => (
-                    <button
-                      key={option.mode}
-                      type="button"
-                      className={`request-flow-diagnostic-chip ${focusMode === option.mode ? 'is-active' : ''}`}
-                      aria-pressed={focusMode === option.mode}
-                      onClick={() => onFocusModeChange(option.mode)}
-                    >
-                      <span aria-hidden="true">{option.icon}</span>
-                      <span>{option.label}</span>
-                    </button>
-                  ))}
-                </div>
-
-                <label
-                  className={`request-flow-diagnostic-focus-toggle ${focusLikelyIssueActive && focusPath ? 'is-active' : ''}`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={focusLikelyIssueActive && Boolean(focusPath)}
-                    disabled={!focusPath}
-                    onChange={(event) => handleIssueFocusToggle(event.target.checked)}
-                  />
-                  <span>Focus issue</span>
-                </label>
-              </div>
-
-              <div className="request-flow-diagnostic-toolbar-row">
-                <div className="request-flow-diagnostic-status-list" aria-label="Status filters">
-                  {STATUS_FILTERS.map((item) => (
-                    <label key={item.code} className="request-flow-diagnostic-status-chip">
-                      <input
-                        type="checkbox"
-                        checked={filters.statusCodes[item.code]}
-                        onChange={() => handleStatusCodeChange(item.code)}
-                      />
-                      <span className={`status-badge status-${item.code}`}>{item.label}</span>
-                    </label>
-                  ))}
-                </div>
-
-                <div className="request-flow-diagnostic-count">
-                  <strong>{focusedRequestCount}</strong> / {totalRequests} shown
-                  {failedCount > 0 && <span className="is-danger"> · {failedCount} failed</span>}
-                  {slowCount > 0 && <span> · {slowCount} slow</span>}
-                  {p90 ? <span> · p90 {p90.toFixed(0)}ms</span> : null}
-                </div>
-              </div>
-
-              {errorJumpItems.length > 0 && (
-                <div className="request-flow-diagnostic-error-row" aria-label="Failed request jump list">
-                  <span className="request-flow-diagnostic-error-label">Errors</span>
-                  <div className="request-flow-diagnostic-error-list">
-                    {errorJumpItems.map((item) => {
-                      const nodeId = `request-${item.index}`;
-                      const selected = selectedErrorNodeId === nodeId;
-
-                      return (
-                        <button
-                          key={nodeId}
-                          type="button"
-                          className={`request-flow-diagnostic-error-chip ${selected ? 'is-selected' : ''}`}
-                          aria-pressed={selected}
-                          aria-label={`Open error ${item.status} ${item.pathLabel}`}
-                          onClick={() => handleErrorJump(item.index)}
-                        >
-                          <strong>{item.status}</strong>
-                          <span>{item.pathLabel}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              <label className="request-flow-diagnostic-search" htmlFor={searchInputId}>
-                <SearchIcon />
-                <input
-                  id={searchInputId}
-                  type="search"
-                  value={filters.searchTerm}
-                  placeholder="Search URL, status, headers..."
-                  onChange={handleSearchTermChange}
-                />
-              </label>
-            </div>
-          </Panel>
         </ReactFlow>
       </div>
     </section>

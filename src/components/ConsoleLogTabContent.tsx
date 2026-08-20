@@ -3,7 +3,7 @@
 // Hidden (display:none) when not active so state is preserved while switching tabs.
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { ConsoleLogFile } from '../types/consolelog';
+import { ConsoleLogEntry, ConsoleLogEntrySummary, ConsoleLogFile } from '../types/consolelog';
 import { useConsoleLogData } from '../hooks/useConsoleLogData';
 import { usePagedConsoleLogData } from '../hooks/usePagedConsoleLogData';
 import { ConsoleLogAnalyzer } from '../utils/consoleLogAnalyzer';
@@ -13,6 +13,7 @@ import PagedConsoleLogList from './PagedConsoleLogList';
 import ConsoleLogDetails from './ConsoleLogDetails';
 import ConsoleLogStatistics from './ConsoleLogStatistics';
 import ConsoleLogAiInsights from './ConsoleLogAiInsights';
+import ConsoleLogIssueMap from './ConsoleLogIssueMap';
 import Toolbar from './Toolbar';
 import FloatingAiChat from './FloatingAiChat';
 
@@ -38,7 +39,7 @@ export interface ConsoleLogTabContentProps {
   onClearRecent: () => void;
 }
 
-type ConsoleSubTab = 'analyzer' | 'insights';
+type ConsoleSubTab = 'analyzer' | 'issue-map' | 'insights';
 
 const DETAILS_MIN = 320;
 const DETAILS_MAX = 900;
@@ -116,6 +117,14 @@ const ConsoleLogTabContent: React.FC<ConsoleLogTabContentProps> = ({
   const activeSelectedLoading = isBackendPagedLog
     ? pagedLogState.selectedEntryLoading
     : logState.selectedEntryLoading;
+  const selectEvidenceEntry = (entry: ConsoleLogEntry | ConsoleLogEntrySummary) => {
+    if (isBackendPagedLog) {
+      pagedLogState.setSelectedEntry(entry as ConsoleLogEntrySummary);
+    } else {
+      logState.setSelectedEntry(entry as ConsoleLogEntry);
+    }
+    setActiveSubTab('analyzer');
+  };
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
@@ -141,13 +150,17 @@ const ConsoleLogTabContent: React.FC<ConsoleLogTabContentProps> = ({
           {/* ── Console sub-tabs ─────────────────────────────────────────── */}
           <div className="console-sticky-header">
             <div className="main-tabs console-main-tabs">
-              {(['analyzer', 'insights'] as ConsoleSubTab[]).map((tab) => (
+              {(['analyzer', 'issue-map', 'insights'] as ConsoleSubTab[]).map((tab) => (
                 <button
                   key={tab}
                   className={`main-tab ${activeSubTab === tab ? 'active' : ''}`}
                   onClick={() => setActiveSubTab(tab)}
                 >
-                  {tab === 'analyzer' ? 'Analyzer' : 'AI Insights'}
+                  {tab === 'analyzer'
+                    ? 'Analyzer'
+                    : tab === 'issue-map'
+                      ? 'Issue Map'
+                      : 'AI Insights'}
                 </button>
               ))}
             </div>
@@ -237,6 +250,17 @@ const ConsoleLogTabContent: React.FC<ConsoleLogTabContentProps> = ({
                 )}
               </div>
             </>
+          )}
+
+          {activeSubTab === 'issue-map' && (
+            <div className="console-map-tab-shell">
+              <ConsoleLogIssueMap
+                entries={activeFilteredEntries}
+                totalEntries={activeTotalEntries}
+                isPartial={isBackendPagedLog}
+                onSelectEntry={selectEvidenceEntry}
+              />
+            </div>
           )}
 
           {activeSubTab === 'insights' && (

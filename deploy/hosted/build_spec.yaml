@@ -9,6 +9,7 @@ env:
   variables:
     ORACLE_LINUX_IMAGE: "container-registry.oracle.com/os/oraclelinux:9-slim"
     NODEJS_STREAM: "22"
+    NODEJS_MIN_VERSION: "22.23.0"
 
 steps:
   - type: Command
@@ -32,11 +33,15 @@ steps:
     command: |
       set -euo pipefail
       cd "${OCI_PRIMARY_SOURCE_DIR}"
-      podman build --platform linux/amd64 \
+      podman build --pull=always --no-cache --platform linux/amd64 \
         --build-arg "ORACLE_LINUX_IMAGE=${ORACLE_LINUX_IMAGE}" \
         --build-arg "NODEJS_STREAM=${NODEJS_STREAM}" \
+        --build-arg "NODEJS_MIN_VERSION=${NODEJS_MIN_VERSION}" \
         -f deploy/hosted/Dockerfile.node-base \
         -t localhost/har-analyzer-node-base:build .
+      installed_node_version="$(podman run --rm localhost/har-analyzer-node-base:build node --version)"
+      node -e 'const current=process.argv[1].replace(/^v/, "").split(".").map(Number); const minimum=process.argv[2].split(".").map(Number); for (let i=0; i<3; i+=1) { if ((current[i] || 0) > (minimum[i] || 0)) process.exit(0); if ((current[i] || 0) < (minimum[i] || 0)) process.exit(1); }' \
+        "${installed_node_version}" "${NODEJS_MIN_VERSION}"
 
   - type: Command
     name: "Build Hosted Deployment images"
@@ -52,13 +57,26 @@ steps:
         --build-arg "NODE_IMAGE=localhost/har-analyzer-node-base:build" \
         -f deploy/hosted/Dockerfile.worker \
         -t localhost/har-analyzer-worker:build .
+      podman build --platform linux/amd64 \
+        --build-arg "NODE_IMAGE=localhost/har-analyzer-node-base:build" \
+        -f deploy/hosted/Dockerfile.combined \
+        -t localhost/har-analyzer-combined:build .
+      podman build --platform linux/amd64 \
+        --build-arg "NODE_IMAGE=localhost/har-analyzer-node-base:build" \
+        --build-arg "BACKEND_RUNTIME_IMAGE=localhost/har-analyzer-app:build" \
+        --build-arg "VITE_API_URL=." \
+        --build-arg "VITE_BACKEND_URL=." \
+        --build-arg "VITE_WS_URL=." \
+        --build-arg "VITE_WS_TRANSPORTS=polling" \
+        -f deploy/hosted/Dockerfile.ui \
+        -t localhost/har-analyzer-ui:build .
 
   - type: Command
     name: "Validate Hosted Deployment image contract"
     timeoutInSeconds: 300
     command: |
       set -euo pipefail
-      for image in localhost/har-analyzer-app:build localhost/har-analyzer-worker:build; do
+      for image in localhost/har-analyzer-app:build localhost/har-analyzer-worker:build localhost/har-analyzer-combined:build localhost/har-analyzer-ui:build; do
         architecture="$(podman image inspect "${image}" --format '{{.Architecture}}')"
         test "${architecture}" = "amd64"
 
@@ -87,3 +105,9 @@ outputArtifacts:
   - name: har-analyzer-worker-image
     type: DOCKER_IMAGE
     location: localhost/har-analyzer-worker:build
+  - name: har-analyzer-combined-image
+    type: DOCKER_IMAGE
+    location: localhost/har-analyzer-combined:build
+  - name: har-analyzer-ui-image
+    type: DOCKER_IMAGE
+    location: localhost/har-analyzer-ui:build

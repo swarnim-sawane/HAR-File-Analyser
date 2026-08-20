@@ -1,5 +1,10 @@
 import Redis from 'ioredis';
-import { buildRedisConnectionConfig } from './redisConfig';
+import { buildRedisConnectionConfig, describeRedisConnectionConfig } from './redisConfig';
+import {
+  getInitialConnectionRetryOptions,
+  getPostgresInitialConnectionRetryOptions,
+  retryInitialConnection,
+} from './initialConnectionRetry';
 import {
   closePostgres,
   connectPostgres,
@@ -12,18 +17,63 @@ let workerRedisClient: Redis | null = null;
 
 function createRedis(role: 'application' | 'worker'): Redis {
   const config = buildRedisConnectionConfig(process.env, role);
+  const diagnostics = describeRedisConnectionConfig(config);
+  console.log(
+    `Redis configuration: role=${role} source=${diagnostics.source} `
+    + `host=${diagnostics.hostname} port=${diagnostics.port} tls=${diagnostics.tls}`,
+  );
   return config.url ? new Redis(config.url, config.options) : new Redis(config.options);
+}
+
+async function connectRedisForStartup(): Promise<Redis> {
+  const retryOptions = getInitialConnectionRetryOptions();
+
+  return retryInitialConnection(
+    async () => {
+      const client = createRedis('application');
+      client.on('error', (error) => console.error('Redis error:', error));
+
+      try {
+        await client.connect();
+        await client.ping();
+        return client;
+      } catch (error) {
+        client.disconnect();
+        client.removeAllListeners();
+        throw error;
+      }
+    },
+    retryOptions,
+    ({ failedAttempt, nextAttempt, maxAttempts, delayMs }) => {
+      console.warn(
+        `Redis initial connection attempt ${failedAttempt}/${maxAttempts} failed; `
+        + `retrying with attempt ${nextAttempt}/${maxAttempts} in ${delayMs}ms`,
+      );
+    },
+  );
+}
+
+async function connectPostgresForStartup(): Promise<PostgresStore> {
+  const retryOptions = getPostgresInitialConnectionRetryOptions();
+
+  return retryInitialConnection(
+    async () => connectPostgres(),
+    retryOptions,
+    ({ failedAttempt, nextAttempt, maxAttempts, delayMs }) => {
+      console.warn(
+        `PostgreSQL initial connection attempt ${failedAttempt}/${maxAttempts} failed; `
+        + `retrying with attempt ${nextAttempt}/${maxAttempts} in ${delayMs}ms`,
+      );
+    },
+  );
 }
 
 export async function connectDatabases(): Promise<void> {
   try {
-    await connectPostgres();
+    await connectPostgresForStartup();
     console.log('PostgreSQL connected and schema migrations applied');
 
-    redisClient = createRedis('application');
-    redisClient.on('error', (error) => console.error('Redis error:', error));
-    await redisClient.connect();
-    await redisClient.ping();
+    redisClient = await connectRedisForStartup();
     console.log('Redis connected and responding to ping');
     console.log('All persistence services connected successfully');
   } catch (error) {

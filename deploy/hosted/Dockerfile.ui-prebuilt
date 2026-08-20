@@ -1,0 +1,36 @@
+ARG UI_RUNTIME_IMAGE=phx.ocir.io/axfm33dl0mwg/har-analyzer/har-app:ui-crossapp-signed-probe-20260805-04
+FROM ${UI_RUNTIME_IMAGE}
+
+ARG BACKEND_INVOKE_URL
+ARG OCI_REGION_FALLBACK=us-phoenix-1
+ARG VCS_REF=unknown
+ARG SOURCE_SHA256=unknown
+
+ENV NODE_ENV=production \
+    HOME=/tmp \
+    STATIC_DIR=/app/public \
+    BACKEND_HEALTH_URL= \
+    BACKEND_INVOKE_URL=${BACKEND_INVOKE_URL} \
+    BACKEND_PROXY_TIMEOUT_MS=1800000 \
+    BACKEND_PROXY_MAX_BODY_BYTES=16777216 \
+    OCI_REGION_FALLBACK=${OCI_REGION_FALLBACK} \
+    OCI_AUTH_MODE=instance-principal \
+    AUTH_MODE=idcs
+
+LABEL org.opencontainers.image.title="HAR Analyzer session UI" \
+      org.opencontainers.image.description="Static HAR Analyzer UI with restricted OCI resource-principal backend proxy" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      com.oracle.har-analyzer.runtime="session-ui-signed-proxy" \
+      com.oracle.har-analyzer.source-sha256="${SOURCE_SHA256}"
+
+WORKDIR /app
+COPY dist ./public
+COPY deploy/hosted/ui-server.mjs ./ui-server.mjs
+COPY deploy/hosted/ui-proxy-core.mjs ./ui-proxy-core.mjs
+COPY deploy/hosted/ui-auth-core.mjs ./ui-auth-core.mjs
+
+USER 10001:10001
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+CMD ["node", "ui-server.mjs"]

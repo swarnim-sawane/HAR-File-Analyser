@@ -340,10 +340,15 @@ export async function connectPostgres(): Promise<PostgresStore> {
   if (store) return store;
   const pool = new Pool(buildPostgresPoolConfig());
   pool.on('error', (error) => console.error('Unexpected PostgreSQL pool error:', error));
-  await pool.query('SELECT 1');
-  await runPostgresMigrations(pool);
-  store = new PostgresStore(pool);
-  return store;
+  try {
+    await pool.query('SELECT 1');
+    await runPostgresMigrations(pool);
+    store = new PostgresStore(pool);
+    return store;
+  } catch (error) {
+    await pool.end().catch(() => undefined);
+    throw error;
+  }
 }
 
 export function getPostgresStore(): PostgresStore {

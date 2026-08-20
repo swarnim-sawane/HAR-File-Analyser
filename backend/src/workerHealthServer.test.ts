@@ -1,6 +1,6 @@
 import type { AddressInfo } from 'net';
 import { afterEach, describe, expect, it } from 'vitest';
-import { startWorkerHealthServer } from './workerHealthServer';
+import { getWorkerHealthBinding, startWorkerHealthServer } from './workerHealthServer';
 import type { Server } from 'http';
 
 let server: Server | undefined;
@@ -17,6 +17,21 @@ async function request(path: string): Promise<Response> {
 }
 
 describe('worker health server', () => {
+  it('uses an internal loopback endpoint for the combined runtime', () => {
+    expect(getWorkerHealthBinding({
+      HOSTED_DEPLOYMENT: 'true',
+      INTERNAL_WORKER_HEALTH_HOST: '127.0.0.1',
+      INTERNAL_WORKER_HEALTH_PORT: '8081',
+    })).toEqual({ host: '127.0.0.1', port: 8081 });
+  });
+
+  it('rejects a non-loopback internal health endpoint', () => {
+    expect(() => getWorkerHealthBinding({
+      INTERNAL_WORKER_HEALTH_HOST: '0.0.0.0',
+      INTERNAL_WORKER_HEALTH_PORT: '8081',
+    })).toThrow(/loopback/);
+  });
+
   it('separates liveness from readiness', async () => {
     let ready = false;
     let shuttingDown = false;

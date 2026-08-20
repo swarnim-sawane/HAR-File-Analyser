@@ -1,0 +1,16 @@
+[
+  {
+    "description": "HAR UI outbound traffic through NAT",
+    "destination": "0.0.0.0/0",
+    "destinationType": "CIDR_BLOCK",
+    "networkEntityId": "ocid1.natgateway.oc1.phx.aaaaaaaajowt3domsaaaesa6rjxfrmz7ygj5b75uyc4ynu5xney6ioxl3jrq",
+    "routeType": "STATIC"
+  },
+  {
+    "description": "HAR UI private access to OCI services",
+    "destination": "all-phx-services-in-oracle-services-network",
+    "destinationType": "SERVICE_CIDR_BLOCK",
+    "networkEntityId": "SERVICE_GATEWAY_OCID",
+    "routeType": "STATIC"
+  }
+]

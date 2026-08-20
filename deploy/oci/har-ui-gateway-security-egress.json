@@ -1,0 +1,28 @@
+[
+  {
+    "destination": "10.240.2.0/24",
+    "destinationType": "CIDR_BLOCK",
+    "protocol": "6",
+    "isStateless": false,
+    "description": "API Gateway to private HAR UI",
+    "tcpOptions": {
+      "destinationPortRange": {
+        "min": 8080,
+        "max": 8080
+      }
+    }
+  },
+  {
+    "destination": "10.240.4.0/24",
+    "destinationType": "CIDR_BLOCK",
+    "protocol": "6",
+    "isStateless": false,
+    "description": "API Gateway to private HAR UI VM",
+    "tcpOptions": {
+      "destinationPortRange": {
+        "min": 8080,
+        "max": 8080
+      }
+    }
+  }
+]

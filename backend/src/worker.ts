@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import { Worker } from 'bullmq';
+import { buildBullMqConnectionOptions } from './config/bullmqConfig';
 import { closeDatabases, connectDatabases, getWorkerRedis } from './config/database';
 import { HAR_QUEUE_NAME, LOG_QUEUE_NAME } from './config/queueNames';
 import { processHarFile } from './workers/harProcessor';
@@ -20,6 +21,11 @@ const healthServer = startWorkerHealthServer({
   isShuttingDown: () => shuttingDown || startupFailed,
 });
 
+async function closeHealthServer(): Promise<void> {
+  if (!healthServer.listening) return;
+  await new Promise<void>((resolve) => healthServer.close(() => resolve()));
+}
+
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
@@ -36,7 +42,7 @@ async function shutdown(signal: string): Promise<void> {
     console.error('❌ Failed to close worker database connections:', error);
   });
 
-  await new Promise<void>((resolve) => healthServer.close(() => resolve()));
+  await closeHealthServer();
 
   process.exit(0);
 }
@@ -85,7 +91,7 @@ async function startWorker() {
         }
       },
       {
-        connection,
+        ...buildBullMqConnectionOptions(connection),
         concurrency,
         limiter: {
           max: 5,
@@ -129,7 +135,7 @@ async function startWorker() {
         }
       },
       {
-        connection,
+        ...buildBullMqConnectionOptions(connection),
         concurrency,
         limiter: {
           max: 5,
@@ -176,7 +182,13 @@ async function startWorker() {
     startupFailed = true;
     console.error('❌ Failed to start worker:', error);
     logError('worker.start.failed', { error });
-    process.exitCode = 1;
+    await Promise.allSettled([
+      harWorker?.close(),
+      logWorker?.close(),
+    ]);
+    await closeDatabases().catch(() => undefined);
+    await closeHealthServer().catch(() => undefined);
+    process.exit(1);
   }
 }
 

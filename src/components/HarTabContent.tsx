@@ -13,15 +13,30 @@ import RequestFlowGraphView from './RequestFlowGraphView';
 import RequestFlowTraceView from './RequestFlowTraceView';
 import PerformanceScorecard from './PerformanceScorecard';
 import AiInsights from './AiInsights';
+import ProgressiveHarPreview from './ProgressiveHarPreview';
 import { apiClient } from '../services/apiClient';
+import { getOrLoadHarData, peekHarData } from '../services/harDataCache';
 import { analyzeRequestFlowFocus } from '../utils/requestFlowFocus';
 import { AlertIcon, CloseIcon, NetworkIcon, RouteIcon, ServerIcon } from './Icons';
-import type { Entry, FilterOptions } from '../types/har';
+import type { Entry, FilterOptions, HarFile } from '../types/har';
 import type { RequestFlowFocusMode } from '../types/requestFlow';
+import type { HarPreviewSnapshot } from '../services/progressiveHarPreview';
 
 type HarTab = 'analyzer' | 'flow' | 'scorecard' | 'insights';
 type FlowViewMode = 'diagram' | 'nodes' | 'trace';
 type StatusBucket = keyof FilterOptions['statusCodes'];
+
+type RequestFlowFocus = ReturnType<typeof analyzeRequestFlowFocus>;
+const requestFlowFocusCache = new WeakMap<Entry[], RequestFlowFocus>();
+
+const getRequestFlowFocus = (entries: Entry[]): RequestFlowFocus => {
+  const cached = requestFlowFocusCache.get(entries);
+  if (cached !== undefined) return cached;
+
+  const focus = analyzeRequestFlowFocus(entries);
+  requestFlowFocusCache.set(entries, focus);
+  return focus;
+};
 
 function getStatusBucket(status: number): StatusBucket {
   if (status === 0) return '0';
@@ -48,6 +63,8 @@ export interface HarTabContentProps {
   onAddNewTab: () => void;          // "Upload new" in toolbar -> create new tab
   onLoadRecentNewTab: (file: File) => void;
   onClearRecent: () => void;
+  previewSnapshot?: HarPreviewSnapshot;
+  onPreviewConsumed?: () => void;
 }
 
 const HarTabContent: React.FC<HarTabContentProps> = ({
@@ -56,15 +73,20 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
   fileName,
   isActive,
   backendUrl,
+  previewSnapshot,
+  onPreviewConsumed,
 }) => {
-  const harState = useHarData();
+  const initialHarDataRef = useRef<HarFile | null>(fileId ? peekHarData(fileId) : null);
+  const harState = useHarData(initialHarDataRef.current);
   const [activeTab, setActiveTab] = useState<HarTab>('analyzer');
   const [flowViewMode, setFlowViewMode] = useState<FlowViewMode>('nodes');
   const [requestFlowFocusMode, setRequestFlowFocusMode] = useState<RequestFlowFocusMode>('all');
   const [issueFocusEnabled, setIssueFocusEnabled] = useState(true);
   const [detailsWidth, setDetailsWidth] = useState(450);
-  const [isLoadingFile, setIsLoadingFile] = useState(true);
+  const [isLoadingFile, setIsLoadingFile] = useState(Boolean(fileId) && initialHarDataRef.current === null);
+  const [authoritativeLoadError, setAuthoritativeLoadError] = useState<string | null>(null);
   const [selectedEntryScrollSignal, setSelectedEntryScrollSignal] = useState(0);
+  const [flowSelectedEntry, setFlowSelectedEntry] = useState<Entry | null>(null);
   const flowViewRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const autoSelectedFocusKeyRef = useRef<string | null>(null);
   const manualSelectionSuppressedRef = useRef(false);
@@ -73,7 +95,7 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
     [harState.harData],
   );
   const requestFlowIssueFocus = useMemo(
-    () => analyzeRequestFlowFocus(flowSessionEntries),
+    () => getRequestFlowFocus(flowSessionEntries),
     [flowSessionEntries]
   );
   const focusEntry = requestFlowIssueFocus ? flowSessionEntries[requestFlowIssueFocus.anchorIndex] ?? null : null;
@@ -100,24 +122,109 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
     // },
   ];
 
-  // Load file data when the tab is first created.
+  // Load the authoritative HAR when a provisional preview tab is promoted.
+  // Transient not-ready responses are retried while the redacted preview stays
+  // visible; partial preview rows never enter useHarData or issue analysis.
   useEffect(() => {
-    if (!fileId) return;
+    if (!fileId) {
+      setIsLoadingFile(false);
+      return;
+    }
+    let cancelled = false;
+    let retryTimer: number | undefined;
+    let releaseRetryWait: (() => void) | undefined;
+
+    const cached = peekHarData(fileId);
+    if (cached) {
+      setIsLoadingFile(false);
+      onPreviewConsumed?.();
+      return () => {
+        cancelled = true;
+      };
+    }
+
     setIsLoadingFile(true);
-    apiClient.getHarData(fileId)
-      .then(data => {
-        if (!data?.log) {
-          const keys = data ? Object.keys(data).slice(0, 10).join(', ') : 'null/undefined';
-          console.error(`HAR data for ${fileId} missing log property. Top-level keys: [${keys}]`);
-          return;
+    setAuthoritativeLoadError(null);
+
+    const waitBeforeRetry = () => new Promise<void>((resolve) => {
+      releaseRetryWait = resolve;
+      retryTimer = window.setTimeout(() => {
+        releaseRetryWait = undefined;
+        resolve();
+      }, 1000);
+    });
+    const shouldRetry = (error: unknown) => {
+      if ((error as { terminalHarStatus?: boolean })?.terminalHarStatus) return false;
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      return status === undefined || status === 202 || status === 404 || status === 409
+        || status === 425 || status >= 500;
+    };
+
+    const loadWithRetry = async (): Promise<HarFile> => {
+      let lastError: unknown;
+      for (let attempt = 0; attempt < 180 && !cancelled; attempt += 1) {
+        try {
+          return await getOrLoadHarData(fileId, async () => {
+            const data = await apiClient.getHarData(fileId);
+            if (!data?.log) {
+              const keys = data ? Object.keys(data).slice(0, 10).join(', ') : 'null/undefined';
+              throw new Error(`HAR data for ${fileId} is missing the log property. Top-level keys: [${keys}]`);
+            }
+            return data;
+          });
+        } catch (error) {
+          lastError = error;
+          try {
+            const status = await apiClient.getHarStatus(fileId);
+            if (status?.status === 'error' || status?.status === 'failed') {
+              const publicMessage = typeof status.error === 'string'
+                ? status.error.replace(/[\r\n\t]+/g, ' ').slice(0, 240)
+                : 'The server rejected this HAR file.';
+              const terminalError = new Error(publicMessage) as Error & { terminalHarStatus: boolean };
+              terminalError.terminalHarStatus = true;
+              throw terminalError;
+            }
+          } catch (statusError) {
+            if ((statusError as { terminalHarStatus?: boolean })?.terminalHarStatus) {
+              lastError = statusError;
+            }
+          }
+          if (!shouldRetry(error) || attempt === 179) break;
+          if ((lastError as { terminalHarStatus?: boolean })?.terminalHarStatus) break;
+          await waitBeforeRetry();
         }
-        return harState.loadHarData(data);
+      }
+      throw lastError instanceof Error ? lastError : new Error('Authoritative HAR analysis is unavailable.');
+    };
+
+    void loadWithRetry()
+      .then(data => {
+        if (!cancelled) {
+          void harState.loadHarData(data);
+          onPreviewConsumed?.();
+        }
+        return undefined;
       })
       .catch(err => {
+        if (cancelled) return;
         console.error(`Failed to load HAR tab ${tabId}:`, err);
+        setAuthoritativeLoadError(
+          (err as { terminalHarStatus?: boolean })?.terminalHarStatus
+            ? err.message
+            : 'The complete server analysis could not be loaded. The local preview remains unverified.',
+        );
       })
-      .finally(() => setIsLoadingFile(false));
-  // Only run on mount — fileId is immutable per tab.
+      .finally(() => {
+        if (!cancelled) setIsLoadingFile(false);
+      });
+
+    return () => {
+      cancelled = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      releaseRetryWait?.();
+    };
+  // The component is remounted for each authoritative generation; the callback
+  // and hook methods are stable for that generation.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileId]);
 
@@ -146,6 +253,10 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
   const requestSelectedEntryScroll = () => {
     setSelectedEntryScrollSignal((signal) => signal + 1);
   };
+
+  useEffect(() => {
+    setFlowSelectedEntry(null);
+  }, [flowSessionEntries]);
 
   const selectedEntry = harState.selectedEntry;
   const setSelectedEntry = harState.setSelectedEntry;
@@ -192,11 +303,15 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
     harState.setSelectedEntry(entry);
   };
 
-  const openEntryFromFlow = (entry: Entry) => {
+  const openEntryInAnalyzer = (entry: Entry) => {
     revealEntryInAnalyzerFilters(entry);
     selectEntryManually(entry);
     requestSelectedEntryScroll();
     setActiveTab('analyzer');
+  };
+
+  const openEntryInFlowDetails = (entry: Entry) => {
+    setFlowSelectedEntry(entry);
   };
 
   const moveFlowView = (index: number) => {
@@ -260,7 +375,7 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
         </div>
       )}
 
-      {(isLoadingFile || harState.isLoading) && (
+      {(isLoadingFile || harState.isLoading) && !previewSnapshot && (
         <div className="loading-overlay">
           <div className="spinner" />
           <p>Loading HAR file...</p>
@@ -273,6 +388,17 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
           <span>{harState.error}</span>
           <button onClick={harState.clearData} className="btn-dismiss" aria-label="Dismiss error"><CloseIcon /></button>
         </div>
+      )}
+
+      {authoritativeLoadError && !harState.harData && (
+        <div className="error-banner" role="alert">
+          <span className="error-icon" aria-hidden="true"><AlertIcon /></span>
+          <span>{authoritativeLoadError}</span>
+        </div>
+      )}
+
+      {!harState.harData && previewSnapshot && (
+        <ProgressiveHarPreview snapshot={previewSnapshot} />
       )}
 
       {harState.harData && (
@@ -352,37 +478,54 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
                 </div>
               </div>
 
-              <div className="flow-tab-panel">
-                {flowViewMode === 'diagram' ? (
-                  <RequestFlowDiagram
-                    entries={flowSessionEntries}
-                    visibleEntries={harState.filteredEntries}
-                    filters={harState.filters}
-                    onFiltersChange={harState.updateFilters}
-                    focusMode={requestFlowFocusMode}
-                    onFocusModeChange={setRequestFlowFocusMode}
-                    issueFocusPath={requestFlowIssueFocus}
-                    issueFocusEnabled={issueFocusEnabled}
-                    onNodeClick={openEntryFromFlow}
-                  />
-                ) : flowViewMode === 'trace' ? (
-                  <RequestFlowTraceView
-                    entries={harState.filteredEntries}
-                    onNodeClick={openEntryFromFlow}
-                  />
-                ) : (
-                  <RequestFlowGraphView
-                    entries={flowSessionEntries}
-                    visibleEntries={harState.filteredEntries}
-                    filters={harState.filters}
-                    onFiltersChange={harState.updateFilters}
-                    focusMode={requestFlowFocusMode}
-                    onFocusModeChange={setRequestFlowFocusMode}
-                    issueFocusPath={requestFlowIssueFocus}
-                    issueFocusEnabled={issueFocusEnabled}
-                    onIssueFocusEnabledChange={setIssueFocusEnabled}
-                    onNodeClick={openEntryFromFlow}
-                  />
+              <div
+                className={`flow-tab-panel ${flowSelectedEntry ? 'with-details' : ''}`}
+                style={flowSelectedEntry ? ({ ['--details-width' as any]: `${detailsWidth}px` }) : undefined}
+              >
+                <div className="flow-visualization">
+                  {flowViewMode === 'diagram' ? (
+                    <RequestFlowDiagram
+                      entries={flowSessionEntries}
+                      visibleEntries={harState.filteredEntries}
+                      filters={harState.filters}
+                      onFiltersChange={harState.updateFilters}
+                      focusMode={requestFlowFocusMode}
+                      onFocusModeChange={setRequestFlowFocusMode}
+                      issueFocusPath={requestFlowIssueFocus}
+                      issueFocusEnabled={issueFocusEnabled}
+                      onNodeClick={openEntryInFlowDetails}
+                    />
+                  ) : flowViewMode === 'trace' ? (
+                    <RequestFlowTraceView
+                      entries={harState.filteredEntries}
+                      onNodeClick={openEntryInFlowDetails}
+                    />
+                  ) : (
+                    <RequestFlowGraphView
+                      entries={flowSessionEntries}
+                      visibleEntries={harState.filteredEntries}
+                      filters={harState.filters}
+                      onFiltersChange={harState.updateFilters}
+                      focusMode={requestFlowFocusMode}
+                      onFocusModeChange={setRequestFlowFocusMode}
+                      issueFocusPath={requestFlowIssueFocus}
+                      issueFocusEnabled={issueFocusEnabled}
+                      onIssueFocusEnabledChange={setIssueFocusEnabled}
+                      onNodeClick={openEntryInFlowDetails}
+                    />
+                  )}
+                </div>
+
+                {flowSelectedEntry && (
+                  <aside className="flow-details-sidebar" aria-label="Selected Request Flow request details">
+                    <div className="resize-handle" onMouseDown={startResize} />
+                    <RequestDetails
+                      entry={flowSelectedEntry}
+                      onClose={() => setFlowSelectedEntry(null)}
+                      focusPath={flowSelectedEntry === focusEntry ? requestFlowIssueFocus : null}
+                      searchTerm={harState.filters.searchTerm}
+                    />
+                  </aside>
                 )}
               </div>
             </div>
@@ -390,7 +533,7 @@ const HarTabContent: React.FC<HarTabContentProps> = ({
 
           {activeTab === 'scorecard' && (
             <div className="scorecard-wrapper">
-              <PerformanceScorecard harData={harState.harData} onSelectRequest={openEntryFromFlow} />
+              <PerformanceScorecard harData={harState.harData} onSelectRequest={openEntryInAnalyzer} />
             </div>
           )}
 

@@ -1,0 +1,35 @@
+{
+  "loggingPolicies": {
+    "accessLog": {
+      "isEnabled": true
+    },
+    "executionLog": {
+      "isEnabled": true,
+      "logLevel": "INFO"
+    }
+  },
+  "routes": [
+    {
+      "path": "/",
+      "methods": ["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"],
+      "backend": {
+        "type": "HTTP_BACKEND",
+        "url": "http://10.240.2.114:8080/",
+        "connectTimeoutInSeconds": 10,
+        "readTimeoutInSeconds": 300,
+        "sendTimeoutInSeconds": 300
+      }
+    },
+    {
+      "path": "/{req*}",
+      "methods": ["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"],
+      "backend": {
+        "type": "HTTP_BACKEND",
+        "url": "http://10.240.2.114:8080/${request.path[req]}",
+        "connectTimeoutInSeconds": 10,
+        "readTimeoutInSeconds": 300,
+        "sendTimeoutInSeconds": 300
+      }
+    }
+  ]
+}

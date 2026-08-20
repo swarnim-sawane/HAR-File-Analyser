@@ -2,6 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { buildAllowedOrigins, isOriginAllowed, parseConfiguredOrigins } from './corsOrigins';
 
 describe('CORS origins', () => {
+  it('allows both localhost and IPv4 loopback development origins', () => {
+    const allowedOrigins = buildAllowedOrigins();
+
+    expect(allowedOrigins).toEqual(expect.arrayContaining([
+      'http://localhost:3000',
+      'http://127.0.0.1:3000',
+      'http://localhost:5173',
+      'http://127.0.0.1:5173',
+    ]));
+    expect(isOriginAllowed('http://127.0.0.1:3000', allowedOrigins)).toBe(true);
+  });
+
   it('allows the VM frontend by IP and DNS hostname', () => {
     expect(buildAllowedOrigins()).toEqual(expect.arrayContaining([
       'http://10.65.39.163:3000',

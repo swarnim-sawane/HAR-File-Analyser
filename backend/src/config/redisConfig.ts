@@ -4,6 +4,14 @@ import type { RedisOptions } from 'ioredis';
 export interface RedisConnectionConfig {
   url?: string;
   options: RedisOptions;
+  source: 'REDIS_URL' | 'REDIS_HOST' | 'development-default';
+}
+
+export interface RedisConnectionDiagnostics {
+  source: RedisConnectionConfig['source'];
+  hostname: string;
+  port: number;
+  tls: boolean;
 }
 
 function enabled(value: string | undefined): boolean {
@@ -16,16 +24,24 @@ export function buildRedisConnectionConfig(
 ): RedisConnectionConfig {
   const url = env.REDIS_URL?.trim() || undefined;
   const hosted = env.HOSTED_DEPLOYMENT === 'true';
-  const host = env.REDIS_HOST?.trim() || (hosted ? undefined : 'localhost');
+  const configuredHost = env.REDIS_HOST?.trim() || undefined;
+  const host = configuredHost || (hosted ? undefined : 'localhost');
+  const source: RedisConnectionConfig['source'] = url
+    ? 'REDIS_URL'
+    : configuredHost
+      ? 'REDIS_HOST'
+      : 'development-default';
 
   if (!url && !host) {
     throw new Error('Hosted Deployment requires REDIS_URL or REDIS_HOST.');
   }
+  // A complete REDIS_URL is authoritative. In OCI GenAI Hosted Applications,
+  // the injected URL can point to a plaintext loopback proxy even when the
+  // managed cache connection behind that proxy is secured by the platform.
+  // Applying REDIS_TLS on top of that URL creates a contradictory client
+  // configuration, so the separate flag is only valid for host-based setups.
   const urlUsesTls = Boolean(url?.toLowerCase().startsWith('rediss://'));
-  const tlsEnabled = urlUsesTls || enabled(env.REDIS_TLS);
-  if (hosted && !tlsEnabled) {
-    throw new Error('Hosted Deployment requires TLS for OCI Cache. Use rediss:// or REDIS_TLS=true.');
-  }
+  const tlsEnabled = url ? urlUsesTls : enabled(env.REDIS_TLS);
 
   const caFile = env.REDIS_TLS_CA_FILE?.trim();
   const ca = env.REDIS_TLS_CA?.replace(/\\n/g, '\n')
@@ -50,5 +66,24 @@ export function buildRedisConnectionConfig(
     retryStrategy: (times) => Math.min(times * 50, 2000),
   };
 
-  return { url, options };
+  return { url, options, source };
+}
+
+export function describeRedisConnectionConfig(config: RedisConnectionConfig): RedisConnectionDiagnostics {
+  if (config.url) {
+    const parsed = new URL(config.url);
+    return {
+      source: config.source,
+      hostname: parsed.hostname,
+      port: Number.parseInt(parsed.port || '6379', 10),
+      tls: parsed.protocol.toLowerCase() === 'rediss:' || Boolean(config.options.tls),
+    };
+  }
+
+  return {
+    source: config.source,
+    hostname: String(config.options.host || 'localhost'),
+    port: Number(config.options.port || 6379),
+    tls: Boolean(config.options.tls),
+  };
 }

@@ -4,9 +4,15 @@
 // console log and routes it to the appropriate handler. Replaces the two
 // separate uploaders on the initial home screen.
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { chunkedUploader, UploadProgress, UploadResult } from '../services/chunkedUploader';
-import { restoreRecentFile, storeRecentFile } from '../services/recentFilesStore';
+import {
+  startHarPreview,
+  HarPreviewSession,
+  isHarPreviewValidationError,
+} from '../services/harPreviewClient';
+import { HarPreviewEvent, HarPreviewSnapshot } from '../services/progressiveHarPreview';
+import { restoreRecentFile } from '../services/recentFilesStore';
 import { wsClient } from '../services/websocketClient';
 import {
   createLocalConsoleLogUploadResult,
@@ -45,12 +51,33 @@ interface UnifiedUploaderProps {
   onOpenExistingRecentFile?: (
     file: { name: string; fileType: UploadFileType }
   ) => boolean | Promise<boolean>;
+
+  /** Streams bounded, redacted local metadata into the analyzer tab shell. */
+  onHarPreviewSnapshot?: (snapshot: HarPreviewSnapshot) => void;
+  onHarPreviewSessionCreated?: (session: HarPreviewSession) => void;
+  onHarPreviewRemoved?: (
+    previewId: string,
+    reason: 'completed' | 'cancelled' | 'failed',
+  ) => void;
+  /** Keeps this stateful uploader mounted while its visible workspace is elsewhere. */
+  workspaceVisible?: boolean;
+  inputId?: string;
 }
 
 interface TypedFile {
   file: File;
   type: UploadFileType;
 }
+
+interface ActiveHarPreview {
+  session: HarPreviewSession;
+  sourceFile: File;
+}
+
+// A File object may be delivered by more than one mounted uploader or browser
+// event before React has updated its busy state. Guard it across component
+// instances without retaining files after processing finishes.
+const activeFileSubmissions = new WeakSet<File>();
 
 const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
   onHarFileUpload,
@@ -60,6 +87,11 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
   logRecentFiles = [],
   onClearLogRecent,
   onOpenExistingRecentFile,
+  onHarPreviewSnapshot,
+  onHarPreviewSessionCreated,
+  onHarPreviewRemoved,
+  workspaceVisible = true,
+  inputId = 'unified-file-input',
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -78,6 +110,30 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
   const [pendingHarResult, setPendingHarResult] = useState<UploadResult | null>(null);
   const [showHarSanitizeModal, setShowHarSanitizeModal] = useState(false);
   const [pendingBatchResults, setPendingBatchResults] = useState<UploadResult[] | null>(null);
+  const previewSessionsRef = useRef<Map<string, ActiveHarPreview>>(new Map());
+
+  const handleHarPreviewEvent = useCallback((event: HarPreviewEvent) => {
+    onHarPreviewSnapshot?.(event.snapshot);
+  }, [onHarPreviewSnapshot]);
+
+  const removePreview = useCallback((
+    previewId: string,
+    reason: 'completed' | 'cancelled' | 'failed',
+  ) => {
+    previewSessionsRef.current.delete(previewId);
+    onHarPreviewRemoved?.(previewId, reason);
+  }, [onHarPreviewRemoved]);
+
+  const cancelPreview = useCallback((previewId?: string) => {
+    if (!previewId) return;
+    previewSessionsRef.current.get(previewId)?.session.cancel();
+    removePreview(previewId, 'cancelled');
+  }, [removePreview]);
+
+  useEffect(() => () => {
+    previewSessionsRef.current.forEach(({ session }) => session.cancel());
+    previewSessionsRef.current.clear();
+  }, []);
 
   useEffect(() => {
     if (error) {
@@ -90,31 +146,6 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
 
   // ── File-type detection ───────────────────────────────────────────────────
 
-  // ── Validation ────────────────────────────────────────────────────────────
-
-  const validateHarFile = async (file: File): Promise<{ isValid: boolean; error?: string }> => {
-    try {
-      const text = await file.text();
-      const data = JSON.parse(text);
-      if (!data.log)
-        return { isValid: false, error: `${file.name}: Missing "log" property` };
-      if (!data.log.entries || !Array.isArray(data.log.entries))
-        return { isValid: false, error: `${file.name}: Missing or invalid "entries" array` };
-      if (data.log.entries.length === 0)
-        return { isValid: false, error: `${file.name}: No network requests found` };
-      const hasValidEntries = data.log.entries.some(
-        (e: any) => e.request && e.response && e.startedDateTime
-      );
-      if (!hasValidEntries)
-        return { isValid: false, error: `${file.name}: HAR entries are corrupted or incomplete` };
-      return { isValid: true };
-    } catch (err) {
-      if (err instanceof SyntaxError)
-        return { isValid: false, error: `${file.name}: Invalid JSON format` };
-      return { isValid: false, error: `${file.name}: Failed to read file` };
-    }
-  };
-
   const validateLogFile = (file: File): { isValid: boolean; error?: string } => {
     if (file.size <= 0) return { isValid: false, error: `${file.name}: File is empty` };
     return { isValid: true };
@@ -124,44 +155,53 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
 
   const processHarFiles = async (files: File[]) => {
     setIsValidating(true);
-    setStatusMessage('Validating HAR file(s)...');
+    setStatusMessage('Reading the first requests...');
 
-    const validFiles: File[] = [];
-    const validationErrors: string[] = [];
-    for (const file of files) {
-      const v = await validateHarFile(file);
-      if (v.isValid) {
-        validFiles.push(file);
-      } else {
-        validationErrors.push(v.error ?? `${file.name}: Invalid HAR file`);
-      }
-    }
+    const candidates = files.map((file) => {
+      const session = startHarPreview(file, handleHarPreviewEvent);
+      onHarPreviewSessionCreated?.(session);
+      // Runtime preview failures are advisory. Deterministic structural
+      // validation failures are handled below and cancel the in-flight upload.
+      void session.ready.catch(() => undefined);
+      const active = { session, sourceFile: file };
+      previewSessionsRef.current.set(session.previewId, active);
+      return active;
+    });
     setIsValidating(false);
 
-    if (validFiles.length === 0) {
-      setError(validationErrors.join(' · '));
-      return;
-    }
-    if (validationErrors.length > 0) {
-      // Non-blocking: warn but continue with valid files
-      setError(`Skipped invalid file(s): ${validationErrors.join(', ')}`);
-    }
-
-    // Upload all valid HAR files, show per-file progress
+    // Upload every HAR candidate. The backend remains authoritative for file
+    // validity; local preview success is never an upload prerequisite.
     setIsUploading(true);
-    setMultiTotal(validFiles.length);
+    setMultiTotal(candidates.length);
     setMultiDone(0);
 
     const collectedResults: UploadResult[] = [];
-    for (const file of validFiles) {
+    const uploadErrors: string[] = [];
+    for (const candidate of candidates) {
+      const fileName = candidate.sourceFile.name;
+      const file = candidate.sourceFile;
       setStatusMessage(`Uploading ${file.name}...`);
+      candidate.session.setPhase('uploading');
+      let previewValidationError: Error | null = null;
+      const validation = candidate.session.validated.catch((validationError: unknown) => {
+        if (isHarPreviewValidationError(validationError)) {
+          previewValidationError = validationError;
+          chunkedUploader.cancelUpload(file, 'har');
+        }
+      });
       try {
-        const result = await chunkedUploader.uploadFile(file, 'har', (p) => setUploadProgress(p));
-        // Persist to IndexedDB for cross-session Recent Files restore
-        void storeRecentFile('har', file);
-        collectedResults.push(result);
+        const uploaded = await chunkedUploader.uploadFile(file, 'har', (p) => setUploadProgress(p));
+        await validation;
+        if (previewValidationError) throw previewValidationError;
+        candidate.session.setPhase('sanitizing');
+        collectedResults.push({ ...uploaded, previewId: candidate.session.previewId });
       } catch (err) {
-        setError(`Failed to upload ${file.name}: ${(err as Error)?.message ?? 'Unknown error'}`);
+        const effectiveError = previewValidationError ?? err;
+        const detail = (effectiveError as Error)?.message ?? 'Unknown error';
+        candidate.session.fail(detail);
+        removePreview(candidate.session.previewId, 'failed');
+        uploadErrors.push(`${fileName}: ${detail}`);
+        setError(`Failed to upload ${fileName}: ${detail}`);
       }
       setMultiDone((prev) => prev + 1);
     }
@@ -173,7 +213,7 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
     setStatusMessage('');
 
     if (collectedResults.length === 0) {
-      setError('All HAR uploads failed. Please try again.');
+      setError(`All HAR uploads failed. ${uploadErrors.join(' | ') || 'Please try again.'}`);
       return;
     }
 
@@ -220,55 +260,104 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
 
   const processFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
+    const acceptedFiles = files.filter((file) => {
+      if (activeFileSubmissions.has(file)) return false;
+      activeFileSubmissions.add(file);
+      return true;
+    });
+    if (acceptedFiles.length === 0) return;
     setError(null);
 
-    // 1. Detect types
-    setIsDetecting(true);
-    setStatusMessage('Detecting file type...');
-    const typed: TypedFile[] = await Promise.all(
-      files.map(async (f) => ({ file: f, type: await detectUploadFileType(f) }))
-    );
-    setIsDetecting(false);
-    setStatusMessage('');
+    try {
+      // 1. Detect types
+      setIsDetecting(true);
+      setStatusMessage('Detecting file type...');
+      const typed: TypedFile[] = await Promise.all(
+        acceptedFiles.map(async (f) => ({ file: f, type: await detectUploadFileType(f) }))
+      );
+      setIsDetecting(false);
+      setStatusMessage('');
 
-    const harFiles = typed.filter((t) => t.type === 'har').map((t) => t.file);
-    const logFiles = typed.filter((t) => t.type === 'log').map((t) => t.file);
+      const harFiles = typed.filter((t) => t.type === 'har').map((t) => t.file);
+      const logFiles = typed.filter((t) => t.type === 'log').map((t) => t.file);
 
-    if (harFiles.length === 0 && logFiles.length === 0) {
-      setError('Unsupported file type. Please upload a HAR capture (.har or .oc), a console log (.log or .txt), or a .json export.');
-      return;
-    }
+      if (harFiles.length === 0 && logFiles.length === 0) {
+        setError('Unsupported file type. Please upload a HAR capture (.har or .oc), a console log (.log or .txt), or a .json export.');
+        return;
+      }
 
     // 2. Process console log first (no blocking modal)
-    if (logFiles.length > 0) {
-      if (logFiles.length > 1) {
-        setError(`Only one console log can be open at a time — opening "${logFiles[0].name}".`);
+      if (logFiles.length > 0) {
+        if (logFiles.length > 1) {
+          setError(`Only one console log can be open at a time — opening "${logFiles[0].name}".`);
+        }
+        await processLogFile(logFiles[0]);
       }
-      await processLogFile(logFiles[0]);
-    }
 
-    // 3. Process HAR files (may show sanitize modal)
-    if (harFiles.length > 0) {
-      await processHarFiles(harFiles);
+      // 3. Process HAR files (may show sanitize modal)
+      if (harFiles.length > 0) {
+        await processHarFiles(harFiles);
+      }
+    } finally {
+      acceptedFiles.forEach((file) => activeFileSubmissions.delete(file));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onHarFileUpload, onLogFileUpload]);
 
   // ── Sanitize modal handlers ───────────────────────────────────────────────
 
-  const handleSanitizeComplete = (fileId: string) => {
+  const handleSanitizeComplete = async (fileId: string) => {
     setShowHarSanitizeModal(false);
-    if (!pendingHarResult) return;
-    wsClient.subscribeToFile(fileId);
-    void onHarFileUpload({ ...pendingHarResult, fileId });
+    const result = pendingHarResult;
     setPendingHarResult(null);
+    if (!result) return;
+
+    const preview = result.previewId
+      ? previewSessionsRef.current.get(result.previewId)
+      : undefined;
+    preview?.session.setPhase('processing');
+
+    try {
+      wsClient.subscribeToFile(fileId);
+      await onHarFileUpload({ ...result, fileId });
+      preview?.session.finish();
+      if (result.previewId) removePreview(result.previewId, 'completed');
+    } catch (finalizationError) {
+      const message = finalizationError instanceof Error
+        ? finalizationError.message
+        : 'The authoritative HAR analysis could not be loaded.';
+      preview?.session.fail(message);
+      if (result.previewId) removePreview(result.previewId, 'failed');
+      setError(`HAR processing failed. ${message}`);
+    }
   };
 
   const handleBatchSanitizeComplete = async (finalResults: UploadResult[]) => {
     setPendingBatchResults(null);
+    const failures: string[] = [];
     for (const result of finalResults) {
-      wsClient.subscribeToFile(result.fileId);
-      await onHarFileUpload(result);
+      const preview = result.previewId
+        ? previewSessionsRef.current.get(result.previewId)
+        : undefined;
+      preview?.session.setPhase('processing');
+
+      try {
+        wsClient.subscribeToFile(result.fileId);
+        await onHarFileUpload(result);
+        preview?.session.finish();
+        if (result.previewId) removePreview(result.previewId, 'completed');
+      } catch (finalizationError) {
+        const message = finalizationError instanceof Error
+          ? finalizationError.message
+          : 'The authoritative HAR analysis could not be loaded.';
+        preview?.session.fail(message);
+        if (result.previewId) removePreview(result.previewId, 'failed');
+        failures.push(`${result.fileName}: ${message}`);
+      }
+    }
+
+    if (failures.length > 0) {
+      setError(`Some HAR files could not be finalized. ${failures.join(' ')}`);
     }
   };
 
@@ -353,7 +442,6 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
   };
 
   const isBusy = isDetecting || isValidating || isUploading;
-
   const handleClearAll = () => {
     onClearHarRecent?.();
     onClearLogRecent?.();
@@ -369,6 +457,7 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
           uploadResult={pendingHarResult}
           onProceed={handleSanitizeComplete}
           onCancel={() => {
+            cancelPreview(pendingHarResult.previewId);
             setShowHarSanitizeModal(false);
             setPendingHarResult(null);
           }}
@@ -380,7 +469,10 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
         <BatchSanitizeModal
           uploadResults={pendingBatchResults}
           onProceed={handleBatchSanitizeComplete}
-          onCancel={() => setPendingBatchResults(null)}
+          onCancel={() => {
+            pendingBatchResults.forEach((result) => cancelPreview(result.previewId));
+            setPendingBatchResults(null);
+          }}
         />
       )}
 
@@ -409,6 +501,7 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
         </div>
       )}
 
+      {workspaceVisible && (<>
       {/* ── Drop zone ── */}
       <div
         className={`drop-zone unified-drop-zone ${isDragging ? 'dragging' : ''} ${isBusy ? 'validating' : ''}`}
@@ -465,10 +558,10 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
               accept={UNIFIED_FILE_INPUT_ACCEPT}
               onChange={handleFileInput}
               style={{ display: 'none' }}
-              id="unified-file-input"
+              id={inputId}
               multiple
             />
-            <label htmlFor="unified-file-input" className="upload-button">
+            <label htmlFor={inputId} className="upload-button">
               Choose Files
             </label>
           </>
@@ -571,6 +664,7 @@ const UnifiedUploader: React.FC<UnifiedUploaderProps> = ({
           </ol>
         </div>
       </div>
+      </>)}
     </div>
   );
 };

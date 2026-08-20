@@ -1,0 +1,18 @@
+ARG BASE_IMAGE=phx.ocir.io/axfm33dl0mwg/har-analyzer/har-app:container-ui-progressive-preview-20260818-01
+FROM ${BASE_IMAGE}
+
+ARG SOURCE_REVISION=unknown
+ARG SOURCE_CONTENT_SHA256=unknown
+LABEL org.opencontainers.image.revision=${SOURCE_REVISION} \
+      com.oracle.har-analyzer.source-content-sha256=${SOURCE_CONTENT_SHA256} \
+      com.oracle.har-analyzer.build-mode=ui-overlay
+
+# Reuse the last validated OCI UI runtime image and replace only the
+# production frontend bundle and reviewed proxy entrypoint. The runtime
+# serves STATIC_DIR=/app/public, so copying to any other directory silently
+# leaves the previous UI active.
+USER 0
+RUN rm -rf ./public/*
+COPY --chown=node:node dist ./public
+COPY --chown=node:node deploy/hosted/ui-server.mjs ./ui-server.mjs
+USER node

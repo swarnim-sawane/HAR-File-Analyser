@@ -1,0 +1,6 @@
+[
+  "Allow dynamic-group har-container-ui-dg to read repos in compartment har-analyzer where target.repo.name = 'har-analyzer/har-app'",
+  "Allow dynamic-group har-container-ui-dg to read secret-bundles in compartment har-analyzer where target.secret.id = 'ocid1.vaultsecret.oc1.phx.amaaaaaaxlowriqa5inij7bspp4nc5cjornp6a6xrgsbkpuovqpqq2ragkgq'",
+  "Allow dynamic-group har-container-ui-dg to {GENERATIVE_AI_HOSTED_DEPLOYMENT_INVOKE} in compartment har-analyzer",
+  "Allow dynamic-group har-container-ui-dg to read objects in compartment har-analyzer where all {target.bucket.name = 'har-analyzer-artifacts', target.object.name = 'deployment/har-ui-runtime-20260812-01.tgz'}"
+]

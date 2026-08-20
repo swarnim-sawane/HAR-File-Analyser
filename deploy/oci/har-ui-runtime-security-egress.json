@@ -1,0 +1,9 @@
+[
+  {
+    "destination": "0.0.0.0/0",
+    "destinationType": "CIDR_BLOCK",
+    "protocol": "all",
+    "isStateless": false,
+    "description": "HAR UI outbound HTTPS and return traffic"
+  }
+]

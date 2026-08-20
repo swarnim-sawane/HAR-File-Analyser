@@ -1,0 +1,16 @@
+[
+  {
+    "op": "replace",
+    "path": "redirectUris",
+    "value": [
+      "https://jxc7ntykekeecmlifn4ijizsmi.apigateway.us-phoenix-1.oci.customer-oci.com/auth/callback"
+    ]
+  },
+  {
+    "op": "replace",
+    "path": "postLogoutRedirectUris",
+    "value": [
+      "https://jxc7ntykekeecmlifn4ijizsmi.apigateway.us-phoenix-1.oci.customer-oci.com/"
+    ]
+  }
+]

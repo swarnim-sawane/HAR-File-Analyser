@@ -1,0 +1,61 @@
+#cloud-config
+package_update: false
+
+write_files:
+  - path: /etc/systemd/system/har-analyzer-ui.service
+    permissions: '0644'
+    owner: root:root
+    content: |
+      [Unit]
+      Description=HAR Analyzer browser UI
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      User=harui
+      Group=harui
+      WorkingDirectory=/opt/har-ui
+      Environment=NODE_ENV=production
+      Environment=HOST=0.0.0.0
+      Environment=STATIC_DIR=/opt/har-ui/public
+      Environment=AUTH_MODE=idcs
+      Environment=OCI_AUTH_MODE=instance-principal
+      Environment=OCI_REGION_FALLBACK=us-phoenix-1
+      Environment=PUBLIC_BASE_URL=https://jxc7ntykekeecmlifn4ijizsmi.apigateway.us-phoenix-1.oci.customer-oci.com
+      Environment=IDCS_DOMAIN_URL=https://idcs-4c25395e789648a1ae24218030f05d0a.identity.oraclecloud.com
+      Environment=IDCS_CLIENT_ID=818a47b17c3e4aaa9cd298604cccf6b1
+      Environment=IDCS_CLIENT_SECRET_VAULT_ID=ocid1.vaultsecret.oc1.phx.amaaaaaaxlowriqa5inij7bspp4nc5cjornp6a6xrgsbkpuovqpqq2ragkgq
+      Environment="IDCS_SCOPES=openid profile email"
+      Environment=SESSION_TTL_SECONDS=28800
+      Environment=BACKEND_INVOKE_URL=https://inference.generativeai.us-phoenix-1.oci.oraclecloud.com/20251112/hostedApplicationsIam/ocid1.generativeaihostedapplicationiam.oc1.phx.amaaaaaaxlowriqaudnn2rer2bthxhaof5c2rzj3fa4nkotky7znbqmidyrq/actions/invoke
+      Environment=BACKEND_PROXY_TIMEOUT_MS=1800000
+      Environment=BACKEND_PROXY_MAX_BODY_BYTES=16777216
+      Environment=HOME=/tmp/harui
+      ExecStart=/usr/bin/node /opt/har-ui/ui-server.mjs
+      Restart=on-failure
+      RestartSec=5
+      NoNewPrivileges=true
+      PrivateTmp=true
+      ProtectSystem=strict
+      ProtectHome=true
+      ProtectKernelTunables=true
+      ProtectKernelModules=true
+      ProtectControlGroups=true
+      RestrictSUIDSGID=true
+      LockPersonality=true
+      ReadWritePaths=/tmp/harui
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - [bash, -lc, 'set -euo pipefail; dnf -y module reset nodejs || true; dnf -y module install nodejs:22 || dnf -y install nodejs']
+  - [bash, -lc, 'set -euo pipefail; dnf -y install oraclelinux-developer-release-el9; dnf -y install python39-oci-cli']
+  - [bash, -lc, 'set -euo pipefail; id harui >/dev/null 2>&1 || useradd --system --home-dir /opt/har-ui --shell /sbin/nologin harui; install -d -o harui -g harui -m 0750 /opt/har-ui /tmp/harui']
+  - [bash, -lc, 'set -euo pipefail; for attempt in $(seq 1 45); do if oci os object get --auth instance_principal --region us-phoenix-1 --namespace-name axfm33dl0mwg --bucket-name har-analyzer-artifacts --name deployment/har-ui-runtime-20260812-01.tgz --file /tmp/har-ui-runtime.tgz --force; then break; fi; if [ "$attempt" -eq 45 ]; then exit 1; fi; sleep 20; done']
+  - [bash, -lc, 'set -euo pipefail; echo "7e5bf0ee71324cb55e0c5d3c790873bdf86d32a7301f648f4bcecb3697619c73  /tmp/har-ui-runtime.tgz" | sha256sum -c -; tar -xzf /tmp/har-ui-runtime.tgz -C /opt/har-ui; rm -f /tmp/har-ui-runtime.tgz; chown -R harui:harui /opt/har-ui']
+  - [bash, -lc, 'set -euo pipefail; if systemctl is-active --quiet firewalld; then firewall-cmd --permanent --add-port=8080/tcp; firewall-cmd --reload; fi']
+  - [bash, -lc, 'set -euo pipefail; systemctl daemon-reload; systemctl enable --now har-analyzer-ui.service']
+
+final_message: HAR Analyzer UI bootstrap completed after $UPTIME seconds

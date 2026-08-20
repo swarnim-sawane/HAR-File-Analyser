@@ -4,6 +4,7 @@ import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
 import { Queue } from 'bullmq';
+import { buildBullMqConnectionOptions } from '../config/bullmqConfig';
 import { getDatabase, getRedis } from '../config/database';
 import { HAR_QUEUE_NAME } from '../config/queueNames';
 import { sanitize, getHarInfo, defaultScrubItems } from '../utils/har_sanitize';
@@ -17,7 +18,7 @@ import {
 const router = Router();
 const artifactStore = getArtifactStore();
 const redis = getRedis();
-const harQueue = new Queue(HAR_QUEUE_NAME, { connection: redis });
+const harQueue = new Queue(HAR_QUEUE_NAME, buildBullMqConnectionOptions(redis));
 const PROCESSED_DIR = path.resolve(
   process.env.PROCESSED_DIR || path.join(process.cwd(), 'processed'),
 );

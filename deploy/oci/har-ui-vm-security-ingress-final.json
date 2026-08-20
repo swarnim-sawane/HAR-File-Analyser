@@ -1,0 +1,15 @@
+[
+  {
+    "source": "10.240.3.0/24",
+    "sourceType": "CIDR_BLOCK",
+    "protocol": "6",
+    "isStateless": false,
+    "description": "API Gateway to HAR UI VM on port 8080",
+    "tcpOptions": {
+      "destinationPortRange": {
+        "min": 8080,
+        "max": 8080
+      }
+    }
+  }
+]

@@ -7,11 +7,8 @@ import './FloatingAiChat.css';
 import { ConsoleLogFile } from '../types/consolelog';
 import { buildHarContext } from '../hooks/useInsights';
 import { buildConsoleLogContext } from '../hooks/useConsoleLogInsights';
+import { BACKEND_BASE_URL } from '../services/runtimeUrls';
 
-const BACKEND_BASE_URL =
-  import.meta.env.VITE_BACKEND_URL ||
-  import.meta.env.VITE_API_URL ||
-  'http://localhost:4000';
 const BACKEND_AI_URL = `${BACKEND_BASE_URL}/api/ai`;
 
 interface Message {

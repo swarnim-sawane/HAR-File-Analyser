@@ -1,4 +1,5 @@
 import { Queue } from 'bullmq';
+import { buildBullMqConnectionOptions } from '../config/bullmqConfig';
 import { getDatabase, getRedis } from '../config/database';
 import { HAR_QUEUE_NAME } from '../config/queueNames';
 import { streamParseHar, ParsedHarEntry } from '../services/streamingParser';
@@ -20,7 +21,7 @@ let harQueue: Queue | null = null;
 export function initHarQueue(): Queue {
   if (!harQueue) {
     redis = getRedis();
-    harQueue = new Queue(HAR_QUEUE_NAME, { connection: redis });
+    harQueue = new Queue(HAR_QUEUE_NAME, buildBullMqConnectionOptions(redis));
   }
   return harQueue;
 }
@@ -37,6 +38,16 @@ interface HarJobData {
   compressed?: string;
 }
 
+class HarProcessingValidationError extends Error {}
+
+export function isValidHarRequestEntry(entry: ParsedHarEntry): boolean {
+  return typeof entry.startedDateTime === 'string'
+    && typeof entry.request?.method === 'string'
+    && typeof entry.request?.url === 'string'
+    && typeof entry.response?.status === 'number'
+    && Number.isFinite(entry.response.status);
+}
+
 /**
  * Process HAR file: parse, store, and calculate stats
  * ✅ FIXED: No more memory accumulation
@@ -47,6 +58,7 @@ interface HarJobData {
 export async function processHarFile(data: HarJobData): Promise<void> {
   const startedAt = Date.now();
   const { fileId, fileName, fileSize } = data;
+  const db = getDatabase();
   let materializedCleanup: (() => Promise<void>) | undefined;
   
   // Initialize redis if not already done
@@ -96,7 +108,6 @@ export async function processHarFile(data: HarJobData): Promise<void> {
     };
 
     // Step 1: Parse the HAR file and store indexed JSONB entries in PostgreSQL.
-    const db = getDatabase();
     await db.upsertFile('har', {
       fileId,
       fileName,
@@ -124,6 +135,9 @@ export async function processHarFile(data: HarJobData): Promise<void> {
     const domainCache = new Map<string, string>();
 
     await streamParseHar(processingPath, async (entry, index) => {
+      if (!isValidHarRequestEntry(entry)) {
+        throw new HarProcessingValidationError('HAR entry validation failed.');
+      }
       batchBuffer.push(entry);
 
       // ✅ FIXED: Update stats on-the-fly (pass domain cache to avoid re-parsing URLs)
@@ -152,6 +166,10 @@ export async function processHarFile(data: HarJobData): Promise<void> {
         }
       }
     });
+
+    if (totalEntries === 0) {
+      throw new HarProcessingValidationError('HAR entries array is empty or unreadable.');
+    }
 
     // Insert remaining entries
     if (batchBuffer.length > 0) {
@@ -187,7 +205,6 @@ export async function processHarFile(data: HarJobData): Promise<void> {
       status: 'ready'
     });
 
-
     // Update status to ready
     await updateFileStatus(fileId, 'ready', {
       totalEntries,
@@ -205,6 +222,9 @@ export async function processHarFile(data: HarJobData): Promise<void> {
     console.log(`✅ HAR file processing complete: ${fileId} (${totalEntries} entries)`);
     
   } catch (error) {
+    const publicError = error instanceof HarProcessingValidationError
+      ? 'HAR file is invalid or contains unsupported request entries.'
+      : 'The server could not process this HAR file.';
     console.error(`❌ HAR processing failed for ${fileId}:`, error);
     logError('har.processing.failed', {
       fileId,
@@ -212,7 +232,20 @@ export async function processHarFile(data: HarJobData): Promise<void> {
       error,
       durationMs: measureDurationMs(startedAt),
     });
-    await updateFileStatus(fileId, 'error', { error: (error as Error).message });
+    try {
+      const existing = await db.getFile('har', fileId);
+      if (existing) {
+        await db.upsertFile('har', {
+          ...existing,
+          status: 'error',
+          processedAt: new Date(),
+          stats: { ...existing.stats, processingError: publicError },
+        });
+      }
+    } catch (statusError) {
+      console.error(`Failed to persist HAR error status for ${fileId}:`, statusError);
+    }
+    await updateFileStatus(fileId, 'error', { error: publicError });
     throw error;
   } finally {
     await materializedCleanup?.().catch((error) => {

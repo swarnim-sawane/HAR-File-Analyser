@@ -4,6 +4,23 @@ import { HarFile, Entry, FilterOptions } from '../types/har';
 import { HarParser } from '../utils/harParser';
 import { HarAnalyzer } from '../utils/harAnalyzer';
 
+type HarSearchIndex = ReturnType<typeof HarAnalyzer.buildSearchIndex>;
+
+// Cached HAR objects retain their identity across analyzer remounts. Reuse the
+// derived search index as well so returning to a file does not rebuild it.
+const searchIndexCache = new WeakMap<HarFile, HarSearchIndex>();
+
+const getSearchIndex = (harData: HarFile | null): HarSearchIndex | null => {
+  if (!harData?.log?.entries) return null;
+
+  const cached = searchIndexCache.get(harData);
+  if (cached) return cached;
+
+  const index = HarAnalyzer.buildSearchIndex(harData);
+  searchIndexCache.set(harData, index);
+  return index;
+};
+
 export interface UseHarDataReturn {
   harData: HarFile | null;
   filteredEntries: Entry[];
@@ -19,8 +36,8 @@ export interface UseHarDataReturn {
   exportFilteredData: () => void;
 }
 
-export const useHarData = (): UseHarDataReturn => {
-  const [harData, setHarData] = useState<HarFile | null>(null);
+export const useHarData = (initialHarData: HarFile | null = null): UseHarDataReturn => {
+  const [harData, setHarData] = useState<HarFile | null>(initialHarData);
   const [selectedEntry, setSelectedEntry] = useState<Entry | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,10 +54,7 @@ export const useHarData = (): UseHarDataReturn => {
   });
 
   const parser = useMemo(() => new HarParser(), []);
-  const searchIndex = useMemo(
-    () => (harData?.log?.entries ? HarAnalyzer.buildSearchIndex(harData) : null),
-    [harData]
-  );
+  const searchIndex = useMemo(() => getSearchIndex(harData), [harData]);
 
   const loadHarFile = useCallback(async (file: File) => {
     setIsLoading(true);

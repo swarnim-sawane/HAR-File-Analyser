@@ -1,4 +1,5 @@
 import { Queue } from 'bullmq';
+import { buildBullMqConnectionOptions } from '../config/bullmqConfig';
 import { getDatabase, getRedis } from '../config/database';
 import { LOG_QUEUE_NAME } from '../config/queueNames';
 import { streamParseConsoleLog, ParsedLogEntry } from '../services/streamingParser';
@@ -16,7 +17,7 @@ let logQueue: Queue | null = null;
 export function initLogQueue(): Queue {
   if (!logQueue) {
     redis = getRedis();
-    logQueue = new Queue(LOG_QUEUE_NAME, { connection: redis });
+    logQueue = new Queue(LOG_QUEUE_NAME, buildBullMqConnectionOptions(redis));
   }
   return logQueue;
 }

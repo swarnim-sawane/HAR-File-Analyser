@@ -1,6 +1,8 @@
 import io, { Socket } from 'socket.io-client';
+import { parseSocketTransports, resolveSocketPath } from './websocketConfig';
+import { WS_BASE_URL } from './runtimeUrls';
 
-const WS_URL = import.meta.env.VITE_WS_URL || 'http://localhost:4000';
+const WS_TRANSPORTS = parseSocketTransports(import.meta.env.VITE_WS_TRANSPORTS);
 
 type EventCallback = (data: any) => void;
 
@@ -24,8 +26,9 @@ class WebSocketClient {
       return;
     }
 
-    this.socket = io(WS_URL, {
-      transports: ['websocket', 'polling'],
+    this.socket = io(WS_BASE_URL, {
+      path: resolveSocketPath(window.location.pathname),
+      transports: WS_TRANSPORTS,
       query: { sessionId: this.sessionId },
       reconnection: true,
       reconnectionDelay: 1000,

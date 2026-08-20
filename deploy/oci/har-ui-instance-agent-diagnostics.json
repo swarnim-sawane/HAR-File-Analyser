@@ -1,0 +1,9 @@
+{
+  "output": {
+    "outputType": "TEXT"
+  },
+  "source": {
+    "sourceType": "TEXT",
+    "text": "set -o pipefail; echo CLOUD_INIT; cloud-init status --long || true; echo SERVICE; systemctl status har-analyzer-ui --no-pager -l || true; echo JOURNAL; journalctl -u har-analyzer-ui --no-pager -n 80 || true; echo CLOUD_INIT_LOG; tail -n 120 /var/log/cloud-init-output.log || true; echo HEALTH; curl -sS -i --max-time 5 http://127.0.0.1:8080/health || true"
+  }
+}
